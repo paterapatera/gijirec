@@ -2,6 +2,7 @@
 
 use crate::tauri::events::CaptureEventEmitter;
 use crate::tauri::observability;
+use crate::transcribe::TranscribeLifecycleHook;
 use gijirec_application::capture::orchestrator::CaptureOrchestrator;
 use gijirec_domain::audio::{CaptureError, CapturePhase};
 use std::sync::{Arc, Mutex};
@@ -203,18 +204,33 @@ impl CaptureLifecycleState {
         *self.processing.lock().expect("lock") = Some(hook);
     }
 
+    pub fn add_processing_hook(&self, hook: Arc<dyn CaptureProcessingHook>) {
+        let mut guard = self.processing.lock().expect("lock");
+        if let Some(existing) = guard.take() {
+            *guard = Some(Arc::new(ChainedProcessingHook {
+                first: existing,
+                second: hook,
+            }));
+        } else {
+            *guard = Some(hook);
+        }
+    }
+
     pub fn init_emitter(&self, emitter: Arc<dyn CaptureEventEmitter>) {
         *self.emitter.lock().expect("lock") = Some(emitter);
     }
 
     /// Current capture phase for frontend mount sync (missed lifecycle events).
-    pub fn current_phase_payload(&self) -> Result<crate::tauri::events::CapturePhaseChangedPayload, String>
-    {
+    pub fn current_phase_payload(
+        &self,
+    ) -> Result<crate::tauri::events::CapturePhaseChangedPayload, String> {
         let orchestrator = self
             .orchestrator
             .lock()
             .map_err(|_| "capture orchestrator lock poisoned".to_string())?;
-        Ok(crate::tauri::events::build_phase_payload(orchestrator.phase()))
+        Ok(crate::tauri::events::build_phase_payload(
+            orchestrator.phase(),
+        ))
     }
 
     fn emitter(&self) -> Option<Arc<dyn CaptureEventEmitter>> {
@@ -222,72 +238,115 @@ impl CaptureLifecycleState {
     }
 }
 
-fn stop_capture_from_app<R: Runtime>(app: &AppHandle<R>) {
-    let state = app.state::<CaptureLifecycleState>();
-    if let Some(processing) = state.processing.lock().expect("lock").as_ref() {
-        processing.on_capture_stopping();
-    }
-    let Some(emitter) = state.emitter() else {
-        return;
-    };
-    let mut orch = state.orchestrator.lock().expect("lock");
-    let _ = on_app_shutdown(orch.as_mut(), emitter.as_ref());
+struct ChainedProcessingHook {
+    first: Arc<dyn CaptureProcessingHook>,
+    second: Arc<dyn CaptureProcessingHook>,
 }
 
-/// Registers setup, window close, and documents exit handling for capture lifecycle.
+impl CaptureProcessingHook for ChainedProcessingHook {
+    fn on_capture_started(&self) {
+        self.first.on_capture_started();
+        self.second.on_capture_started();
+    }
+
+    fn on_capture_stopping(&self) {
+        self.first.on_capture_stopping();
+        self.second.on_capture_stopping();
+    }
+}
+
+pub(crate) fn perform_app_exit_shutdown(
+    transcribe_hook: Option<&TranscribeLifecycleHook>,
+    capture_state: &CaptureLifecycleState,
+) {
+    if let Some(hook) = transcribe_hook {
+        hook.on_app_exit();
+    }
+    if let Some(processing) = capture_state.processing.lock().expect("lock").as_ref() {
+        processing.on_capture_stopping();
+    }
+    if let Some(emitter) = capture_state.emitter() {
+        let mut orch = capture_state.orchestrator.lock().expect("lock");
+        let _ = on_app_shutdown(orch.as_mut(), emitter.as_ref());
+    }
+}
+
+pub(crate) fn handle_window_close_requested<R: Runtime>(app: &AppHandle<R>) {
+    let transcribe_hook = app.try_state::<Arc<TranscribeLifecycleHook>>();
+    let state = app.state::<CaptureLifecycleState>();
+    perform_app_exit_shutdown(transcribe_hook.as_ref().map(|h| &***h), &state);
+}
+
+/// Initializes capture emitter and starts capture on app setup.
+///
+/// Tauri allows only one `.setup()` callback; call this from the composition root's
+/// unified setup instead of registering a second handler.
+pub fn run_capture_app_setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), LifecycleError> {
+    let managed = app.state::<CaptureLifecycleState>();
+    managed.init_emitter(Arc::new(
+        crate::tauri::events::TauriCaptureEventEmitter::new(app.clone()),
+    ));
+    let emitter = managed
+        .emitter()
+        .expect("emitter must be initialized in setup");
+    let mut orch = managed.orchestrator.lock().expect("lock");
+    on_app_setup(
+        managed.platform.as_ref(),
+        orch.as_mut(),
+        emitter.as_ref(),
+        managed.notifier.as_ref(),
+    )?;
+
+    if orch.phase() == CapturePhase::Capturing
+        && let Some(processing) = managed.processing.lock().expect("lock").as_ref()
+    {
+        processing.on_capture_started();
+    }
+    Ok(())
+}
+
+/// Registers managed state, window close, and documents exit handling for capture lifecycle.
 pub fn attach_capture_lifecycle<R: Runtime>(
     builder: Builder<R>,
     state: CaptureLifecycleState,
 ) -> Builder<R> {
-    builder
-        .manage(state)
-        .invoke_handler(tauri::generate_handler![crate::tauri::commands::get_capture_phase])
-        .setup(|app| {
-            let managed = app.state::<CaptureLifecycleState>();
-            managed.init_emitter(Arc::new(
-                crate::tauri::events::TauriCaptureEventEmitter::new(app.handle().clone()),
-            ));
-            let emitter = managed
-                .emitter()
-                .expect("emitter must be initialized in setup");
-            let mut orch = managed.orchestrator.lock().expect("lock");
-            on_app_setup(
-                managed.platform.as_ref(),
-                orch.as_mut(),
-                emitter.as_ref(),
-                managed.notifier.as_ref(),
-            )
-            .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
-
-            if orch.phase() == CapturePhase::Capturing {
-                if let Some(processing) = managed.processing.lock().expect("lock").as_ref() {
-                    processing.on_capture_started();
-                }
-            }
-            Ok(())
-        })
-        .on_window_event(|window, event| {
-            if matches!(event, WindowEvent::CloseRequested { .. }) {
-                stop_capture_from_app(&window.app_handle());
-            }
-        })
+    builder.manage(state).on_window_event(|window, event| {
+        if matches!(event, WindowEvent::CloseRequested { .. }) {
+            handle_window_close_requested(window.app_handle());
+        }
+    })
 }
 
 /// Call from `app.run` to stop capture on `RunEvent::Exit` (task 7.1).
 pub fn handle_capture_run_event<R: Runtime>(app: &AppHandle<R>, event: &RunEvent) {
     if matches!(event, RunEvent::Exit) {
-        stop_capture_from_app(app);
+        let transcribe_hook = app.try_state::<Arc<TranscribeLifecycleHook>>();
+        let state = app.state::<CaptureLifecycleState>();
+        perform_app_exit_shutdown(transcribe_hook.as_ref().map(|h| &***h), &state);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::transcribe::model_orchestrator::{
+        ModelOrchestrator, ModelOrchestratorConfig,
+    };
+    use crate::application::transcribe::orchestrator::{
+        DefaultTranscribeOrchestrator, TranscribeOrchestrator,
+    };
+    use crate::application::transcribe::ports::{
+        ModelDownloadProgress, ModelDownloaderPort, ModelStorePort, TranscribeWorkerPort,
+        WhisperContextPort,
+    };
     use crate::tauri::events::RecordingEventEmitter;
+    use crate::transcribe::{TranscribeEmitError, TranscribeEventEmitter};
     use gijirec_application::capture::orchestrator::{
         CaptureOrchestrator, DefaultCaptureOrchestrator, MicCapturePort, SystemAudioCapturePort,
     };
+    use gijirec_domain::transcribe::{TranscribeError, TranscribePhase};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     struct FixedPlatformSupport {
         supported: bool,
@@ -581,5 +640,220 @@ mod tests {
         assert_eq!(phases[1].phase, "capturing");
         assert_eq!(phases[2].phase, "stopping");
         assert_eq!(phases[3].phase, "idle");
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn window_close_and_app_exit_calls_transcribe_hook_and_stops_worker() {
+        struct MockWorker {
+            stopped: Arc<Mutex<bool>>,
+            stop_timeout: Arc<Mutex<Option<Duration>>>,
+        }
+        impl TranscribeWorkerPort for MockWorker {
+            fn spawn(&mut self) -> Result<(), TranscribeError> {
+                Ok(())
+            }
+            fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError> {
+                *self.stopped.lock().unwrap() = true;
+                *self.stop_timeout.lock().unwrap() = Some(timeout);
+                Ok(())
+            }
+        }
+        struct DummyCtx;
+        impl WhisperContextPort for DummyCtx {
+            fn load_model(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
+                Ok(())
+            }
+        }
+        struct DummyStore;
+        impl ModelStorePort for DummyStore {
+            fn model_path(&self) -> std::path::PathBuf {
+                std::path::PathBuf::from("/tmp/model")
+            }
+            fn verify(
+                &self,
+                _expected: Option<&str>,
+            ) -> Result<std::path::PathBuf, TranscribeError> {
+                Ok(std::path::PathBuf::from("/tmp/model"))
+            }
+        }
+        struct DummyDownloader;
+        impl ModelDownloaderPort for DummyDownloader {
+            fn download(
+                &self,
+                _url: &str,
+                _destination: &std::path::Path,
+                _on_progress: &mut dyn FnMut(ModelDownloadProgress),
+            ) -> Result<(), TranscribeError> {
+                Ok(())
+            }
+        }
+
+        struct DummyEmitter;
+        impl TranscribeEventEmitter for DummyEmitter {
+            fn emit_phase_changed(
+                &self,
+                _phase: TranscribePhase,
+            ) -> Result<(), TranscribeEmitError> {
+                Ok(())
+            }
+            fn emit_model_progress(
+                &self,
+                _progress: &ModelDownloadProgress,
+            ) -> Result<(), TranscribeEmitError> {
+                Ok(())
+            }
+            fn emit_error(&self, _error: &TranscribeError) -> Result<(), TranscribeEmitError> {
+                Ok(())
+            }
+        }
+
+        let worker_stopped = Arc::new(Mutex::new(false));
+        let stop_timeout = Arc::new(Mutex::new(None));
+        let worker = MockWorker {
+            stopped: Arc::clone(&worker_stopped),
+            stop_timeout: Arc::clone(&stop_timeout),
+        };
+        let model_orch = Arc::new(Mutex::new(ModelOrchestrator::new(
+            DummyStore,
+            DummyDownloader,
+            ModelOrchestratorConfig {
+                model_url: "url".to_string(),
+                expected_sha256: "hash".to_string(),
+            },
+        )));
+        let orch = Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
+            worker,
+            DummyCtx,
+            model_orch,
+            Duration::from_secs(5),
+        )));
+        orch.lock().unwrap().ensure_model().expect("ensure model");
+        let transcribe_hook = Arc::new(TranscribeLifecycleHook::new(
+            orch.clone() as Arc<Mutex<dyn TranscribeOrchestrator>>,
+            Arc::new(DummyEmitter),
+        ));
+        transcribe_hook.on_capture_phase_changed(CapturePhase::Capturing);
+        assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
+
+        // When app exit / window close triggers hook
+        transcribe_hook.on_app_exit();
+        assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Idle);
+        assert!(
+            *worker_stopped.lock().unwrap(),
+            "Transcribe worker must be stopped and joined"
+        );
+        assert_eq!(
+            *stop_timeout.lock().unwrap(),
+            Some(Duration::from_secs(5)),
+            "Transcribe worker stop must use 5-second timeout bound"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn handle_capture_run_event_exit_and_window_close_invokes_hook_and_stops_worker() {
+        struct MockWorker {
+            stopped: Arc<Mutex<bool>>,
+            stop_timeout: Arc<Mutex<Option<Duration>>>,
+        }
+        impl TranscribeWorkerPort for MockWorker {
+            fn spawn(&mut self) -> Result<(), TranscribeError> {
+                Ok(())
+            }
+            fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError> {
+                *self.stopped.lock().unwrap() = true;
+                *self.stop_timeout.lock().unwrap() = Some(timeout);
+                Ok(())
+            }
+        }
+        struct DummyCtx;
+        impl WhisperContextPort for DummyCtx {
+            fn load_model(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
+                Ok(())
+            }
+        }
+        struct DummyStore;
+        impl ModelStorePort for DummyStore {
+            fn model_path(&self) -> std::path::PathBuf {
+                std::path::PathBuf::from("/tmp/model")
+            }
+            fn verify(
+                &self,
+                _expected: Option<&str>,
+            ) -> Result<std::path::PathBuf, TranscribeError> {
+                Ok(std::path::PathBuf::from("/tmp/model"))
+            }
+        }
+        struct DummyDownloader;
+        impl ModelDownloaderPort for DummyDownloader {
+            fn download(
+                &self,
+                _url: &str,
+                _destination: &std::path::Path,
+                _on_progress: &mut dyn FnMut(ModelDownloadProgress),
+            ) -> Result<(), TranscribeError> {
+                Ok(())
+            }
+        }
+        struct DummyEmitter;
+        impl TranscribeEventEmitter for DummyEmitter {
+            fn emit_phase_changed(
+                &self,
+                _phase: TranscribePhase,
+            ) -> Result<(), TranscribeEmitError> {
+                Ok(())
+            }
+            fn emit_model_progress(
+                &self,
+                _progress: &ModelDownloadProgress,
+            ) -> Result<(), TranscribeEmitError> {
+                Ok(())
+            }
+            fn emit_error(&self, _error: &TranscribeError) -> Result<(), TranscribeEmitError> {
+                Ok(())
+            }
+        }
+
+        let worker_stopped = Arc::new(Mutex::new(false));
+        let stop_timeout = Arc::new(Mutex::new(None));
+        let worker = MockWorker {
+            stopped: Arc::clone(&worker_stopped),
+            stop_timeout: Arc::clone(&stop_timeout),
+        };
+        let model_orch = Arc::new(Mutex::new(ModelOrchestrator::new(
+            DummyStore,
+            DummyDownloader,
+            ModelOrchestratorConfig {
+                model_url: "url".to_string(),
+                expected_sha256: "hash".to_string(),
+            },
+        )));
+        let orch = Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
+            worker,
+            DummyCtx,
+            model_orch,
+            Duration::from_secs(5),
+        )));
+        orch.lock().unwrap().ensure_model().expect("ensure model");
+        let transcribe_hook = Arc::new(TranscribeLifecycleHook::new(
+            orch.clone() as Arc<Mutex<dyn TranscribeOrchestrator>>,
+            Arc::new(DummyEmitter),
+        ));
+        transcribe_hook.on_capture_phase_changed(CapturePhase::Capturing);
+        assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
+
+        let (_, _, capture_orch) = make_orchestrator();
+        let state = CaptureLifecycleState::new(
+            Box::new(capture_orch),
+            Arc::new(FixedPlatformSupport { supported: true }),
+            Arc::new(RecordingUnsupportedPlatformNotifier::new()),
+        );
+
+        perform_app_exit_shutdown(Some(&transcribe_hook), &state);
+
+        assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Idle);
+        assert!(*worker_stopped.lock().unwrap());
+        assert_eq!(*stop_timeout.lock().unwrap(), Some(Duration::from_secs(5)));
     }
 }

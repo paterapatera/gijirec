@@ -106,4 +106,3 @@ export function useCaptureStatus(options: UseCaptureStatusOptions = {}): Capture
 
   return status;
 }
-

@@ -36,13 +36,14 @@ gijirec のセキュリティ姿勢。ローカルファーストのデスクト
 
 ### 音声（PCM）
 
-- メモリ上の `PcmChunk` は下流 consumer（将来 whisper）へのみ渡す
+- メモリ上の `PcmChunk` は下流 consumer（`PcmIngestConsumer` → rtrb → `TranscribeWorker`）へのみ渡す
 - Tauri イベントでフロントに PCM を送らない（`audio-capture-pcm.md`）
 - テストでも observability 記録にサンプル配列を含めない
 
-### 転写テキスト（将来）
+### 転写テキスト
 
-- ローカルメモリ + ユーザー明示保存の Markdown のみ想定
+- ローカルメモリ + `TranscriptBlockBus` + Tauri `whisper-transcribe://block-appended` イベント
+- ディスク永続化はユーザー明示保存（transcript-editor spec）まで行わない
 - クラウド STT は product スコープ外
 
 ### ログ
@@ -59,7 +60,7 @@ gijirec のセキュリティ姿勢。ローカルファーストのデスクト
 ## Secrets & Configuration
 
 - **リポジトリに秘密情報をコミットしない** — `.env`、API キー、個人トークン
-- 将来のモデルダウンロード URL は環境変数またはビルド時注入を検討。平文をソースに直書きしない
+- モデルダウンロードは HTTPS（TLS 1.2+）のみ。取得 URL はソース直書きを避け、ビルド時注入または設定ファイルで管理
 - `RUST_LOG` は開発者が制御。本番相当ビルドのデフォルトは INFO 以下で十分
 
 ## Input Validation
@@ -94,5 +95,5 @@ gijirec のセキュリティ姿勢。ローカルファーストのデスクト
 - 契約（PCM 非送信）: `docs/contracts/audio-capture-pcm.md`
 
 ---
-_updated_at: 2026-09-05_
+_updated_at: 2026-09-06（Sync: transcribe PCM 経路・モデル取得・転写テキストを反映）_
 _Focus on local-first desktop posture, not enterprise IAM patterns._

@@ -28,10 +28,12 @@ gijirec のテスト方針。何をどこで検証し、何を CI に載せな�
 ```bash
 # フロント（個別ファイル推奨 — 一括 bun test は depcruise fixture と干渉しうる）
 bun test src/presentation/hooks/useCaptureStatus.test.ts
+bun test src/presentation/hooks/useTranscribeStatus.test.ts
 bun test src/presentation/App.test.tsx
 
 # 品質ゲート（CI 相当）
-bun run check          # test:arch（depcruise fixture）を含む
+bun run check          # format / typecheck / lint / arch / knip
+bun run test           # 上記フック・App テスト（明示リスト）
 bun run rust:check     # fmt / clippy / bylaw / machete（cargo test は spec Validation で追加）
 ```
 
@@ -51,7 +53,7 @@ bun run rust:check     # fmt / clippy / bylaw / machete（cargo test は spec Va
 
 ### Component / Hook（TypeScript presentation）
 
-- **対象**: `useCaptureStatus`、`App` のフェーズ表示・エラー表示
+- **対象**: `useCaptureStatus`、`useTranscribeStatus`、`App` のフェーズ表示・エラー表示・モデル進捗
 - **依存**: Tauri を起動しない。`listenFn` / `invokeFn` を注入
 - **DOM**: `happy-dom` + `@testing-library/react`（`test-setup.ts` で一度だけ登録）
 
@@ -80,7 +82,7 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 
 ## Mocking Principles
 
-- **モックする**: Tauri `listen` / `invoke`、OS 音声 API、Whisper 推論（将来）
+- **モックする**: Tauri `listen` / `invoke`、OS 音声 API、Whisper 推論（統合テストではモック adapter）
 - **モックしない**: テスト対象の hook / コンポーネント / domain 変換ロジック
 - **ファクトリ**: 契約型（`CapturePhaseChanged`, `CaptureUserError`）はインラインで最小構成
 - **クリーンアップ**: `afterEach(cleanup)`、hook テストは unmount で unlisten を検証
@@ -105,5 +107,5 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 - 品質ゲート一覧: `docs/steering/tech.md`
 
 ---
-_updated_at: 2026-09-05_
+_updated_at: 2026-09-06（Sync: transcribe テスト・check/test スクリプトを反映）_
 _Focus on patterns and decisions. Tool-specific config lives in package.json / Cargo.toml._

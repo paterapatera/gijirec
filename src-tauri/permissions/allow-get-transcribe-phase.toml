@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-get-transcribe-phase"
+description = "Allows reading the current transcribe phase on frontend mount."
+commands.allow = ["get_transcribe_phase", "get_transcribe_status"]

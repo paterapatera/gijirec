@@ -130,11 +130,11 @@ impl DefaultAudioMixer {
         let mic_gain = self.mic.rms.gain();
         let sys_gain = self.system.rms.gain();
 
-        if mic_sample.is_some() {
-            self.mic.rms.push(mic_sample.unwrap());
+        if let Some(sample) = mic_sample {
+            self.mic.rms.push(sample);
         }
-        if sys_sample.is_some() {
-            self.system.rms.push(sys_sample.unwrap());
+        if let Some(sample) = sys_sample {
+            self.system.rms.push(sample);
         }
 
         let mic_scaled = mic_sample.unwrap_or(0.0) * mic_gain;
@@ -154,22 +154,24 @@ impl DefaultAudioMixer {
         let mic_active = self.mic.start_timeline().is_some();
         let sys_active = self.system.start_timeline().is_some();
 
-        if mic_active && sys_active {
-            if !mic_has || !sys_has {
-                let mic_end = self.mic.end_timeline();
-                let sys_end = self.system.end_timeline();
-                let leading_ahead = (mic_end > sys_end && mic_has && !sys_has)
-                    || (sys_end > mic_end && sys_has && !mic_has);
-                if leading_ahead {
-                    let gap = mic_end.abs_diff(sys_end);
-                    return gap <= ALIGNMENT_SAMPLES;
-                }
-                return false;
-            }
+        if !mic_active || !sys_active {
+            return mic_has || sys_has;
+        }
+
+        if mic_has && sys_has {
             return true;
         }
 
-        mic_has || sys_has
+        let mic_end = self.mic.end_timeline();
+        let sys_end = self.system.end_timeline();
+        let leading_ahead = (mic_end > sys_end && mic_has && !sys_has)
+            || (sys_end > mic_end && sys_has && !mic_has);
+        if leading_ahead {
+            let gap = mic_end.abs_diff(sys_end);
+            return gap <= ALIGNMENT_SAMPLES;
+        }
+
+        false
     }
 }
 
@@ -295,10 +297,10 @@ impl RmsWindow {
     }
 
     fn push(&mut self, sample: f32) {
-        if self.buf.len() == self.capacity {
-            if let Some(old) = self.buf.pop_front() {
-                self.sum_sq -= (old as f64) * (old as f64);
-            }
+        if self.buf.len() == self.capacity
+            && let Some(old) = self.buf.pop_front()
+        {
+            self.sum_sq -= (old as f64) * (old as f64);
         }
         self.buf.push_back(sample);
         self.sum_sq += (sample as f64) * (sample as f64);

@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-get-capture-phase"]
+  "permissions": [
+    "core:default",
+    "allow-get-capture-phase",
+    "allow-get-transcribe-phase",
+    "allow-listen-transcribe-events"
+  ]
 }

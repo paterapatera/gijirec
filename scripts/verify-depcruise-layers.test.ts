@@ -13,11 +13,12 @@ function depcruise(
   const result = spawnSync("bunx", ["depcruise", srcDir, "--config", CONFIG], {
     cwd,
     encoding: "utf-8",
+    shell: true,
   });
   return {
     status: result.status,
-    stdout: result.stdout,
-    stderr: result.stderr,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
   };
 }
 
@@ -43,6 +44,7 @@ function writeLayerFixture(root: string, domainImport: string): void {
       2,
     ),
   );
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "fixture", type: "module" }));
   writeFileSync(
     join(root, "src", "presentation", "index.ts"),
     'export const PRESENTATION = "presentation";\n',
@@ -63,7 +65,8 @@ describe("dependency-cruiser layer rules", () => {
 
   test("fails when domain imports presentation", () => {
     const root = mkdtempSync(join(tmpdir(), "gijirec-depcruise-domain-"));
-    cpSync(CONFIG, join(root, CONFIG));
+    const configPath = join(root, CONFIG);
+    cpSync(join(process.cwd(), CONFIG), configPath);
     writeLayerFixture(
       root,
       'import { PRESENTATION } from "../presentation/index";\nvoid PRESENTATION;',
@@ -78,7 +81,8 @@ describe("dependency-cruiser layer rules", () => {
 
   test("fails when frontend imports src-tauri", () => {
     const root = mkdtempSync(join(tmpdir(), "gijirec-depcruise-rust-"));
-    cpSync(CONFIG, join(root, CONFIG));
+    const configPath = join(root, CONFIG);
+    cpSync(join(process.cwd(), CONFIG), configPath);
     writeLayerFixture(root, 'import { RUST } from "../../src-tauri/stub";\nvoid RUST;');
 
     const result = depcruise("src", root);

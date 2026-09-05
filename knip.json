@@ -1,12 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "vite": false,
-  "entry": [
-    "src/main.ts",
-    "vite.config.ts",
-    "src/presentation/App.test.tsx",
-    "src/presentation/hooks/useCaptureStatus.test.ts"
-  ],
+  "entry": ["src/main.ts", "vite.config.ts", "src/presentation/hooks/useTranscribeStatus.ts"],
   "ignoreDependencies": ["happy-dom"],
   "project": ["src/**/*.{ts,tsx}"]
 }

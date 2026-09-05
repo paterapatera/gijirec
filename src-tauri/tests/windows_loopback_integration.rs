@@ -6,12 +6,10 @@
 use std::path::PathBuf;
 
 /// Must match `#[ignore = "..."]` on `opens_default_loopback_on_hardware` in windows_loopback.rs.
-const LOOPBACK_HARDWARE_IGNORE: &str =
-    "CI: requires Windows default WASAPI loopback output device; run with --ignored on local hardware";
+const LOOPBACK_HARDWARE_IGNORE: &str = "CI: requires Windows default WASAPI loopback output device; run with --ignored on local hardware";
 
 /// Must match `#[ignore = "..."]` on `integration_mic_and_wasapi_loopback_reach_capturing_on_hardware` in compose.rs.
-const DUAL_CAPTURE_HARDWARE_IGNORE: &str =
-    "CI: requires Windows mic permission and default WASAPI loopback output; run with --ignored on local hardware";
+const DUAL_CAPTURE_HARDWARE_IGNORE: &str = "CI: requires Windows mic permission and default WASAPI loopback output; run with --ignored on local hardware";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

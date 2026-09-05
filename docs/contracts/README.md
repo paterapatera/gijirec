@@ -14,6 +14,8 @@
 |-----------|------------------|------------------|
 | `audio-capture-pcm.md` | 下流向け 16 kHz モノラル PCM チャンク形状・供給規約 | audio-capture |
 | `audio-capture-status.md` | キャプチャフェーズ・利用者向けエラー Tauri イベント | audio-capture |
+| `whisper-transcribe-blocks.md` | 下流向けタイムスタンプ付きテキストブロック形状・追記供給規約 | whisper-transcribe |
+| `whisper-transcribe-status.md` | 文字起こしフェーズ・モデル進捗・利用者向けエラー Tauri イベント | whisper-transcribe |
 
 <!-- 例:
 | contracts/billing-api.md | Billing HTTP API shape | billing |

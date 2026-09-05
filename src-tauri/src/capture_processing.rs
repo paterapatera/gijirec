@@ -6,8 +6,8 @@ use gijirec_presentation::infrastructure::audio::MicSampleConsumer;
 use gijirec_presentation::infrastructure::audio::resampler::{
     MonoResamplerPipeline, ResampledSampleConsumer, TARGET_SAMPLE_RATE_HZ,
 };
-use gijirec_presentation::tauri::pcm_bus::PcmChunkBus;
 use gijirec_presentation::tauri::observability;
+use gijirec_presentation::tauri::pcm_bus::PcmChunkBus;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -114,8 +114,10 @@ impl ProcessingContext {
                 push_drained_samples(
                     &scratch[..mic_count],
                     mic_rate_hz,
-                    &mut mic_stream,
-                    true,
+                    StreamRoute {
+                        stream: &mut mic_stream,
+                        is_mic: true,
+                    },
                     &mut mixer,
                 );
             }
@@ -126,8 +128,10 @@ impl ProcessingContext {
                 push_drained_samples(
                     &scratch[..sys_count],
                     system_rate_hz,
-                    &mut system_stream,
-                    false,
+                    StreamRoute {
+                        stream: &mut system_stream,
+                        is_mic: false,
+                    },
                     &mut mixer,
                 );
             }
@@ -136,9 +140,7 @@ impl ProcessingContext {
             let _ = mixer.drain_mixed(&mut mixed);
             if !mixed.is_empty() {
                 chunk_emitter.push_mixed(&mixed);
-                for chunk in chunk_emitter.emit_ready() {
-                    pcm_bus.publish(chunk);
-                }
+                publish_ready_chunks(&mut chunk_emitter, &pcm_bus);
             }
 
             loop_count += 1;
@@ -156,11 +158,21 @@ impl ProcessingContext {
     }
 }
 
+fn publish_ready_chunks(chunk_emitter: &mut ChunkEmitter, pcm_bus: &PcmChunkBus) {
+    for chunk in chunk_emitter.emit_ready() {
+        pcm_bus.publish(chunk);
+    }
+}
+
+struct StreamRoute<'a> {
+    stream: &'a mut ResampledStream,
+    is_mic: bool,
+}
+
 fn push_drained_samples(
     drained: &[f32],
     source_rate_hz: u32,
-    stream: &mut ResampledStream,
-    is_mic: bool,
+    route: StreamRoute<'_>,
     mixer: &mut DefaultAudioMixer,
 ) {
     if drained.is_empty() {
@@ -170,11 +182,11 @@ fn push_drained_samples(
     let samples_16k: Vec<f32> = if source_rate_hz == TARGET_SAMPLE_RATE_HZ {
         drained.to_vec()
     } else {
-        stream.ensure_resampler(source_rate_hz);
-        let Some(pipeline) = stream.resampler.as_ref() else {
+        route.stream.ensure_resampler(source_rate_hz);
+        let Some(pipeline) = route.stream.resampler.as_ref() else {
             return;
         };
-        let Some(resampled) = stream.resampled.as_mut() else {
+        let Some(resampled) = route.stream.resampled.as_mut() else {
             return;
         };
         pipeline.input().push_interleaved(drained);
@@ -190,13 +202,23 @@ fn push_drained_samples(
         return;
     }
 
-    let timeline = stream.timeline_samples;
-    if is_mic {
+    let timeline = route.stream.timeline_samples;
+    if route.is_mic {
         mixer.push_mic(&samples_16k, timeline);
     } else {
         mixer.push_system(&samples_16k, timeline);
     }
-    stream.timeline_samples += samples_16k.len() as u64;
+    route.stream.timeline_samples += samples_16k.len() as u64;
+}
+
+pub(crate) struct ProcessingSpawnParams {
+    pub mic: Box<dyn F32SampleSource>,
+    pub system: Box<dyn F32SampleSource>,
+    pub mic_rate_hz: u32,
+    pub system_rate_hz: u32,
+    pub mixer: DefaultAudioMixer,
+    pub chunk_emitter: ChunkEmitter,
+    pub pcm_bus: Arc<PcmChunkBus>,
 }
 
 /// Handle to the dedicated capture processing thread.
@@ -206,25 +228,17 @@ pub(crate) struct CaptureProcessingHandle {
 }
 
 impl CaptureProcessingHandle {
-    pub(crate) fn spawn(
-        mic: Box<dyn F32SampleSource>,
-        system: Box<dyn F32SampleSource>,
-        mic_rate_hz: u32,
-        system_rate_hz: u32,
-        mixer: DefaultAudioMixer,
-        chunk_emitter: ChunkEmitter,
-        pcm_bus: Arc<PcmChunkBus>,
-    ) -> Self {
+    pub(crate) fn spawn(params: ProcessingSpawnParams) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let ctx = ProcessingContext {
             stop: Arc::clone(&stop),
-            mixer,
-            chunk_emitter,
-            pcm_bus,
-            mic,
-            system,
-            mic_rate_hz,
-            system_rate_hz,
+            mixer: params.mixer,
+            chunk_emitter: params.chunk_emitter,
+            pcm_bus: params.pcm_bus,
+            mic: params.mic,
+            system: params.system,
+            mic_rate_hz: params.mic_rate_hz,
+            system_rate_hz: params.system_rate_hz,
             mic_stream: ResampledStream::new(),
             system_stream: ResampledStream::new(),
         };
@@ -295,15 +309,15 @@ impl CapturePipelineState {
         let chunk_emitter = std::mem::replace(&mut *emitter_guard, ChunkEmitter::new());
         let pcm_bus = Arc::clone(&self.pcm_bus);
 
-        *guard = Some(CaptureProcessingHandle::spawn(
-            Box::new(mic),
-            Box::new(system),
+        *guard = Some(CaptureProcessingHandle::spawn(ProcessingSpawnParams {
+            mic: Box::new(mic),
+            system: Box::new(system),
             mic_rate_hz,
             system_rate_hz,
             mixer,
             chunk_emitter,
             pcm_bus,
-        ));
+        }));
         Ok(())
     }
 
@@ -331,6 +345,7 @@ impl gijirec_presentation::tauri::lifecycle::CaptureProcessingHook for CapturePi
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum ProcessingStartError {
     MicConsumerMissing,
     SystemConsumerMissing,
@@ -353,13 +368,12 @@ mod tests {
         fn drain_into(&mut self, out: &mut [f32]) -> usize {
             let mut count = 0;
             for slot in out.iter_mut() {
-                match self.0.pop() {
-                    Ok(sample) => {
-                        *slot = sample;
-                        count += 1;
-                    }
+                let sample = match self.0.pop() {
+                    Ok(s) => s,
                     Err(_) => break,
-                }
+                };
+                *slot = sample;
+                count += 1;
             }
             count
         }
@@ -412,6 +426,14 @@ mod tests {
         )
     }
 
+    fn push_synthetic_tick(producers: &mut ProducerHandle, tick: usize, frame_batch: usize) {
+        for i in 0..frame_batch {
+            let sample = 0.2 * ((tick * frame_batch + i) as f32 * 0.01).sin();
+            let _ = producers.mic.push(sample);
+            let _ = producers.system.push(sample * 0.5);
+        }
+    }
+
     #[test]
     fn pipeline_smoke_emits_100ms_chunks_with_monotonic_sequence() {
         let rate_hz = SAMPLE_RATE_HZ;
@@ -420,24 +442,20 @@ mod tests {
         let recorder = Arc::new(RecordingChunkConsumer::new());
         bus.register(Arc::clone(&recorder) as Arc<dyn PcmChunkConsumer>);
 
-        let handle = CaptureProcessingHandle::spawn(
+        let handle = CaptureProcessingHandle::spawn(ProcessingSpawnParams {
             mic,
             system,
-            rate_hz,
-            rate_hz,
-            DefaultAudioMixer::new(),
-            ChunkEmitter::new(),
-            Arc::clone(&bus),
-        );
+            mic_rate_hz: rate_hz,
+            system_rate_hz: rate_hz,
+            mixer: DefaultAudioMixer::new(),
+            chunk_emitter: ChunkEmitter::new(),
+            pcm_bus: Arc::clone(&bus),
+        });
 
         let pump = thread::spawn(move || {
             let frame_batch = (rate_hz / 10) as usize;
             for tick in 0..60 {
-                for i in 0..frame_batch {
-                    let sample = 0.2 * ((tick * frame_batch + i) as f32 * 0.01).sin();
-                    let _ = producers.mic.push(sample);
-                    let _ = producers.system.push(sample * 0.5);
-                }
+                push_synthetic_tick(&mut producers, tick, frame_batch);
                 thread::sleep(Duration::from_millis(10));
             }
         });

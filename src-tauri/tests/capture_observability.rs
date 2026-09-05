@@ -1,7 +1,7 @@
 use gijirec_lib::capture_observability::TracingCaptureObservability;
 use gijirec_presentation::domain::audio::pcm_chunk::{CHUNK_FRAME_COUNT, PcmChunk};
 use gijirec_presentation::domain::audio::{CaptureError, CapturePhase};
-use gijirec_presentation::tauri::observability::{set_observability, CAPTURE_LOG_TARGET};
+use gijirec_presentation::tauri::observability::{CAPTURE_LOG_TARGET, set_observability};
 use gijirec_presentation::tauri::pcm_bus::PcmChunkBus;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -48,12 +48,8 @@ fn tracing_backend_emits_structured_fields_without_pcm_samples() {
 
         let bus = PcmChunkBus::new();
         for seq in 0..5 {
-            let chunk = PcmChunk::new(
-                seq,
-                vec![12345_i16; CHUNK_FRAME_COUNT as usize],
-                seq * 100,
-            )
-            .expect("chunk");
+            let chunk = PcmChunk::new(seq, vec![12345_i16; CHUNK_FRAME_COUNT as usize], seq * 100)
+                .expect("chunk");
             bus.publish(chunk);
         }
 
@@ -64,8 +60,17 @@ fn tracing_backend_emits_structured_fields_without_pcm_samples() {
         );
     });
 
-    assert!(logs.contains("capture_phase") && logs.contains("capturing"), "{logs}");
+    assert!(
+        logs.contains("capture_phase") && logs.contains("capturing"),
+        "{logs}"
+    );
     assert!(logs.contains("capture_buffer_drops_total"), "{logs}");
-    assert!(logs.contains("MIC_UNAVAILABLE") || logs.contains("error_code"), "{logs}");
-    assert!(!looks_like_pcm_dump(&logs), "logs must not contain PCM dumps:\n{logs}");
+    assert!(
+        logs.contains("MIC_UNAVAILABLE") || logs.contains("error_code"),
+        "{logs}"
+    );
+    assert!(
+        !looks_like_pcm_dump(&logs),
+        "logs must not contain PCM dumps:\n{logs}"
+    );
 }

@@ -1,7 +1,7 @@
 //! Host tracing backend for capture observability.
 
 use gijirec_presentation::domain::audio::{CaptureError, CapturePhase};
-use gijirec_presentation::tauri::observability::{CaptureObservability, CAPTURE_LOG_TARGET};
+use gijirec_presentation::tauri::observability::{CAPTURE_LOG_TARGET, CaptureObservability};
 
 /// Emits structured capture events via `tracing` (host-only; no PCM or device names).
 pub struct TracingCaptureObservability;

@@ -15,7 +15,7 @@
 |--------|-----|--------|
 | Event | `audio-capture://phase-changed` | audio-capture |
 | Data | `PcmChunk` 形状・供給規約 | audio-capture |
-| Command（将来） | `get_transcript_chunk` 等 | whisper-transcribe |
+| Command | `get_capture_phase`、`get_transcribe_phase`、`get_transcribe_status` | audio-capture / whisper-transcribe |
 
 **入れないもの**: 実装手順、タスク分解、ADR 全文、UI モック、一時的な spike メモ。
 
@@ -49,9 +49,9 @@
 
 | 契約 | 実装場所 |
 |------|----------|
-| データ形状 | `gijirec-domain`（例: `PcmChunk`, `UserFacingError`） |
-| イベント定数・payload | `gijirec-presentation::tauri::events` |
-| emit / command | `gijirec-presentation::tauri` |
+| データ形状 | `gijirec-domain`（例: `PcmChunk`, `UserFacingError`, `TranscriptBlock`, `TranscribePhase`） |
+| イベント定数・payload | `gijirec-presentation::tauri::events`（capture）、`gijirec-presentation::transcribe::event_emitter`（transcribe） |
+| emit / command | `gijirec-presentation::tauri`（capture）、`src-tauri/src/commands.rs`（status 同期 command） |
 
 domain に契約コメントで path を参照:
 
@@ -62,7 +62,7 @@ pub struct UserFacingError { ... }
 
 ### TypeScript（読み取り専用ミラー）
 
-- **場所**: `src/presentation/hooks/{domain}-*.ts` または feature 単位の `capture-status.ts`
+- **場所**: `src/presentation/hooks/{domain}-status.ts`（例: `capture-status.ts`、`transcribe-status.ts`）
 - **内容**: イベント名定数 + interface（契約と同一フィールド名）
 - **変換なし**: snake_case フィールド（`timestamp_ms`）は契約どおり維持。hook 内で camelCase に変換する場合は state 型のみ
 
@@ -112,5 +112,5 @@ export const PHASE_CHANGED_EVENT = "audio-capture://phase-changed" as const;
 | `docs/specs/{feature}/design.md` | feature 内の設計・シーケンス |
 
 ---
-_updated_at: 2026-09-05_
+_updated_at: 2026-09-06（Sync: transcribe command・ミラー場所を反映）_
 _Document contract lifecycle and mirroring, not every field of every contract._

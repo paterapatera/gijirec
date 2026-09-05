@@ -11,7 +11,7 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 - **Frontend**: TypeScript（strict）、React 19、Vite 8、Tauri 2 IPC（`@tauri-apps/api`）
 - **Backend**: Rust（edition 2024、stable toolchain）
 - **Desktop Shell**: Tauri 2（`cargo tauri` CLI）
-- **STT**: whisper.cpp（Rust バインディング、Python なし）— `whisper-transcribe` spec で未実装
+- **STT**: `whisper-cpp-plus` 0.1（ADR-0003）+ デフォルトモデル `kotoba-whisper-v2.2-ggml-q5_0.bin`（ADR-0004、kenrouse 配布）
 - **Audio**: cpal（マイク / Windows ループバック）、screencapturekit（macOS システム音声）、rubato（リサンプル）、rtrb（スレッド間バッファ）— ADR-0001 準拠
 - **Runtime**: Bun >= 1.2（フロントエンドパッケージマネージャ・スクリプト実行。npm 非前提）
 
@@ -23,7 +23,9 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 |------|------|------|
 | 音声キャプチャ | cpal、screencapturekit（macOS）、WASAPI loopback（Windows）、rubato、rtrb | マイク＋システム音声の二重取り込み・16 kHz ミックス |
 | キャプチャ配信 | `PcmChunkBus`（presentation） | 100 ms チャンクの下流 consumer 向けバックプレッシャー付き配信 |
-| 文字起こし | whisper.cpp（Rust） | 3〜5 秒チャンクの逐次推論（未着手） |
+| 文字起こし | `whisper-cpp-plus`（`WhisperCppAdapter`） | VAD 駆動ストリーミング推論。専用ワーカースレッド + rtrb |
+| 転写ブロック配信 | `TranscriptBlockBus`（presentation） | `whisper-transcribe://block-appended` で追記のみ配信 |
+| マウント同期 | `TranscribeStatusCache`（presentation） | モデル取得中でもブロックしないフェーズ／進捗スナップショット |
 | エディタ | Slate.js / Lexical 等（設計で確定） | 部分ロック付きストリーミング表示（未着手） |
 | アーキテクチャ検証 | cargo bylaw、dependency-cruiser | レイヤ依存の自動チェック |
 
@@ -53,7 +55,7 @@ bun run rust:arch     # cargo bylaw（Rust レイヤ）
 
 - **Frontend**: Bun 組み込みテスト（`bun:test`）+ happy-dom + Testing Library。フックは injectable `listenFn` / `invokeFn` で Tauri なし単体テスト
 - **Rust**: crate 内ユニットテスト、presentation の統合テスト（合成 rtrb・パイプラインスモーク）
-- **品質ゲート**: `bun run check` に `test:arch`（depcruise fixture 検証）を含む。長時間性能・E2E は手動チェックリスト（CI 対象外）
+- **品質ゲート**: `bun run check` は format / typecheck / lint / arch（depcruise）/ knip。`bun run test` は明示ファイルリスト（capture + transcribe フック含む）。depcruise fixture は `scripts/verify-depcruise-layers.test.ts`。長時間性能・E2E は手動チェックリスト（CI 対象外）
 - **方針**: 契約形状は `docs/contracts/` を正本とし、feature spec の Validation フェーズでテストを追加
 
 ## Development Environment
@@ -69,7 +71,8 @@ bun run rust:arch     # cargo bylaw（Rust レイヤ）
 
 ```bash
 # Frontend quality gate
-bun run check          # format + typecheck + lint + arch + test:arch + knip
+bun run check          # format + typecheck + lint + arch + knip
+bun run test           # 明示ファイルリスト（App + capture/transcribe hooks）
 
 # Rust quality gate
 bun run rust:check     # fmt + check + clippy + bylaw + machete
@@ -96,5 +99,5 @@ bun run rust:typecheck
 永続的な技術判断は `docs/architecture/adr/` に ADR として記録する。
 
 ---
-_updated_at: 2026-09-05（Sync: Bun / React 19 / 音声キャプチャ実装状況を反映）_
+_updated_at: 2026-09-06（Sync: ADR-0004 kotoba-whisper モデルを反映）_
 _Document standards and patterns, not every dependency_

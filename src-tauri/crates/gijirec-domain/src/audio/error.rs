@@ -151,7 +151,11 @@ mod tests {
 
         for (error, code) in errors.into_iter().zip(expected) {
             let facing = error.to_user_facing();
-            assert_eq!(facing.code.as_str(), code, "unexpected contract code mapping");
+            assert_eq!(
+                facing.code.as_str(),
+                code,
+                "unexpected contract code mapping"
+            );
             assert!(
                 facing.action_ja_is_present(),
                 "action_ja must be non-empty for contract code {code}"

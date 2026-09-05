@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-listen-transcribe-events"
+description = "Allows the frontend to listen for whisper-transcribe status events. Model download uses Rust reqwest in the backend (no Tauri HTTP permission required)."
+[[permission.event.allow]]
+event = "whisper-transcribe://phase-changed"
+[[permission.event.allow]]
+event = "whisper-transcribe://model-progress"
+[[permission.event.allow]]
+event = "whisper-transcribe://error"

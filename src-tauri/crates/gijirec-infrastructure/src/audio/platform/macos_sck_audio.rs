@@ -263,8 +263,7 @@ mod tests {
 
     /// Documented skip reason for macOS ScreenCaptureKit hardware tests (Integration Test 2).
     /// Must match `#[ignore = "..."]` on `opens_sck_audio_on_hardware` exactly.
-    pub(crate) const MACOS_SCK_HARDWARE_SKIP: &str =
-        "CI: requires macOS 13+ ScreenCaptureKit screen recording permission; run with --ignored on local hardware";
+    pub(crate) const MACOS_SCK_HARDWARE_SKIP: &str = "CI: requires macOS 13+ ScreenCaptureKit screen recording permission; run with --ignored on local hardware";
 
     #[test]
     fn documents_sck_hardware_ci_skip_reason() {

@@ -81,6 +81,7 @@ impl CaptureStreamHandles {
 
     /// Installs synthetic rtrb consumers for integration tests (no hardware).
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn install_synthetic_mic(&self, sample_rate_hz: u32) {
         let (_prod, cons) = rtrb::RingBuffer::<f32>::new(DEFAULT_RING_CAPACITY);
         *self.mic.consumer.lock().expect("lock") =
@@ -89,12 +90,14 @@ impl CaptureStreamHandles {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn clear_mic(&self) {
         *self.mic.consumer.lock().expect("lock") = None;
         *self.mic.sample_rate_hz.lock().expect("lock") = None;
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn install_synthetic_system(&self, sample_rate_hz: u32) {
         let (_prod, cons) = rtrb::RingBuffer::<f32>::new(DEFAULT_RING_CAPACITY);
         install_system_consumer(&self.system, cons);
@@ -102,6 +105,7 @@ impl CaptureStreamHandles {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn clear_system(&self) {
         *self.system.consumer.lock().expect("lock") = None;
         *self.system.sample_rate_hz.lock().expect("lock") = None;
@@ -109,6 +113,7 @@ impl CaptureStreamHandles {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn install_system_consumer(shared: &SystemStreamShared, cons: rtrb::Consumer<f32>) {
     #[cfg(target_os = "windows")]
     {
@@ -130,12 +135,14 @@ fn install_system_consumer(shared: &SystemStreamShared, cons: rtrb::Consumer<f32
 
 /// Mic port that installs synthetic streams into shared handles (integration tests).
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) struct SyntheticMicPort {
     handles: CaptureStreamHandles,
     opened: Arc<Mutex<bool>>,
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 impl SyntheticMicPort {
     pub(crate) fn new(handles: CaptureStreamHandles, opened: Arc<Mutex<bool>>) -> Self {
         Self { handles, opened }
@@ -163,12 +170,14 @@ impl MicCapturePort for SyntheticMicPort {
 
 /// System port that installs synthetic streams into shared handles (integration tests).
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) struct SyntheticSystemPort {
     handles: CaptureStreamHandles,
     opened: Arc<Mutex<bool>>,
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 impl SyntheticSystemPort {
     pub(crate) fn new(handles: CaptureStreamHandles, opened: Arc<Mutex<bool>>) -> Self {
         Self { handles, opened }

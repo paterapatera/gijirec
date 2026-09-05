@@ -1,0 +1,60 @@
+//! Host tracing backend for whisper transcribe observability.
+
+use gijirec_presentation::domain::transcribe::{TranscribeError, TranscribePhase};
+use gijirec_presentation::tauri::observability::session_id;
+use gijirec_presentation::transcribe::observability::{
+    TRANSCRIBE_LOG_TARGET, TranscribeObservability,
+};
+
+/// Emits structured transcribe events via `tracing` without raw audio or text.
+pub struct TracingTranscribeObservability;
+
+impl TranscribeObservability for TracingTranscribeObservability {
+    fn log_phase_transition(&self, phase: TranscribePhase) {
+        tracing::info!(
+            target: TRANSCRIBE_LOG_TARGET,
+            transcribe_phase = phase.as_str(),
+            session_id = session_id(),
+            "transcribe phase transition"
+        );
+    }
+
+    fn log_pcm_sequence_gaps(&self, from: u64, to: u64) {
+        tracing::warn!(
+            target: TRANSCRIBE_LOG_TARGET,
+            transcribe_pcm_sequence_gaps = true,
+            gap_from = from,
+            gap_to = to,
+            session_id = session_id(),
+            "pcm sequence gap detected on ingest"
+        );
+    }
+
+    fn log_block_buffer_drop(&self, drops_total: u64) {
+        tracing::warn!(
+            target: TRANSCRIBE_LOG_TARGET,
+            transcribe_block_buffer_drops = drops_total,
+            session_id = session_id(),
+            "transcript block bus dropped oldest block due to queue capacity overflow"
+        );
+    }
+
+    fn log_inference_latency(&self, latency_ms: u64) {
+        tracing::info!(
+            target: TRANSCRIBE_LOG_TARGET,
+            transcribe_inference_latency_ms = latency_ms,
+            session_id = session_id(),
+            "transcribe inference completed"
+        );
+    }
+
+    fn log_transcribe_error(&self, error: &TranscribeError) {
+        let code = error.to_user_facing().code;
+        tracing::error!(
+            target: TRANSCRIBE_LOG_TARGET,
+            error_code = code.as_str(),
+            session_id = session_id(),
+            "transcribe error occurred"
+        );
+    }
+}

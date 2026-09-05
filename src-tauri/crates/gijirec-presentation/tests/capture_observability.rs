@@ -1,7 +1,7 @@
 use gijirec_presentation::domain::audio::pcm_chunk::{CHUNK_FRAME_COUNT, PcmChunk};
 use gijirec_presentation::domain::audio::{CaptureError, CapturePhase};
 use gijirec_presentation::tauri::observability::{
-    log_phase_transition, log_stream_open_failure, RecordingObservability, set_observability,
+    RecordingObservability, log_phase_transition, log_stream_open_failure, set_observability,
 };
 use gijirec_presentation::tauri::pcm_bus::PcmChunkBus;
 use std::sync::Mutex;
@@ -24,7 +24,10 @@ fn phase_transition_records_capture_phase_without_pcm() {
     log_phase_transition(CapturePhase::Capturing);
 
     let phases = recorder.phases.lock().expect("lock");
-    assert_eq!(phases.as_slice(), &[CapturePhase::Starting, CapturePhase::Capturing]);
+    assert_eq!(
+        phases.as_slice(),
+        &[CapturePhase::Starting, CapturePhase::Capturing]
+    );
     let debug = format!("{phases:?}");
     assert!(!looks_like_pcm_dump(&debug));
 }
@@ -37,12 +40,8 @@ fn buffer_drop_records_capture_buffer_drops_total_without_pcm() {
 
     let bus = PcmChunkBus::new();
     for seq in 0..5 {
-        let chunk = PcmChunk::new(
-            seq,
-            vec![12345_i16; CHUNK_FRAME_COUNT as usize],
-            seq * 100,
-        )
-        .expect("chunk");
+        let chunk = PcmChunk::new(seq, vec![12345_i16; CHUNK_FRAME_COUNT as usize], seq * 100)
+            .expect("chunk");
         bus.publish(chunk);
     }
 

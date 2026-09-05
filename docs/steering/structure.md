@@ -23,28 +23,30 @@
 
 ### TypeScript Frontend
 **Location**: `src/`  
-**Purpose**: Web UI、Tauri IPC のフロント側（現状は `audio-capture` の状態表示）  
+**Purpose**: Web UI、Tauri IPC のフロント側（キャプチャ・文字起こしの状態表示）  
 **Layers**（dependency-cruiser で強制）:
 - `src/domain/` — ドメインモデル（外レイヤに依存しない）
 - `src/application/` — ユースケース（domain のみ）
 - `src/infrastructure/` — 外部アダプタ（domain のみ）
 - `src/presentation/` — UI・composition root（`App.tsx`、契約ミラー用 hooks）
 
-**Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。テスト時は `listenFn` を注入。
+**Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_phase` / `get_transcribe_status` で同期。テスト時は `listenFn` / `invokeFn` を注入。
 
 ### Rust Backend
 **Location**: `src-tauri/crates/`  
-**Purpose**: 音声キャプチャ、Tauri コマンド／イベント（Whisper 推論は将来 crate 拡張）  
+**Purpose**: 音声キャプチャ・Whisper 推論・Tauri コマンド／イベント  
 **Crates**（cargo bylaw で強制）:
 
 | Crate | 依存可能 | 主なモジュール |
 |-------|----------|----------------|
-| `gijirec-domain` | なし（最内層） | `audio/`（PcmChunk, Phase, Error） |
-| `gijirec-application` | domain | `capture/`（mixer, orchestrator, chunk_emitter） |
-| `gijirec-infrastructure` | domain | `audio/`（mic, resampler, platform/*） |
-| `gijirec-presentation` | domain, application, infrastructure | `tauri/`（commands, events, lifecycle, pcm_bus, observability） |
+| `gijirec-domain` | なし（最内層） | `audio/`（PcmChunk, Phase, Error）、`transcribe/`（TranscriptBlock, TranscribePhase, TranscribeError） |
+| `gijirec-application` | domain | `capture/`（mixer, orchestrator）、`transcribe/`（orchestrator, block_emitter, model_orchestrator, port traits） |
+| `gijirec-infrastructure` | domain | `audio/`（mic, resampler, platform/*）、`transcribe/`（WhisperCppAdapter, ModelStore, ModelDownloader, TranscribeWorker） |
+| `gijirec-presentation` | domain, application, infrastructure | `tauri/`（capture commands, events, lifecycle, pcm_bus）、`transcribe/`（event_emitter, lifecycle_hook, pcm_ingest_consumer, transcript_block_bus, status_cache） |
 
-**Presentation パターン**: `gijirec-presentation::tauri` が composition root。Tauri state にパイプライン／ライフサイクルを保持し、契約イベント名（例: `audio-capture://phase-changed`）でフロントへ通知。
+**Presentation パターン**: `gijirec-presentation` が composition root。`tauri/` と `transcribe/` がそれぞれ capture / transcribe の Tauri 境界を担う。`src-tauri/src/compose.rs` がホスト側でパイプラインを結線。契約イベント名（例: `audio-capture://phase-changed`、`whisper-transcribe://phase-changed`）でフロントへ通知。
+
+**IPC 同期パターン**: モデル取得など長時間処理中に orchestrator ロックを避けるため、`TranscribeStatusCache` がフェーズ／進捗スナップショットを保持し、`get_transcribe_phase` / `get_transcribe_status` でマウント時同期する。
 
 ## Naming Conventions
 
@@ -87,9 +89,10 @@ Rust は crate 間の `path` 依存のみ。presentation が composition root。
 
 | 対象 | コマンド | 検証内容 |
 |------|----------|----------|
-| TS 全体 | `bun run check` | format, types, lint, arch, test:arch, dead code |
+| TS 全体 | `bun run check` | format, types, lint, arch, dead code |
+| TS テスト | `bun run test` | 明示ファイルリスト（hooks + App） |
 | Rust 全体 | `bun run rust:check` | fmt, types, clippy, bylaw, dead code |
 
 ---
-_updated_at: 2026-09-05（Sync: 契約ミラー・tauri モジュール・Bun コマンドを反映）_
+_updated_at: 2026-09-06（Sync: transcribe モジュール・StatusCache・IPC 同期パターンを反映）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_

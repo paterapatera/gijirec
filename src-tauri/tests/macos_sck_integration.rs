@@ -6,12 +6,10 @@
 use std::path::PathBuf;
 
 /// Must match `#[ignore = "..."]` on `opens_sck_audio_on_hardware` in macos_sck_audio.rs.
-const SCK_HARDWARE_IGNORE: &str =
-    "CI: requires macOS 13+ ScreenCaptureKit screen recording permission; run with --ignored on local hardware";
+const SCK_HARDWARE_IGNORE: &str = "CI: requires macOS 13+ ScreenCaptureKit screen recording permission; run with --ignored on local hardware";
 
 /// Must match `#[ignore = "..."]` on `integration_mic_and_sck_reach_capturing_on_hardware` in compose.rs.
-const DUAL_CAPTURE_HARDWARE_IGNORE: &str =
-    "CI: requires macOS mic permission and ScreenCaptureKit screen recording permission; run with --ignored on local hardware";
+const DUAL_CAPTURE_HARDWARE_IGNORE: &str = "CI: requires macOS mic permission and ScreenCaptureKit screen recording permission; run with --ignored on local hardware";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -5,9 +5,11 @@ fn repo_root() -> PathBuf {
 }
 
 fn read_boundaries_doc() -> String {
-    let path = repo_root().join("docs").join("architecture").join("boundaries.md");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("missing {}: {err}", path.display()))
+    let path = repo_root()
+        .join("docs")
+        .join("architecture")
+        .join("boundaries.md");
+    std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("missing {}: {err}", path.display()))
 }
 
 fn audio_capture_section(source: &str) -> &str {
@@ -84,7 +86,15 @@ fn boundaries_doc_lists_allowed_os_and_crate_dependencies() {
     let doc = read_boundaries_doc();
     let section = audio_capture_section(&doc);
 
-    for needle in ["WASAPI", "ScreenCaptureKit", "cpal", "rubato", "rtrb", "Tauri", "Bun"] {
+    for needle in [
+        "WASAPI",
+        "ScreenCaptureKit",
+        "cpal",
+        "rubato",
+        "rtrb",
+        "Tauri",
+        "Bun",
+    ] {
         assert!(
             section.contains(needle),
             "Allowed Dependencies must mention {needle}"

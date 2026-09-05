@@ -34,8 +34,16 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 
 ## Implementation Phasing
 
-製品ビジョン全体に対し、実装は roadmap の spec 順に段階投入する。現時点の主戦場は **audio-capture**（二重キャプチャ＋PCM ミックス＋ライフサイクル UI）。Whisper・エディタ・Markdown は後続 spec。
+製品ビジョン全体に対し、実装は roadmap の spec 順に段階投入する。
+
+| Spec | 状態 | 備考 |
+|------|------|------|
+| audio-capture | 完了 | 二重キャプチャ・PCM ミックス・ライフサイクル・状態 UI |
+| whisper-transcribe | 完了（バックエンド＋状態 UI） | ローカル推論・モデル取得・フェーズ／進捗表示。転写テキストの画面表示は未着手 |
+| transcript-editor | 未着手 | 部分ロック編集・Markdown 出力 |
+
+**現 UI の範囲**: キャプチャ／文字起こしフェーズ、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）。転写ブロックの表示・編集は transcript-editor spec で追加する。
 
 ---
-_updated_at: 2026-09-05（Sync: 実装フェーズ注記を追加）_
+_updated_at: 2026-09-06（Sync: whisper-transcribe 完了・UI 範囲を反映）_
 _Focus on patterns and purpose, not exhaustive feature lists_

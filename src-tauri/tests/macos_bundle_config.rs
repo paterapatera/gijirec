@@ -19,8 +19,7 @@ fn read_infrastructure_cargo_toml() -> String {
         .join("crates")
         .join("gijirec-infrastructure")
         .join("Cargo.toml");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("missing {}: {err}", path.display()))
+    std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("missing {}: {err}", path.display()))
 }
 
 fn plist_string_value(source: &str, key: &str) -> Option<String> {

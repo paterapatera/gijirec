@@ -110,7 +110,11 @@ mod tests {
         assert_eq!(chunks[1].sequence(), 1);
         assert_eq!(chunks[2].sequence(), 2);
         for (i, chunk) in chunks.iter().enumerate() {
-            assert_eq!(chunk.sequence(), i as u64, "sequence must increase monotonically");
+            assert_eq!(
+                chunk.sequence(),
+                i as u64,
+                "sequence must increase monotonically"
+            );
             assert_eq!(chunk.frame_count(), CHUNK_FRAME_COUNT);
             assert_eq!(chunk.samples().len(), CHUNK_FRAME_COUNT as usize);
             assert_eq!(chunk.sample_rate_hz(), SAMPLE_RATE_HZ);
@@ -121,8 +125,7 @@ mod tests {
     // Testing Strategy 3: 連続入力でも sequence にギャップがない
     fn sequence_has_no_gaps_on_continuous_input() {
         let mut emitter = ChunkEmitter::new();
-        let mut expected_sequence = 0_u64;
-        for _ in 0..5 {
+        for expected_sequence in 0..5_u64 {
             push_frames(&mut emitter, CHUNK_FRAME_COUNT as usize, 0.1);
             let batch = emitter.emit_ready();
             assert_eq!(batch.len(), 1);
@@ -130,7 +133,6 @@ mod tests {
             assert_eq!(chunk.sequence(), expected_sequence);
             assert_eq!(chunk.frame_count(), CHUNK_FRAME_COUNT);
             assert_eq!(chunk.samples().len(), CHUNK_FRAME_COUNT as usize);
-            expected_sequence += 1;
         }
         assert_eq!(emitter.next_sequence(), 5);
     }

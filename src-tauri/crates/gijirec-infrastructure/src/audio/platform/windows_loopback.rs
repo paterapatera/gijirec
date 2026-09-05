@@ -177,8 +177,7 @@ mod tests {
 
     /// Documented skip reason for Windows WASAPI loopback hardware tests (Integration Test 1).
     /// Must match `#[ignore = "..."]` on `opens_default_loopback_on_hardware` exactly.
-    pub(crate) const WINDOWS_LOOPBACK_HARDWARE_SKIP: &str =
-        "CI: requires Windows default WASAPI loopback output device; run with --ignored on local hardware";
+    pub(crate) const WINDOWS_LOOPBACK_HARDWARE_SKIP: &str = "CI: requires Windows default WASAPI loopback output device; run with --ignored on local hardware";
 
     #[test]
     fn documents_wasapi_loopback_hardware_ci_skip_reason() {

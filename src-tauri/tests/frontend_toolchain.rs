@@ -74,7 +74,9 @@ fn first_semver_major(spec: &str) -> u32 {
         .skip_while(|c| !c.is_ascii_digit())
         .take_while(char::is_ascii_digit)
         .collect();
-    digits.parse().unwrap_or_else(|_| panic!("no major version in {spec}"))
+    digits
+        .parse()
+        .unwrap_or_else(|_| panic!("no major version in {spec}"))
 }
 
 fn dev_dependency_spec(name: &str) -> String {
@@ -83,7 +85,8 @@ fn dev_dependency_spec(name: &str) -> String {
         .split("\"devDependencies\"")
         .nth(1)
         .expect("package.json must have devDependencies");
-    json_string_field(deps, name).unwrap_or_else(|| panic!("devDependencies.{name} must be present"))
+    json_string_field(deps, name)
+        .unwrap_or_else(|| panic!("devDependencies.{name} must be present"))
 }
 
 #[test]
