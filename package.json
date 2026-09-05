@@ -12,7 +12,14 @@
     "typecheck": "tsc --noEmit",
     "arch": "depcruise src --config .dependency-cruiser.cjs",
     "knip": "knip",
-    "check": "npm run format-check && npm run typecheck && npm run lint && npm run arch && npm run knip"
+    "check": "npm run format-check && npm run typecheck && npm run lint && npm run arch && npm run knip",
+    "rust:format": "cargo fmt --all --manifest-path src-tauri/Cargo.toml",
+    "rust:format-check": "cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check",
+    "rust:typecheck": "cargo check --workspace --all-targets --manifest-path src-tauri/Cargo.toml",
+    "rust:lint": "cargo clippy --workspace --all-targets --manifest-path src-tauri/Cargo.toml -- -D clippy::all",
+    "rust:arch": "cargo bylaw check --config src-tauri/bylaw.toml",
+    "rust:dead-code": "cargo machete src-tauri",
+    "rust:check": "npm run rust:format-check && npm run rust:typecheck && npm run rust:lint && npm run rust:arch && npm run rust:dead-code"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.12",

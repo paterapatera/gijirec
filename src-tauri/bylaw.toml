@@ -1,0 +1,46 @@
+version = 1
+
+[selectors.domain]
+packages = ["gijirec-domain"]
+
+[selectors.application]
+packages = ["gijirec-application"]
+
+[selectors.infrastructure]
+packages = ["gijirec-infrastructure"]
+
+[selectors.presentation]
+packages = ["gijirec-presentation"]
+
+[[rule]]
+id = "application-layers"
+kind = "layers"
+scope = "both"
+
+[[rule.layers]]
+name = "domain"
+selector = "domain"
+
+[[rule.layers]]
+name = "application"
+selector = "application"
+
+[[rule.layers]]
+name = "infrastructure"
+selector = "infrastructure"
+
+[[rule.layers]]
+name = "presentation"
+selector = "presentation"
+
+[[rule.dependencies]]
+from = "application"
+may_depend_on = ["domain"]
+
+[[rule.dependencies]]
+from = "infrastructure"
+may_depend_on = ["domain"]
+
+[[rule.dependencies]]
+from = "presentation"
+may_depend_on = ["domain", "application", "infrastructure"]

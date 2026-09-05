@@ -1,0 +1,10 @@
+[package]
+name = "gijirec-infrastructure"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gijirec-domain = { path = "../gijirec-domain" }
+
+[lints]
+workspace = true
