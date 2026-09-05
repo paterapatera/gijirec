@@ -46,6 +46,10 @@ export default defineConfig(
       "docs/**",
       ".agents/**",
       "**/*.cjs",
+      "scripts/**/*.test.ts",
+      "src/**/*.test.ts",
+      "src/**/*.test.tsx",
+      "src/presentation/test-setup.ts",
     ],
   },
 );

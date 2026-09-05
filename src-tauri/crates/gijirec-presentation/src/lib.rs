@@ -2,3 +2,5 @@
 pub use gijirec_application as application;
 pub use gijirec_domain as domain;
 pub use gijirec_infrastructure as infrastructure;
+
+pub mod tauri;

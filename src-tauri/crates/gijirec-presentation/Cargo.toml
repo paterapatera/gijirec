@@ -7,6 +7,11 @@ edition.workspace = true
 gijirec-application = { path = "../gijirec-application" }
 gijirec-domain = { path = "../gijirec-domain" }
 gijirec-infrastructure = { path = "../gijirec-infrastructure" }
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rfd = "0.15"
 
 [lints]
 workspace = true

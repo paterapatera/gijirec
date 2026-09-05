@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-get-capture-phase"
+description = "Allows reading the current capture phase on frontend mount."
+commands.allow = ["get_capture_phase"]

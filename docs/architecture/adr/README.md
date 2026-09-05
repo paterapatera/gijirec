@@ -42,7 +42,8 @@ Architecture Decision Records。重要な設計判断を永続化する。contra
 
 | ID / Path | One-line purpose | Owners / Domains | Status |
 |-----------|------------------|------------------|--------|
-| _(none yet)_ | — | — | — |
+| `ADR-0001-platform-audio-capture.md` | WASAPI ループバック + macOS ScreenCaptureKit による二重キャプチャ | audio-capture | Accepted |
+| `ADR-0002-bun-frontend-toolchain.md` | Tauri ホストの Bun 採用（npm 非必須） | cross-cutting | Accepted |
 
 ## 命名・採番
 

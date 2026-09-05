@@ -19,3 +19,28 @@ excessive_nesting = "warn"
 
 [workspace.metadata.cargo-machete]
 ignored = []
+
+[package]
+name = "gijirec"
+version.workspace = true
+edition.workspace = true
+description = "gijirec desktop host"
+
+[lib]
+name = "gijirec_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+gijirec-presentation = { path = "crates/gijirec-presentation" }
+tauri = { version = "2", features = [] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+rtrb = "0.3"
+
+[lints]
+workspace = true

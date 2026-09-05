@@ -11,6 +11,6 @@
 仮想オーディオデバイスを要求しない。会議の裏で OS 全体を極端に重くしない。テキスト追加時に激しいレイアウトシフトや点滅を起こさない。モデル初回取得後はオフラインで全機能が動く。
 
 ## Specs (dependency order)
-- [ ] audio-capture -- マイク＋システム音声を同時取得し 16kHz モノラルへミックス。Dependencies: none
+- [ ] audio-capture -- マイク＋システム音声を同時取得し 16kHz モノラルへミックス（**実装中**: Foundation〜Integration 完了、Validation 残）
 - [ ] whisper-transcribe -- チャンク投入・低遅延ストリーミング・タイムスタンプ。Dependencies: audio-capture
 - [ ] transcript-editor -- 部分ロック編集・タイムスタンプ維持・Markdown 出力。Dependencies: whisper-transcribe

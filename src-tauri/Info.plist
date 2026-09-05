@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>gijirec がマイク音声を録音するためにマイクへのアクセスが必要です。</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>gijirec が画面とシステムオーディオを録音するために画面収録へのアクセスが必要です。</string>
+</dict>
+</plist>

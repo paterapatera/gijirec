@@ -12,7 +12,8 @@
 
 | ID / Path | One-line purpose | Owners / Domains |
 |-----------|------------------|------------------|
-| _(none yet)_ | — | — |
+| `audio-capture-pcm.md` | 下流向け 16 kHz モノラル PCM チャンク形状・供給規約 | audio-capture |
+| `audio-capture-status.md` | キャプチャフェーズ・利用者向けエラー Tauri イベント | audio-capture |
 
 <!-- 例:
 | contracts/billing-api.md | Billing HTTP API shape | billing |
