@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="{{HTML_LANG}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{FEATURE_NAME}} — {{LABEL_TITLE}}</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/theme/default-semantic-tokens.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/button/button.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/badge/badge.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/card/card.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/table/table.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/alert/alert.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/separator/separator.css">
+
+  <style id="des-theme">
+  {{THEME_CSS}}
+  </style>
+</head>
+<body class="des-body">
+  <div class="des-page">
+    <header class="des-header">
+      <div>
+        <h1>{{FEATURE_NAME}}</h1>
+        <p class="des-meta">{{LABEL_TITLE}} · {{LABEL_GENERATED}}: <time datetime="{{GENERATED_AT_ISO}}">{{GENERATED_AT}}</time></p>
+        <div class="des-layer-hint" aria-label="{{LABEL_LAYER_HINT}}">
+          <span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span>
+          <span class="badge" data-layer="internal">{{LABEL_LAYER_INT}}</span>
+          <span class="badge" data-layer="physical">{{LABEL_LAYER_PHY}}</span>
+          <span class="des-layer-hint-text">{{LABEL_LAYER_HINT}}</span>
+        </div>
+      </div>
+      <div class="des-header-actions">
+        <a class="btn" data-variant="outline" href="design.md">{{LABEL_SOURCE}}</a>
+        <a class="btn" data-variant="outline" href="{{REQ_MD_HREF}}">{{LABEL_REQ_SOURCE}}</a>
+        <a class="btn" data-variant="outline" href="{{REQ_HTML_HREF}}">{{LABEL_REQ_PREVIEW}}</a>
+      </div>
+    </header>
+
+    <div class="alert" role="alert">
+      <i data-lucide="info" class="alert-icon" aria-hidden="true"></i>
+      <div class="alert-content">
+        <h5 class="alert-title">{{LABEL_TITLE}}</h5>
+        <p class="alert-description">{{LABEL_NOT_CANONICAL}}</p>
+      </div>
+    </div>
+
+    <nav class="des-toc" aria-label="{{LABEL_TOC}}">
+      <h2>{{LABEL_TOC}}</h2>
+      {{SLOT_TOC}}
+    </nav>
+
+    <hr class="separator" role="none">
+
+    {{SLOT_STUB}}
+
+    <section class="des-section" id="overview">
+      <h2><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> {{LABEL_OVERVIEW}}</h2>
+      <div class="des-intro">{{SLOT_OVERVIEW}}</div>
+    </section>
+
+    {{SLOT_GOALS}}
+
+    {{SLOT_BOUNDARY}}
+
+    {{SLOT_REVAL}}
+
+    {{SLOT_ARCHITECTURE}}
+
+    {{SLOT_CONTRACTS}}
+
+    {{SLOT_FLOWS}}
+
+    {{SLOT_PUBLIC_IF}}
+
+    {{SLOT_COMPONENTS}}
+
+    {{SLOT_TRACE}}
+
+    {{SLOT_DATA}}
+
+    {{SLOT_ERRORS}}
+
+    {{SLOT_APPENDIX}}
+
+    <hr class="separator" role="none">
+
+    <footer class="des-footer">
+      <p>{{LABEL_SOURCE}}: <code>{{SOURCE_PATH}}</code></p>
+    </footer>
+  </div>
+
+  <!-- SLOT recipes (delete these comments from output; copy the matching block into the slots above) -->
+
+  <!-- recipe:toc — linear, same order as page sections; omit skipped ids
+  <ol>
+    <li><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> <a href="#overview">{{LABEL_OVERVIEW}}</a></li>
+    <li><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> <a href="#goals">{{LABEL_GOALS}}</a></li>
+    <li><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> <a href="#boundary">{{LABEL_BOUNDARY}}</a></li>
+    <li><span class="badge" data-layer="internal">{{LABEL_LAYER_INT}}</span> <a href="#reval">{{LABEL_REVAL}}</a></li>
+    <li><span class="badge" data-layer="internal">{{LABEL_LAYER_INT}}</span> <a href="#architecture">{{LABEL_ARCHITECTURE}}</a></li>
+    <li><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> <a href="#contracts">{{LABEL_CONTRACTS}}</a></li>
+    <li><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> <a href="#flows">{{LABEL_FLOWS}}</a></li>
+    <li><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> <a href="#public-if">{{LABEL_PUBLIC_IF}}</a></li>
+    <li><span class="badge" data-layer="internal">{{LABEL_LAYER_INT}}</span> <a href="#components">{{LABEL_COMPONENTS}}</a></li>
+    <li><span class="badge" data-layer="internal">{{LABEL_LAYER_INT}}</span> <a href="#trace">{{LABEL_TRACE}}</a></li>
+    <li><span class="badge" data-layer="internal">{{LABEL_LAYER_INT}}</span> <a href="#data">{{LABEL_DATA}}</a></li>
+    <li><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> <a href="#errors">{{LABEL_ERRORS}}</a></li>
+    <li><span class="badge" data-layer="physical">{{LABEL_LAYER_PHY}}</span> <a href="#appendix">{{LABEL_APPENDIX}}</a></li>
+  </ol>
+  -->
+
+  <!-- recipe:stub — insert as SLOT_STUB; drop reviewer sections that viz-rules skip
+  <div class="alert" role="alert">
+    <i data-lucide="circle-alert" class="alert-icon" aria-hidden="true"></i>
+    <div class="alert-content">
+      <h5 class="alert-title">{{LABEL_STUB}}</h5>
+      <p class="alert-description">{{LABEL_STUB_HINT}}</p>
+    </div>
+  </div>
+  -->
+
+  <!-- recipe:goals — omit whole section if both cards empty; omit a card if its list is empty; use des-scope-2 when only one card
+  <section class="des-section" id="goals">
+    <h2><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> {{LABEL_GOALS}}</h2>
+    <div class="des-scope-grid des-scope-2">
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><i data-lucide="target" aria-hidden="true"></i> {{LABEL_GOAL}}</h3>
+        </div>
+        <div class="card-content">{{GOALS_LIST}}</div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><i data-lucide="circle-off" aria-hidden="true"></i> {{LABEL_NONGOAL}}</h3>
+        </div>
+        <div class="card-content">{{NONGOALS_LIST}}</div>
+      </div>
+    </div>
+  </section>
+  -->
+
+  <!-- recipe:boundary — omit whole section if all three cards empty; omit a card if its list is empty
+  <section class="des-section" id="boundary">
+    <h2><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> {{LABEL_BOUNDARY}}</h2>
+    <div class="des-scope-grid">
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><i data-lucide="circle-check" aria-hidden="true"></i> {{LABEL_OWNS}}</h3>
+        </div>
+        <div class="card-content">{{OWNS_LIST}}</div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><i data-lucide="circle-x" aria-hidden="true"></i> {{LABEL_OUT}}</h3>
+        </div>
+        <div class="card-content">{{OUT_LIST}}</div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><i data-lucide="git-branch" aria-hidden="true"></i> {{LABEL_DEPS}}</h3>
+        </div>
+        <div class="card-content">{{DEPS_LIST}}</div>
+      </div>
+    </div>
+  </section>
+  -->
+
+  <!-- recipe:reval — omit if empty
+  <section class="des-section" id="reval">
+    <h2><span class="badge" data-layer="internal">{{LABEL_LAYER_INT}}</span> {{LABEL_REVAL}}</h2>
+    <div class="des-prose">{{REVAL_LIST}}</div>
+  </section>
+  -->
+
+  <!-- recipe:architecture
+  <section class="des-section" id="architecture">
+    <h2><span class="badge" data-layer="internal">{{LABEL_LAYER_INT}}</span> {{LABEL_ARCHITECTURE}}</h2>
+    <p class="des-meta">{{LABEL_PATTERN}}: PATTERN_TEXT</p>
+    <div class="des-diagram">
+      <pre class="mermaid">
+flowchart TB
+  A[example]
+      </pre>
+    </div>
+    <h3 class="des-subh">{{LABEL_STACK}}</h3>
+    <div class="table-container">
+      <table class="table" aria-label="{{LABEL_STACK}}">
+        <thead>
+          <tr class="table-row">
+            <th class="table-head" scope="col">{{LABEL_COL_LAYER}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_CHOICE}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_ROLE}}</th>
+          </tr>
+        </thead>
+        <tbody>{{STACK_ROWS}}</tbody>
+      </table>
+    </div>
+  </section>
+  -->
+
+  <!-- recipe:contracts
+  <section class="des-section" id="contracts">
+    <h2><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> {{LABEL_CONTRACTS}}</h2>
+    <div class="alert" role="status">
+      <i data-lucide="file-symlink" class="alert-icon" aria-hidden="true"></i>
+      <div class="alert-content">
+        <h5 class="alert-title">{{LABEL_NO_CONTRACT}}</h5>
+        <p class="alert-description">NO_CONTRACT_NOTES</p>
+      </div>
+    </div>
+    <div class="table-container">
+      <table class="table" aria-label="{{LABEL_CONTRACTS}}">
+        <thead>
+          <tr class="table-row">
+            <th class="table-head" scope="col">{{LABEL_COL_PATH}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_MODE}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_NOTES}}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="table-row">
+            <td class="table-cell"><code>docs/contracts/example.md</code></td>
+            <td class="table-cell"><span class="badge" data-mode="reference">{{LABEL_MODE_REF}}</span></td>
+            <td class="table-cell">notes</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  -->
+
+  <!-- recipe:flows
+  <section class="des-section" id="flows">
+    <h2><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> {{LABEL_FLOWS}}</h2>
+    <div class="des-diagram">
+      <pre class="mermaid">
+sequenceDiagram
+  A->>B: example
+      </pre>
+    </div>
+  </section>
+  -->
+
+  <!-- recipe:public-if — omit if no API/Event/Batch excerpts
+  <section class="des-section" id="public-if">
+    <h2><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> {{LABEL_PUBLIC_IF}}</h2>
+    <h3 class="des-subh">ComponentName</h3>
+    <p class="des-meta">INTENT</p>
+    <div class="table-container">
+      <table class="table" aria-label="API">
+        <thead>
+          <tr class="table-row">
+            <th class="table-head" scope="col">Method</th>
+            <th class="table-head" scope="col">Endpoint</th>
+            <th class="table-head" scope="col">Request</th>
+            <th class="table-head" scope="col">Response</th>
+            <th class="table-head" scope="col">Errors</th>
+          </tr>
+        </thead>
+        <tbody>{{API_ROWS}}</tbody>
+      </table>
+    </div>
+  </section>
+  -->
+
+  <!-- recipe:components
+  <section class="des-section" id="components">
+    <h2><span class="badge" data-layer="internal">{{LABEL_LAYER_INT}}</span> {{LABEL_COMPONENTS}}</h2>
+    <div class="table-container">
+      <table class="table" aria-label="{{LABEL_COMPONENTS}}">
+        <thead>
+          <tr class="table-row">
+            <th class="table-head" scope="col">{{LABEL_COL_COMPONENT}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_ANCHOR}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_DOMAIN}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_INTENT}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_REQ}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_DEPS}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_CONTRACTS}}</th>
+          </tr>
+        </thead>
+        <tbody>{{COMPONENT_ROWS}}</tbody>
+      </table>
+    </div>
+  </section>
+  -->
+
+  <!-- recipe:trace
+  <section class="des-section" id="trace">
+    <h2><span class="badge" data-layer="internal">{{LABEL_LAYER_INT}}</span> {{LABEL_TRACE}}</h2>
+    <div class="table-container">
+      <table class="table" aria-label="{{LABEL_TRACE}}">
+        <thead>
+          <tr class="table-row">
+            <th class="table-head" scope="col">{{LABEL_COL_REQ}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_SUMMARY}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_COMPONENT}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_IF}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_FLOW}}</th>
+          </tr>
+        </thead>
+        <tbody>{{TRACE_ROWS}}</tbody>
+      </table>
+    </div>
+  </section>
+  -->
+
+  <!-- recipe:gap — omit when requirements.md missing or all IDs covered
+  <div class="alert" role="alert">
+    <i data-lucide="triangle-alert" class="alert-icon" aria-hidden="true"></i>
+    <div class="alert-content">
+      <h5 class="alert-title">{{LABEL_GAP}}</h5>
+      <p class="alert-description">{{LABEL_GAP_HINT}} GAP_IDS</p>
+    </div>
+  </div>
+  -->
+
+  <!-- recipe:data
+  <section class="des-section" id="data">
+    <h2><span class="badge" data-layer="internal">{{LABEL_LAYER_INT}}</span> {{LABEL_DATA}}</h2>
+    <div class="des-prose">{{DOMAIN_HTML}}</div>
+    <div class="des-diagram">
+      <pre class="mermaid">
+erDiagram
+  A ||--o{ B : has
+      </pre>
+    </div>
+  </section>
+  -->
+
+  <!-- recipe:errors
+  <section class="des-section" id="errors">
+    <h2><span class="badge" data-layer="external">{{LABEL_LAYER_EXT}}</span> {{LABEL_ERRORS}}</h2>
+    <div class="des-prose">{{ERRORS_HTML}}</div>
+  </section>
+  -->
+
+  <!-- recipe:appendix — each inner details closed; omit empty children
+  <section class="des-section" id="appendix">
+    <h2><span class="badge" data-layer="physical">{{LABEL_LAYER_PHY}}</span> {{LABEL_APPENDIX}}</h2>
+
+    <details class="des-appendix" id="appendix-files">
+      <summary><span class="badge" data-layer="physical">{{LABEL_LAYER_PHY}}</span> {{LABEL_FILES}}</summary>
+      <div class="des-appendix-body">
+        <pre class="des-tree">FILE_TREE</pre>
+      </div>
+    </details>
+
+    <details class="des-appendix" id="appendix-physical">
+      <summary><span class="badge" data-layer="physical">{{LABEL_LAYER_PHY}}</span> {{LABEL_PHYSICAL}}</summary>
+      <div class="des-appendix-body">{{PHYSICAL_HTML}}</div>
+    </details>
+
+    <details class="des-appendix" id="appendix-detail">
+      <summary><span class="badge" data-layer="physical">{{LABEL_LAYER_PHY}}</span> {{LABEL_DETAIL}}</summary>
+      <div class="des-appendix-body">
+        <article class="des-comp-detail" id="D-ComponentName">
+          <h3>ComponentName</h3>
+          <pre class="des-pre"><code>TYPESCRIPT</code></pre>
+        </article>
+      </div>
+    </details>
+
+    <details class="des-appendix" id="appendix-obs">
+      <summary><span class="badge" data-layer="physical">{{LABEL_LAYER_PHY}}</span> {{LABEL_OBS}}</summary>
+      <div class="des-appendix-body des-prose">{{OBS_HTML}}</div>
+    </details>
+
+    <details class="des-appendix" id="appendix-test">
+      <summary><span class="badge" data-layer="physical">{{LABEL_LAYER_PHY}}</span> {{LABEL_TEST}}</summary>
+      <div class="des-appendix-body des-prose">{{TEST_HTML}}</div>
+    </details>
+
+    <details class="des-appendix" id="appendix-ops">
+      <summary><span class="badge" data-layer="physical">{{LABEL_LAYER_PHY}}</span> {{LABEL_OPS}}</summary>
+      <div class="des-appendix-body des-prose">{{OPS_HTML}}</div>
+    </details>
+  </section>
+  -->
+
+  <script src="https://unpkg.com/lucide@1.8.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.6.0/dist/mermaid.min.js"></script>
+  <script>
+    lucide.createIcons();
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: "base",
+      securityLevel: "strict",
+      themeVariables: {
+        primaryColor: "#c1e7e6",
+        primaryTextColor: "#5f5f5f",
+        primaryBorderColor: "#2c6b6a",
+        lineColor: "#5f5f5f",
+        secondaryColor: "#dedede",
+        tertiaryColor: "#ffffff",
+        fontFamily: "ui-sans-serif, system-ui, sans-serif"
+      }
+    });
+  </script>
+</body>
+</html>

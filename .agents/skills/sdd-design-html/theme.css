@@ -1,0 +1,383 @@
+/* sdd-design-html — palette → shadcn semantic tokens + preview chrome.
+   Paste this entire file into <style id="des-theme"> in the generated HTML. */
+
+:root {
+  --alto: #dedede;
+  --chicago: #5f5f5f;
+  --casal: #2c6b6a;
+  --azure: #3a5aad;
+  --plum: #8f3a7b;
+  --royal-purple: #6f48a0;
+  --oregon: #9b4100;
+  --jagged-ice: #c1e7e6;
+  --hawkes-blue: #cfdeff;
+  --classic-rose: #ffccef;
+  --snuff: #e3d8f5;
+  --almond: #f5d7c7;
+
+  --background: #ffffff;
+  --foreground: var(--chicago);
+  --card: #ffffff;
+  --card-foreground: var(--chicago);
+  --popover: #ffffff;
+  --popover-foreground: var(--chicago);
+  --primary: var(--casal);
+  --primary-foreground: #ffffff;
+  --secondary: var(--jagged-ice);
+  --secondary-foreground: var(--chicago);
+  --muted: #f6f6f6;
+  --muted-foreground: var(--chicago);
+  --accent: var(--jagged-ice);
+  --accent-foreground: var(--chicago);
+  --destructive: var(--oregon);
+  --destructive-foreground: #ffffff;
+  --border: var(--alto);
+  --input: var(--alto);
+  --ring: var(--casal);
+  --sidebar: #ffffff;
+  --sidebar-foreground: var(--chicago);
+  --sidebar-primary: var(--casal);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--jagged-ice);
+  --sidebar-accent-foreground: var(--chicago);
+  --sidebar-border: var(--alto);
+  --sidebar-ring: var(--casal);
+}
+
+html {
+  color-scheme: light;
+}
+
+body.des-body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  line-height: 1.55;
+}
+
+.des-page {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+.des-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.des-header h1 {
+  margin: 0 0 0.35rem;
+  color: var(--casal);
+  font-size: 1.75rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.des-meta {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--chicago);
+}
+
+.des-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.des-layer-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+  margin: 0.75rem 0 0;
+}
+
+.des-layer-hint-text {
+  font-size: 0.85rem;
+  color: var(--chicago);
+}
+
+.des-toc {
+  margin: 1.25rem 0;
+  padding: 1rem 1.15rem;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 0.625rem);
+}
+
+.des-toc h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--casal);
+}
+
+.des-toc ol {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.des-toc > ol > li {
+  margin: 0.35rem 0;
+}
+
+.des-toc ol ol {
+  margin-top: 0.2rem;
+}
+
+.des-toc a {
+  color: var(--chicago);
+  text-decoration: none;
+}
+
+.des-toc a:hover {
+  color: var(--casal);
+  text-decoration: underline;
+}
+
+.des-toc .badge {
+  font-size: 0.7rem;
+  vertical-align: middle;
+  margin-right: 0.25rem;
+}
+
+.des-section {
+  margin: 2rem 0;
+}
+
+.des-section > h2 {
+  margin: 0 0 0.75rem;
+  color: var(--casal);
+  font-size: 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.des-intro {
+  font-size: 1rem;
+}
+
+.des-intro p {
+  margin: 0 0 0.65rem;
+}
+
+.des-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.des-scope-grid.des-scope-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 48rem) {
+  .des-scope-grid,
+  .des-scope-grid.des-scope-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.des-scope-grid .card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.des-scope-grid .card-title svg {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  color: var(--casal);
+}
+
+.des-scope-grid .card-content ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.alert-icon {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex-shrink: 0;
+  color: var(--casal);
+}
+
+.des-subh {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  color: var(--casal);
+}
+
+.des-diagram {
+  overflow-x: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.5rem);
+  background: #fff;
+  margin: 0 0 1rem;
+}
+
+.des-footer {
+  margin-top: 2.5rem;
+  font-size: 0.85rem;
+}
+
+.des-footer code {
+  font-size: 0.85em;
+}
+
+.table-container {
+  overflow-x: auto;
+}
+
+.des-prose ul {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.des-prose p {
+  margin: 0 0 0.5rem;
+}
+
+.badge[data-layer="external"] {
+  background: var(--hawkes-blue);
+  color: var(--azure);
+  border-color: transparent;
+}
+
+.badge[data-layer="internal"] {
+  background: var(--jagged-ice);
+  color: var(--casal);
+  border-color: transparent;
+}
+
+.badge[data-layer="physical"] {
+  background: var(--muted);
+  color: var(--chicago);
+  border-color: transparent;
+}
+
+.badge[data-mode="modify"] {
+  background: var(--almond);
+  color: var(--oregon);
+  border-color: transparent;
+}
+
+.badge[data-mode="reference"] {
+  background: var(--snuff);
+  color: var(--royal-purple);
+  border-color: transparent;
+}
+
+.badge[data-crit="p0"] {
+  background: #fde4e1;
+  color: #b42318;
+  border-color: transparent;
+}
+
+.badge[data-crit="p1"] {
+  background: var(--almond);
+  color: var(--oregon);
+  border-color: transparent;
+}
+
+.badge[data-crit="p2"] {
+  background: var(--muted);
+  color: var(--chicago);
+  border-color: transparent;
+}
+
+.des-appendix {
+  margin: 0.75rem 0 1.15rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg, 0.625rem);
+  background: var(--muted);
+  padding: 0.75rem 1rem 1rem;
+}
+
+.des-appendix > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--chicago);
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.des-appendix > summary::-webkit-details-marker {
+  display: none;
+}
+
+.des-appendix > summary::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 2px solid var(--chicago);
+  border-bottom: 2px solid var(--chicago);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+
+.des-appendix[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.des-appendix-body {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.des-comp-detail {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.5rem);
+  background: var(--card);
+  padding: 0.75rem 0.9rem;
+}
+
+.des-comp-detail h3,
+.des-comp-detail h4 {
+  margin: 0 0 0.5rem;
+  color: var(--casal);
+  font-size: 1rem;
+}
+
+.des-pre {
+  margin: 0;
+  padding: 0.75rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.5rem);
+}
+
+.des-tree {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.5rem);
+  white-space: pre;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}

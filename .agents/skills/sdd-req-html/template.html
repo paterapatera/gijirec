@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="{{HTML_LANG}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{FEATURE_NAME}} — {{LABEL_TITLE}}</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/theme/default-semantic-tokens.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/button/button.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/badge/badge.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/card/card.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/table/table.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/alert/alert.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codylindley/shadcn-html@v0.7.13-alpha/dist/components/separator/separator.css">
+
+  <style id="req-theme">
+  {{THEME_CSS}}
+  </style>
+</head>
+<body class="req-body">
+  <div class="req-page">
+    <header class="req-header">
+      <div>
+        <h1>{{FEATURE_NAME}}</h1>
+        <p class="req-meta">{{LABEL_TITLE}} · {{LABEL_GENERATED}}: <time datetime="{{GENERATED_AT_ISO}}">{{GENERATED_AT}}</time></p>
+      </div>
+      <div class="req-header-actions">
+        <a class="btn" data-variant="outline" href="requirements.md">{{LABEL_SOURCE}}</a>
+      </div>
+    </header>
+
+    <div class="alert" role="alert">
+      <i data-lucide="info" class="alert-icon" aria-hidden="true"></i>
+      <div class="alert-content">
+        <h5 class="alert-title">{{LABEL_TITLE}}</h5>
+        <p class="alert-description">{{LABEL_NOT_CANONICAL}}</p>
+      </div>
+    </div>
+
+    <nav class="req-toc" aria-label="{{LABEL_TOC}}">
+      <h2>{{LABEL_TOC}}</h2>
+      {{SLOT_TOC}}
+    </nav>
+
+    <hr class="separator" role="none">
+
+    <section class="req-section" id="intro">
+      <h2>{{LABEL_INTRO}}</h2>
+      <div class="req-intro">{{SLOT_INTRO}}</div>
+    </section>
+
+    {{SLOT_SCOPE}}
+
+    <section class="req-section" id="index">
+      <h2>{{LABEL_INDEX}}</h2>
+      <p class="req-meta">{{LABEL_LEGEND}}</p>
+      <div class="req-legend" aria-label="{{LABEL_LEGEND}}">
+        <span class="req-legend-item">
+          <span class="badge" data-ears="when">{{LABEL_EARS_WHEN}}</span>
+          <span class="req-legend-hint">{{LABEL_EARS_WHEN_HINT}}</span>
+        </span>
+        <span class="req-legend-item">
+          <span class="badge" data-ears="if">{{LABEL_EARS_IF}}</span>
+          <span class="req-legend-hint">{{LABEL_EARS_IF_HINT}}</span>
+        </span>
+        <span class="req-legend-item">
+          <span class="badge" data-ears="while">{{LABEL_EARS_WHILE}}</span>
+          <span class="req-legend-hint">{{LABEL_EARS_WHILE_HINT}}</span>
+        </span>
+        <span class="req-legend-item">
+          <span class="badge" data-ears="where">{{LABEL_EARS_WHERE}}</span>
+          <span class="req-legend-hint">{{LABEL_EARS_WHERE_HINT}}</span>
+        </span>
+        <span class="req-legend-item">
+          <span class="badge" data-ears="shall">{{LABEL_EARS_SHALL}}</span>
+          <span class="req-legend-hint">{{LABEL_EARS_SHALL_HINT}}</span>
+        </span>
+      </div>
+      {{SLOT_INDEX}}
+    </section>
+
+    {{SLOT_EXCEPTIONS}}
+
+    {{SLOT_REQUIREMENTS}}
+
+    <hr class="separator" role="none">
+
+    <footer class="req-footer">
+      <p>{{LABEL_SOURCE}}: <code>{{SOURCE_PATH}}</code></p>
+    </footer>
+  </div>
+
+  <!-- SLOT recipes (delete these comments from output; copy the matching block into the slots above) -->
+
+  <!-- recipe:toc
+  <ol>
+    <li><a href="#intro">{{LABEL_INTRO}}</a></li>
+    <li><a href="#scope">{{LABEL_SCOPE}}</a></li>
+    <li><a href="#index">{{LABEL_INDEX}}</a></li>
+    <li><a href="#exceptions">{{LABEL_EXCEPTIONS}}</a></li>
+    <li><a href="#req-1">1. TITLE</a></li>
+  </ol>
+  -->
+
+  <!-- recipe:stub — insert after intro when md has no numbered EARS ACs; drop #index from the shell
+  <div class="alert" role="alert">
+    <i data-lucide="circle-alert" class="alert-icon" aria-hidden="true"></i>
+    <div class="alert-content">
+      <h5 class="alert-title">{{LABEL_AC}}</h5>
+      <p class="alert-description">ACs are not in this document yet.</p>
+    </div>
+  </div>
+  -->
+
+  <!-- recipe:scope — omit whole section if all three cards would be empty; omit a card if its list is empty
+  <section class="req-section" id="scope">
+    <h2>{{LABEL_SCOPE}}</h2>
+    <div class="req-scope-grid">
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><i data-lucide="circle-check" aria-hidden="true"></i> {{LABEL_IN}}</h3>
+        </div>
+        <div class="card-content">{{SCOPE_IN_LIST}}</div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><i data-lucide="circle-x" aria-hidden="true"></i> {{LABEL_OUT}}</h3>
+        </div>
+        <div class="card-content">{{SCOPE_OUT_LIST}}</div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><i data-lucide="git-branch" aria-hidden="true"></i> {{LABEL_ADJ}}</h3>
+        </div>
+        <div class="card-content">{{SCOPE_ADJ_LIST}}</div>
+      </div>
+    </div>
+  </section>
+  -->
+
+  <!-- recipe:exceptions — omit if no If ACs
+  <section class="req-section" id="exceptions">
+    <h2>{{LABEL_EXCEPTIONS}}</h2>
+    <div class="table-container">
+      <table class="table" aria-label="{{LABEL_EXCEPTIONS}}">
+        <thead>
+          <tr class="table-row">
+            <th class="table-head" scope="col">{{LABEL_COL_REQ}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_NUM}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_COND}}</th>
+            <th class="table-head" scope="col">{{LABEL_COL_RESPONSE}}</th>
+          </tr>
+        </thead>
+        <tbody>{{EXCEPTION_ROWS}}</tbody>
+      </table>
+    </div>
+  </section>
+  -->
+
+  <!-- recipe:index-table
+  <div class="table-container">
+    <table class="table" aria-label="{{LABEL_INDEX}}">
+      <thead>
+        <tr class="table-row">
+          <th class="table-head" scope="col">{{LABEL_COL_ID}}</th>
+          <th class="table-head" scope="col">{{LABEL_COL_PURPOSE}}</th>
+          <th class="table-head" scope="col">{{LABEL_COL_AC_COUNT}}</th>
+          <th class="table-head" scope="col">{{LABEL_COL_TYPES}}</th>
+        </tr>
+      </thead>
+      <tbody>{{INDEX_ROWS}}</tbody>
+    </table>
+  </div>
+  -->
+
+  <!-- recipe:requirement
+  <details class="req-block" id="req-N" open>
+    <summary>要件 N: TITLE</summary>
+    <div class="req-block-body">
+      <div class="card req-story">
+        <div class="card-header">
+          <h3 class="card-title">{{LABEL_STORY}}</h3>
+        </div>
+        <div class="card-content">
+          <div class="req-story-grid">
+            <div>
+              <p class="req-story-label">{{LABEL_ROLE}}</p>
+              <p class="req-story-value">ROLE</p>
+            </div>
+            <div>
+              <p class="req-story-label">{{LABEL_CAPABILITY}}</p>
+              <p class="req-story-value">CAPABILITY</p>
+            </div>
+            <div>
+              <p class="req-story-label">{{LABEL_BENEFIT}}</p>
+              <p class="req-story-value">BENEFIT</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="req-subh">{{LABEL_AC}}</h3>
+        <div class="table-container">
+          <table class="table" aria-label="{{LABEL_AC}}">
+            <thead>
+              <tr class="table-row">
+                <th class="table-head" scope="col">{{LABEL_COL_NUM}}</th>
+                <th class="table-head" scope="col">{{LABEL_COL_SUBJECT}}</th>
+                <th class="table-head" scope="col">{{LABEL_COL_COND}}</th>
+                <th class="table-head" scope="col">{{LABEL_COL_TYPE}}</th>
+                <th class="table-head" scope="col">{{LABEL_COL_RESPONSE}}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="table-row">
+                <td class="table-cell">1</td>
+                <td class="table-cell">subject</td>
+                <td class="table-cell">condition</td>
+                <td class="table-cell"><span class="badge" data-ears="when">{{LABEL_EARS_WHEN}}</span></td>
+                <td class="table-cell">response</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="req-subh">{{LABEL_DECISION}}</h3>
+        <div class="table-container">
+          <table class="table req-dt" aria-label="{{LABEL_DECISION}}">
+            <thead>
+              <tr class="table-row">
+                <th class="table-head" scope="col"></th>
+                <th class="table-head" scope="col">{{LABEL_PATTERN}}1</th>
+                <th class="table-head" scope="col">{{LABEL_PATTERN}}2</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="table-row">
+                <th class="table-cell" scope="row">condition A</th>
+                <td class="table-cell"><span class="req-dt-y">Y</span></td>
+                <td class="table-cell"><span class="req-dt-n">N</span></td>
+              </tr>
+              <tr class="table-row req-dt-action">
+                <th class="table-cell" scope="row">response</th>
+                <td class="table-cell"><span class="req-dt-mark">○</span></td>
+                <td class="table-cell"></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="req-subh">{{LABEL_FLOW}}</h3>
+        <div class="req-diagram">
+          <pre class="mermaid">
+flowchart TD
+  a[event] --> b[response]
+          </pre>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="req-subh">{{LABEL_STATE}}</h3>
+        <div class="req-diagram">
+          <pre class="mermaid">
+stateDiagram-v2
+  [*] --> StateA
+  StateA --> StateB
+          </pre>
+        </div>
+      </div>
+    </div>
+  </details>
+  -->
+
+  <script src="https://unpkg.com/lucide@1.8.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.6.0/dist/mermaid.min.js"></script>
+  <script>
+    lucide.createIcons();
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: "base",
+      securityLevel: "strict",
+      themeVariables: {
+        primaryColor: "#c1e7e6",
+        primaryTextColor: "#5f5f5f",
+        primaryBorderColor: "#2c6b6a",
+        lineColor: "#5f5f5f",
+        secondaryColor: "#dedede",
+        tertiaryColor: "#ffffff",
+        fontFamily: "ui-sans-serif, system-ui, sans-serif"
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,363 @@
+/* sdd-req-html — palette → shadcn semantic tokens + preview chrome.
+   Paste this entire file into <style id="req-theme"> in the generated HTML. */
+
+:root {
+  --alto: #dedede;
+  --chicago: #5f5f5f;
+  --casal: #2c6b6a;
+  --azure: #3a5aad;
+  --plum: #8f3a7b;
+  --royal-purple: #6f48a0;
+  --oregon: #9b4100;
+  --jagged-ice: #c1e7e6;
+  --hawkes-blue: #cfdeff;
+  --classic-rose: #ffccef;
+  --snuff: #e3d8f5;
+  --almond: #f5d7c7;
+
+  --background: #ffffff;
+  --foreground: var(--chicago);
+  --card: #ffffff;
+  --card-foreground: var(--chicago);
+  --popover: #ffffff;
+  --popover-foreground: var(--chicago);
+  --primary: var(--casal);
+  --primary-foreground: #ffffff;
+  --secondary: var(--jagged-ice);
+  --secondary-foreground: var(--chicago);
+  --muted: #f6f6f6;
+  --muted-foreground: var(--chicago);
+  --accent: var(--jagged-ice);
+  --accent-foreground: var(--chicago);
+  --destructive: var(--oregon);
+  --destructive-foreground: #ffffff;
+  --border: var(--alto);
+  --input: var(--alto);
+  --ring: var(--casal);
+  --sidebar: #ffffff;
+  --sidebar-foreground: var(--chicago);
+  --sidebar-primary: var(--casal);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--jagged-ice);
+  --sidebar-accent-foreground: var(--chicago);
+  --sidebar-border: var(--alto);
+  --sidebar-ring: var(--casal);
+}
+
+html {
+  color-scheme: light;
+}
+
+body.req-body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  line-height: 1.55;
+}
+
+.req-page {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+.req-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.req-header h1 {
+  margin: 0 0 0.35rem;
+  color: var(--casal);
+  font-size: 1.75rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.req-meta {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--chicago);
+}
+
+.req-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.req-toc {
+  margin: 1.25rem 0;
+  padding: 1rem 1.15rem;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 0.625rem);
+}
+
+.req-toc h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--casal);
+}
+
+.req-toc ol {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.req-toc a {
+  color: var(--chicago);
+  text-decoration: none;
+}
+
+.req-toc a:hover {
+  color: var(--casal);
+  text-decoration: underline;
+}
+
+.req-section {
+  margin: 2rem 0;
+}
+
+.req-section > h2 {
+  margin: 0 0 0.75rem;
+  color: var(--casal);
+  font-size: 1.25rem;
+}
+
+.req-intro {
+  font-size: 1rem;
+}
+
+.req-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (max-width: 48rem) {
+  .req-scope-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.req-scope-grid .card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.req-scope-grid .card-title svg {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  color: var(--casal);
+}
+
+.req-scope-grid .card-content ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.alert-icon {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex-shrink: 0;
+  color: var(--casal);
+}
+
+.req-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0 0 0.85rem;
+}
+
+.req-legend-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+}
+
+.req-legend-hint {
+  font-size: 0.85rem;
+  color: var(--chicago);
+}
+
+.badge[data-ears="when"] {
+  background: var(--hawkes-blue);
+  color: var(--azure);
+  border-color: transparent;
+}
+
+.badge[data-ears="if"] {
+  background: var(--almond);
+  color: var(--oregon);
+  border-color: transparent;
+}
+
+.badge[data-ears="while"] {
+  background: var(--classic-rose);
+  color: var(--plum);
+  border-color: transparent;
+}
+
+.badge[data-ears="where"] {
+  background: var(--snuff);
+  color: var(--royal-purple);
+  border-color: transparent;
+}
+
+.badge[data-ears="shall"] {
+  background: var(--jagged-ice);
+  color: var(--casal);
+  border-color: transparent;
+}
+
+.req-story .req-story-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (max-width: 40rem) {
+  .req-story .req-story-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.req-story-label {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--casal);
+}
+
+.req-story-value {
+  margin: 0;
+}
+
+.req-block {
+  margin: 1rem 0 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 0.625rem);
+  background: var(--card);
+  padding: 0.85rem 1rem 1rem;
+}
+
+.req-block > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--casal);
+  font-size: 1.1rem;
+  font-weight: 650;
+}
+
+.req-block > summary::-webkit-details-marker {
+  display: none;
+}
+
+.req-block > summary::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 2px solid var(--casal);
+  border-bottom: 2px solid var(--casal);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+
+.req-block[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.req-block-body {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.req-subh {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  color: var(--casal);
+}
+
+.req-diagram {
+  overflow-x: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.5rem);
+  background: #fff;
+}
+
+.req-footer {
+  margin-top: 2.5rem;
+  font-size: 0.85rem;
+}
+
+.req-footer code {
+  font-size: 0.85em;
+}
+
+.table-container {
+  overflow-x: auto;
+}
+
+.req-dt th[scope="row"] {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.req-dt .req-dt-action {
+  background: var(--muted);
+}
+
+.req-dt-y,
+.req-dt-n,
+.req-dt-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.65rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.req-dt-y {
+  background: #d8efe6;
+  color: #1d6b4a;
+}
+
+.req-dt-n {
+  background: #fde4e1;
+  color: #b42318;
+}
+
+.req-dt-mark {
+  background: var(--hawkes-blue);
+  color: var(--azure);
+}
+
+.req-dt-na {
+  color: var(--chicago);
+  opacity: 0.65;
+}
