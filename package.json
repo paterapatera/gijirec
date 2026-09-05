@@ -1,0 +1,27 @@
+{
+  "name": "gijirec",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "format": "biome check --write .",
+    "format-check": "biome check .",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "arch": "depcruise src --config .dependency-cruiser.cjs",
+    "knip": "knip",
+    "check": "npm run format-check && npm run typecheck && npm run lint && npm run arch && npm run knip"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.12",
+    "@eslint/js": "^10.0.1",
+    "dependency-cruiser": "^18.2.0",
+    "eslint": "^10.10.0",
+    "eslint-plugin-sonarjs": "^4.2.0",
+    "knip": "^6.34.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.69.0"
+  }
+}
