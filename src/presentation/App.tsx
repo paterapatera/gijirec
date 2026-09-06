@@ -1,67 +1,122 @@
+import { invoke } from "@tauri-apps/api/core";
+import { type Ref, useCallback, useMemo, useRef } from "react";
+import type { SaveTranscriptSessionResult } from "../infrastructure/tauri/editorCommands";
+import type { AiTranscriptEditorRef } from "./components/AiTranscriptEditor";
+import { AppStatusPanels } from "./components/AppStatusPanels";
+import { DeviceSelectorPanel } from "./components/DeviceSelectorPanel";
+import type { HandwritingEditorRef } from "./components/HandwritingEditor";
+import { TranscriptEditorView } from "./components/TranscriptEditorView";
+import { Toaster } from "./components/ui/sonner";
 import type { CaptureEventListenFn } from "./hooks/capture-status";
 import type { TranscribeEventListenFn } from "./hooks/transcribe-status";
+import type { TranscriptBlockEventListenFn } from "./hooks/transcript-blocks";
 import { useCaptureStatus } from "./hooks/useCaptureStatus";
+import type { UseEditorSettingsOptions } from "./hooks/useEditorSettings";
+import { useEditorSettings } from "./hooks/useEditorSettings";
+import { useSaveTranscript } from "./hooks/useSaveTranscript";
 import { useTranscribeStatus } from "./hooks/useTranscribeStatus";
 import "./App.css";
 
-export interface AppProps {
-  listenFn?: CaptureEventListenFn & TranscribeEventListenFn;
+const SESSION_ID = "gijirec-session";
+
+function assignRef<T>(ref: Ref<T> | undefined, value: T | null): void {
+  if (ref === undefined || ref === null) {
+    return;
+  }
+  if (typeof ref === "function") {
+    ref(value);
+  } else {
+    ref.current = value;
+  }
 }
 
-export function App({ listenFn }: AppProps = {}) {
+export interface AppProps {
+  listenFn?: CaptureEventListenFn & TranscribeEventListenFn & TranscriptBlockEventListenFn;
+  invokeFn?: UseEditorSettingsOptions["invokeFn"];
+  handwritingEditorRef?: Ref<HandwritingEditorRef>;
+  aiTranscriptEditorRef?: Ref<AiTranscriptEditorRef>;
+  showSaveResultFn?: (result: SaveTranscriptSessionResult) => void;
+}
+
+export function App({
+  listenFn,
+  invokeFn = invoke,
+  handwritingEditorRef: externalHandwritingRef,
+  aiTranscriptEditorRef: externalAiRef,
+  showSaveResultFn,
+}: AppProps = {}) {
   const captureStatus = useCaptureStatus(listenFn === undefined ? {} : { listenFn });
   const transcribeStatus = useTranscribeStatus(listenFn === undefined ? {} : { listenFn });
+
+  const settingsHook = useEditorSettings({ invokeFn });
+
+  const handwritingEditorRef = useRef<HandwritingEditorRef>(null);
+  const aiTranscriptEditorRef = useRef<AiTranscriptEditorRef>(null);
+
+  const mergedHandwritingRef = useCallback(
+    (value: HandwritingEditorRef | null) => {
+      handwritingEditorRef.current = value;
+      assignRef(externalHandwritingRef, value);
+    },
+    [externalHandwritingRef],
+  );
+  const mergedAiRef = useCallback(
+    (value: AiTranscriptEditorRef | null) => {
+      aiTranscriptEditorRef.current = value;
+      assignRef(externalAiRef, value);
+    },
+    [externalAiRef],
+  );
+
+  const handwritingEditorPort = useMemo(
+    () => ({
+      getPlainText: () => handwritingEditorRef.current?.getPlainText() ?? "",
+    }),
+    [],
+  );
+
+  const aiEditorPort = useMemo(
+    () => ({
+      getBlocks: () => aiTranscriptEditorRef.current?.getBlocks() ?? [],
+    }),
+    [],
+  );
+
+  const { onSave, isSaving } = useSaveTranscript({
+    handwritingEditor: handwritingEditorPort,
+    aiEditor: aiEditorPort,
+    settings: settingsHook.settings,
+    sessionId: SESSION_ID,
+    invokeFn,
+    ...(showSaveResultFn !== undefined ? { showSaveResultFn } : {}),
+  });
 
   return (
     <main className="app">
       <h1 className="app-title">gijirec Audio Capture & Transcribe</h1>
-      <section className="status-panel" aria-live="polite">
-        <p className="status-label">キャプチャ状態</p>
-        <p className="status-phase" data-testid="capture-phase">
-          {captureStatus.phase}
-        </p>
-      </section>
-      <section className="status-panel" aria-live="polite">
-        <p className="status-label">文字起こし状態</p>
-        <p className="status-phase" data-testid="transcribe-phase">
-          {transcribeStatus.phase}
-        </p>
-      </section>
-      {transcribeStatus.phase === "loading_model" && transcribeStatus.modelProgress !== null ? (
-        <section className="progress-panel" aria-live="polite">
-          <p className="progress-label" data-testid="model-progress-status">
-            モデル取得中 ({transcribeStatus.modelProgress.status}):{" "}
-            {transcribeStatus.modelProgress.percent !== null
-              ? `${String(transcribeStatus.modelProgress.percent)}%`
-              : `${String(transcribeStatus.modelProgress.bytes_downloaded)} bytes`}
-          </p>
-          <progress
-            data-testid="model-progress-bar"
-            value={transcribeStatus.modelProgress.percent ?? undefined}
-            max={100}
-          />
-        </section>
-      ) : null}
-      {captureStatus.error !== null ? (
-        <section className="error-panel" role="alert">
-          <p className="error-message" data-testid="error-message">
-            {captureStatus.error.message_ja}
-          </p>
-          <p className="error-action" data-testid="error-action">
-            {captureStatus.error.action_ja}
-          </p>
-        </section>
-      ) : null}
-      {transcribeStatus.error !== null ? (
-        <section className="error-panel" role="alert">
-          <p className="error-message" data-testid="transcribe-error-message">
-            {transcribeStatus.error.message_ja}
-          </p>
-          <p className="error-action" data-testid="transcribe-error-action">
-            {transcribeStatus.error.action_ja}
-          </p>
-        </section>
-      ) : null}
+      <AppStatusPanels
+        capturePhase={captureStatus.phase}
+        captureError={captureStatus.error}
+        transcribePhase={transcribeStatus.phase}
+        transcribeError={transcribeStatus.error}
+        modelProgress={transcribeStatus.modelProgress}
+      />
+      <DeviceSelectorPanel
+        invokeFn={invokeFn}
+        {...(listenFn !== undefined ? { listenFn, captureListenFn: listenFn } : {})}
+      />
+      <TranscriptEditorView
+        onSave={onSave}
+        isSaving={isSaving}
+        settings={settingsHook.settings}
+        isLoading={settingsHook.isLoading}
+        pickSaveDirectory={settingsHook.pickSaveDirectory}
+        setExportJsonlEnabled={settingsHook.setExportJsonlEnabled}
+        {...(listenFn !== undefined ? { listenFn } : {})}
+        handwritingEditorRef={mergedHandwritingRef}
+        aiTranscriptEditorRef={mergedAiRef}
+      />
+      <Toaster />
     </main>
   );
 }

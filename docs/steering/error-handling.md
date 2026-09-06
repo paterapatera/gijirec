@@ -83,7 +83,7 @@ CaptureUserErrorPayload {
 
 ## Logging & Observability
 
-- **tracing ターゲット**: `gijirec_capture`（`RUST_LOG=gijirec_capture=info`）、`gijirec_transcribe`（文字起こし）
+- **tracing ターゲット**: `gijirec_capture`、`gijirec_transcribe`、`gijirec_editor`
 - **presentation 層**: `CaptureObservability` トレイト経由。マクロは host（`run()`）側で実装（bylaw 対策）
 - **ログに含める**: phase 遷移、`capture_buffer_drops_total`、error code、correlation `session_id`
 - **ログに含めない**: PCM サンプル配列、会議内容、マイクデバイス表示名の生文字列
@@ -108,10 +108,13 @@ capture と transcribe で同パターンを踏襲:
 
 **Transcribe 固有**: `TranscribeError::to_user_facing()` → `whisper-transcribe://error`。上流キャプチャ `error` は `UPSTREAM_CAPTURE_ERROR` で伝播。
 
+**Editor 固有**: `EditorError::to_user_facing()`。保存／設定失敗はイベントではなく command 結果の `error` フィールド。UI は `SaveResultToast`（Sonner）で `message_ja` / `action_ja` を出す。
+
 ## Retry
 
 - **音声キャプチャ**: リアルタイムコールバック内での自動リトライなし。失敗は phase `error` + イベント
 - **Whisper**: 推論キューはワーカースレッド内で処理。失敗は phase `error` + `whisper-transcribe://error`
+- **保存**: `SaveOrchestrator` の `isSaving` ガード。進行中の二重保存はしない。部分失敗は `SAVE_PARTIAL_FAILURE`
 - **Tauri emit 失敗**: `EmitError` をログ。UI には既に phase が `error` なら二重通知しない
 
 ## Testing Requirements
@@ -130,5 +133,5 @@ capture と transcribe で同パターンを踏襲:
 - 境界（外部送信なし）: `docs/architecture/boundaries.md`
 
 ---
-_updated_at: 2026-09-06（Sync: transcribe エラー伝播・ログターゲットを反映）_
+_updated_at: 2026-09-06（Sync: EditorError・command 結果エラー・gijirec_editor を反映）_
 _Focus on patterns and decisions, not every error variant._

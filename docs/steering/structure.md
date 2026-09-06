@@ -23,14 +23,14 @@
 
 ### TypeScript Frontend
 **Location**: `src/`  
-**Purpose**: Web UI、Tauri IPC のフロント側（キャプチャ・文字起こしの状態表示）  
+**Purpose**: Web UI、Tauri IPC のフロント側（キャプチャ・文字起こし状態＋転写エディタ）  
 **Layers**（dependency-cruiser で強制）:
-- `src/domain/` — ドメインモデル（外レイヤに依存しない）
-- `src/application/` — ユースケース（domain のみ）
-- `src/infrastructure/` — 外部アダプタ（domain のみ）
-- `src/presentation/` — UI・composition root（`App.tsx`、契約ミラー用 hooks）
+- `src/domain/` — ドメインモデル（外レイヤに依存しない）。転写は `domain/transcript/`（型・Markdown/JSONL エクスポート）
+- `src/application/` — ユースケース（domain のみ）。転写は `application/transcript/`（blockReducer、Slate プラグイン、saveOrchestrator）
+- `src/infrastructure/` — 外部アダプタ（domain のみ）。`infrastructure/tauri/editorCommands.ts` が保存／設定 invoke をラップ
+- `src/presentation/` — UI・composition root（`App.tsx`、hooks、`components/` の二重エディタと chrome）
 
-**Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_phase` / `get_transcribe_status` で同期。テスト時は `listenFn` / `invokeFn` を注入。
+**Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_phase` / `get_transcribe_status` / `get_editor_settings` で同期。テスト時は `listenFn` / `invokeFn` を注入。エディタ契約の command ミラーは hooks ではなく `infrastructure/tauri/editorCommands.ts`。
 
 ### Rust Backend
 **Location**: `src-tauri/crates/`  
@@ -39,14 +39,14 @@
 
 | Crate | 依存可能 | 主なモジュール |
 |-------|----------|----------------|
-| `gijirec-domain` | なし（最内層） | `audio/`（PcmChunk, Phase, Error）、`transcribe/`（TranscriptBlock, TranscribePhase, TranscribeError） |
-| `gijirec-application` | domain | `capture/`（mixer, orchestrator）、`transcribe/`（orchestrator, block_emitter, model_orchestrator, port traits） |
-| `gijirec-infrastructure` | domain | `audio/`（mic, resampler, platform/*）、`transcribe/`（WhisperCppAdapter, ModelStore, ModelDownloader, TranscribeWorker） |
-| `gijirec-presentation` | domain, application, infrastructure | `tauri/`（capture commands, events, lifecycle, pcm_bus）、`transcribe/`（event_emitter, lifecycle_hook, pcm_ingest_consumer, transcript_block_bus, status_cache） |
+| `gijirec-domain` | なし（最内層） | `audio/`、`transcribe/`、`editor/`（EditorSettings, Save リクエスト, EditorError） |
+| `gijirec-application` | domain | `capture/`、`transcribe/`、`editor/`（SettingsService, SaveService — ファイル I/O はここ。infrastructure には editor アダプタを置かない） |
+| `gijirec-infrastructure` | domain | `audio/`、`transcribe/`（Whisper / モデル取得。editor なし） |
+| `gijirec-presentation` | domain, application, infrastructure | `tauri/`（capture）、`transcribe/`、`editor/`（command 実装・observability） |
 
-**Presentation パターン**: `gijirec-presentation` が composition root。`tauri/` と `transcribe/` がそれぞれ capture / transcribe の Tauri 境界を担う。`src-tauri/src/compose.rs` がホスト側でパイプラインを結線。契約イベント名（例: `audio-capture://phase-changed`、`whisper-transcribe://phase-changed`）でフロントへ通知。
+**Presentation パターン**: `gijirec-presentation` が composition root。`tauri/` / `transcribe/` / `editor/` が各ドメインの Tauri 境界。`src-tauri/src/compose.rs` と `commands.rs` がホスト側で結線。契約イベント（`audio-capture://…`、`whisper-transcribe://…`）と editor command（`save_transcript_session` 等）でフロントと同期。
 
-**IPC 同期パターン**: モデル取得など長時間処理中に orchestrator ロックを避けるため、`TranscribeStatusCache` がフェーズ／進捗スナップショットを保持し、`get_transcribe_phase` / `get_transcribe_status` でマウント時同期する。
+**IPC 同期パターン**: モデル取得など長時間処理中に orchestrator ロックを避けるため、`TranscribeStatusCache` がフェーズ／進捗スナップショットを保持し、`get_transcribe_phase` / `get_transcribe_status` でマウント時同期する。エディタ設定は `get_editor_settings` / `set_editor_settings`（`app_data_dir/editor-settings.json`）。保存は command 往復（イベントではない）。
 
 ## Naming Conventions
 
@@ -89,10 +89,13 @@ Rust は crate 間の `path` 依存のみ。presentation が composition root。
 
 | 対象 | コマンド | 検証内容 |
 |------|----------|----------|
+| **完成判定** | `bun run verify` | 下記 lint・テスト一式 |
 | TS 全体 | `bun run check` | format, types, lint, arch, dead code |
-| TS テスト | `bun run test` | 明示ファイルリスト（hooks + App） |
+| TS テスト | `bun run test` | フロント4レイヤ（capture / transcribe / editor） |
+| TS arch fixture | `bun run test:arch` | dependency-cruiser レイヤルールの回帰テスト |
 | Rust 全体 | `bun run rust:check` | fmt, types, clippy, bylaw, dead code |
+| Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-06（Sync: transcribe モジュール・StatusCache・IPC 同期パターンを反映）_
+_updated_at: 2026-09-06（Sync: transcript-editor の TS/Rust モジュールと IPC を反映）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_

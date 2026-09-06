@@ -39,11 +39,11 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 | Spec | 状態 | 備考 |
 |------|------|------|
 | audio-capture | 完了 | 二重キャプチャ・PCM ミックス・ライフサイクル・状態 UI |
-| whisper-transcribe | 完了（バックエンド＋状態 UI） | ローカル推論・モデル取得・フェーズ／進捗表示。転写テキストの画面表示は未着手 |
-| transcript-editor | 未着手 | 部分ロック編集・Markdown 出力 |
+| whisper-transcribe | 完了 | ローカル推論・モデル取得・フェーズ／進捗。ブロック供給は `whisper-transcribe://block-appended` |
+| transcript-editor | 実装済み（葉タスク完了） | 二重エディタ・部分ロック・保存／設定 IPC。spec.json は `tasks-approved` のまま親チェック未更新 |
 
-**現 UI の範囲**: キャプチャ／文字起こしフェーズ、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）。転写ブロックの表示・編集は transcript-editor spec で追加する。
+**現 UI の範囲**: キャプチャ／文字起こしフェーズ、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、手書き＋AI 転写の二重エディタ、保存ツールバー・結果トースト。
 
 ---
-_updated_at: 2026-09-06（Sync: whisper-transcribe 完了・UI 範囲を反映）_
+_updated_at: 2026-09-06（Sync: transcript-editor 実装・UI 範囲を反映）_
 _Focus on patterns and purpose, not exhaustive feature lists_

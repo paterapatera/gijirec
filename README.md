@@ -1,6 +1,14 @@
 # gijirec
 
-Web 会議のマイク入力とシステム音声を同時に取得し、議事録用の PCM ストリームへ合成する Tauri デスクトップアプリです。
+Web 会議中にマイクとシステム音声を仮想オーディオデバイスなしで同時取り込みし、ローカル Whisper で低遅延に文字起こし、その場で手動編集して Markdown（任意で JSONL）保存できる Tauri デスクトップアプリです。
+
+## できること
+
+- マイク＋スピーカー（ループバック）を 16 kHz モノラル PCM にリアルタイム合成
+- whisper.cpp（`whisper-cpp-plus`）によるローカル逐次文字起こし
+- 手書きメモと AI 転写の二重エディタ（部分ロック、タイムスタンプ維持）
+- 保存先ディレクトリへの Markdown / 任意 JSONL 出力
+- モデル初回取得後はオフライン運用（クラウド STT・Python ランタイムなし）
 
 ## 対応プラットフォーム
 
@@ -64,17 +72,34 @@ cargo tauri dev
 ## 品質チェック
 
 ```bash
+# 完成判定（lint + test 一式。CI 相当の最終ゲート）
+bun run verify
+
+# 個別実行
 # TypeScript: format / typecheck / lint / arch / knip
 bun run check
 
+# フロント単体テスト（src/{presentation,application,domain,infrastructure}）
+bun run test
+
+# depcruise レイヤルールの fixture テスト
+bun run test:arch
+
 # Rust: fmt / check / clippy / bylaw / machete
 bun run rust:check
+
+# Rust: cargo test --workspace
+bun run rust:test
 ```
 
 | コマンド | 内容 |
 |----------|------|
+| `bun run verify` | **完成判定** — 下記の lint・テストをすべて実行 |
 | `bun run check` | Biome・ESLint・TypeScript・dependency-cruiser・knip |
+| `bun run test` | フロント4レイヤ配下のテスト（キャプチャ／文字起こし／エディタ） |
+| `bun run test:arch` | dependency-cruiser レイヤルールの fixture テスト |
 | `bun run rust:check` | rustfmt・cargo check・clippy・cargo bylaw・cargo machete |
+| `bun run rust:test` | Rust ワークスペースの `cargo test` |
 | `bun run arch` | フロントエンドレイヤ依存検証（dependency-cruiser） |
 | `bun run rust:arch` | Rust crate レイヤ依存検証（cargo bylaw） |
 
@@ -151,6 +176,8 @@ RUST_LOG=gijirec_capture=info cargo tauri dev --manifest-path src-tauri/Cargo.to
 ├── docs/specs/           # 機能仕様（spec-driven development）
 └── package.json          # Bun スクリプト定義
 ```
+
+機能仕様は `docs/specs/`（audio-capture / whisper-transcribe / transcript-editor）、横断メモリは `docs/steering/`、IPC 契約は `docs/contracts/` です。
 
 フロントエンドは `dependency-cruiser`、Rust は `cargo bylaw` でレイヤ依存を CI 検証します。`src/` から `src-tauri/` への直接 import は禁止です。
 

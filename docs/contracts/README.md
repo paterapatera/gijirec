@@ -14,8 +14,13 @@
 |-----------|------------------|------------------|
 | `audio-capture-pcm.md` | 下流向け 16 kHz モノラル PCM チャンク形状・供給規約 | audio-capture |
 | `audio-capture-status.md` | キャプチャフェーズ・利用者向けエラー Tauri イベント | audio-capture |
+| `audio-device-selection.md` | マイク／スピーカー一覧・セッション選択 Tauri command / イベント | audio-device-selection |
 | `whisper-transcribe-blocks.md` | 下流向けタイムスタンプ付きテキストブロック形状・追記供給規約 | whisper-transcribe |
 | `whisper-transcribe-status.md` | 文字起こしフェーズ・モデル進捗・利用者向けエラー Tauri イベント | whisper-transcribe |
+| `transcript-editor-save.md` | 議事録保存コマンド・JST サブディレクトリ・Markdown/JSONL 出力形状 | transcript-editor |
+| `transcript-editor-settings.md` | 保存先ディレクトリ・JSONL 出力設定の永続化 | transcript-editor |
+| `transcript-editor-status.md` | 保存・設定操作の利用者向けエラー形状 | transcript-editor |
+| `release-logging-persistence.md` | リリースビルド診断ログの保存場所・セッション ID・禁止フィールド | release-logging |
 
 <!-- 例:
 | contracts/billing-api.md | Billing HTTP API shape | billing |

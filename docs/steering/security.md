@@ -15,7 +15,7 @@ gijirec のセキュリティ姿勢。ローカルファーストのデスクト
 | 脅威 | 対策 |
 |------|------|
 | 音声の意図しない外部送信 | キャプチャ実装にネットワーク送信なし（boundaries 準拠） |
-| ディスクへの音声残存 | v1 は PCM の意図的永続化なし。将来保存する spec では明示的オプトイン |
+| ディスクへの音声残存 | PCM の意図的永続化なし。議事録テキストはユーザー明示の保存操作のみ（Markdown / 任意 JSONL） |
 | 権限の過剰要求 | 必要な OS 権限のみ（マイク + macOS 画面収録/SCK） |
 | ログ・クラッシュレポートからの漏洩 | PCM・転写テキストを tracing に出さない |
 | サプライチェーン | Bun lock + Cargo.lock を正本。定期的な依存更新は別プロセス |
@@ -43,7 +43,8 @@ gijirec のセキュリティ姿勢。ローカルファーストのデスクト
 ### 転写テキスト
 
 - ローカルメモリ + `TranscriptBlockBus` + Tauri `whisper-transcribe://block-appended` イベント
-- ディスク永続化はユーザー明示保存（transcript-editor spec）まで行わない
+- ディスクへは `save_transcript_session` のみ。保存先はユーザーが選んだディレクトリ（設定は `app_data_dir/editor-settings.json`）
+- ログターゲット `gijirec_editor` では転写全文・手書き全文を出さない
 - クラウド STT は product スコープ外
 
 ### ログ
@@ -66,8 +67,9 @@ gijirec のセキュリティ姿勢。ローカルファーストのデスクト
 ## Input Validation
 
 - **契約境界**: `PcmChunk` の frame_count / sample_rate 制約を domain で検証
-- **Tauri command**: 将来追加する command は presentation で入力を検証し、不正は typed error
-- **フロント**: ユーザー入力は transcript-editor spec で扱う。v1 UI は表示のみで入力面は最小
+- **Tauri command**: presentation で入力を検証し、不正は typed `EditorError` / `UserFacingError`
+- **保存パス**: ディレクトリ traversal を拒否。出力は設定ディレクトリ配下の JST 日付サブディレクトリのみ
+- **フロント**: 二重エディタ入力は TS domain / Slate プラグイン。保存は invoke 経由のみ
 
 ## Dependency & Build
 
@@ -95,5 +97,5 @@ gijirec のセキュリティ姿勢。ローカルファーストのデスクト
 - 契約（PCM 非送信）: `docs/contracts/audio-capture-pcm.md`
 
 ---
-_updated_at: 2026-09-06（Sync: transcribe PCM 経路・モデル取得・転写テキストを反映）_
+_updated_at: 2026-09-06（Sync: 明示保存・設定永続化・editor ログマスキングを反映）_
 _Focus on local-first desktop posture, not enterprise IAM patterns._

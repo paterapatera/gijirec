@@ -16,7 +16,9 @@ gijirec のテスト方針。何をどこで検証し、何を CI に載せな�
 | 対象 | 場所 | 命名 |
 |------|------|------|
 | React コンポーネント | `src/presentation/**/*.test.tsx` | 実装ファイルと同階層 |
+| 統合テスト（複数コンポーネント跨ぎ） | `src/presentation/integration/*.integration.test.tsx` | 配線・保存フローなど |
 | React hooks | `src/presentation/hooks/*.test.ts` | 同上 |
+| TS domain / application | `src/domain/**/*.test.ts`、`src/application/**/*.test.ts` | 同上（転写エクスポート・reducer・プラグイン） |
 | アーキテクチャ検証 | `scripts/*.test.ts` | レイヤルールの fixture テスト |
 | Rust ユニット | 各 crate の `#[cfg(test)] mod tests` | モジュール内 |
 | Rust 統合 | `src-tauri/crates/*/tests/*.rs` | crate 外統合テスト |
@@ -26,15 +28,19 @@ gijirec のテスト方針。何をどこで検証し、何を CI に載せな�
 ### 実行
 
 ```bash
-# フロント（個別ファイル推奨 — 一括 bun test は depcruise fixture と干渉しうる）
-bun test src/presentation/hooks/useCaptureStatus.test.ts
-bun test src/presentation/hooks/useTranscribeStatus.test.ts
-bun test src/presentation/App.test.tsx
+# 完成判定（lint + test 一式）
+bun run verify
 
-# 品質ゲート（CI 相当）
+# 個別
+# フロント（ルート一括 bun test は src-tauri の whisper fixture と scripts の depcruise fixture に当たる）
+bun test src/presentation src/application src/domain src/infrastructure
+
+# 品質ゲート（CI 相当の静的解析）
 bun run check          # format / typecheck / lint / arch / knip
-bun run test           # 上記フック・App テスト（明示リスト）
-bun run rust:check     # fmt / clippy / bylaw / machete（cargo test は spec Validation で追加）
+bun run test           # フロント4レイヤ（capture / transcribe / editor）
+bun run test:arch      # depcruise レイヤルール fixture
+bun run rust:check     # fmt / clippy / bylaw / machete
+bun run rust:test      # cargo test --workspace
 ```
 
 ## Test Types
@@ -53,9 +59,9 @@ bun run rust:check     # fmt / clippy / bylaw / machete（cargo test は spec Va
 
 ### Component / Hook（TypeScript presentation）
 
-- **対象**: `useCaptureStatus`、`useTranscribeStatus`、`App` のフェーズ表示・エラー表示・モデル進捗
+- **対象**: キャプチャ／文字起こしフックと `App` のフェーズ表示。エディタは二重エディタ・ツールバー・保存トースト・プラグイン
 - **依存**: Tauri を起動しない。`listenFn` / `invokeFn` を注入
-- **DOM**: `happy-dom` + `@testing-library/react`（`test-setup.ts` で一度だけ登録）
+- **DOM**: `happy-dom` + `@testing-library/react`（`src/test-setup.ts` で一度だけ登録。全レイヤのテストから import 可）
 
 ```typescript
 // パターン: mock listen + emit で Tauri イベントを再現
@@ -82,7 +88,7 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 
 ## Mocking Principles
 
-- **モックする**: Tauri `listen` / `invoke`、OS 音声 API、Whisper 推論（統合テストではモック adapter）
+- **モックする**: Tauri `listen` / `invoke`、OS 音声 API、Whisper 推論、ディレクトリ選択ダイアログ
 - **モックしない**: テスト対象の hook / コンポーネント / domain 変換ロジック
 - **ファクトリ**: 契約型（`CapturePhaseChanged`, `CaptureUserError`）はインラインで最小構成
 - **クリーンアップ**: `afterEach(cleanup)`、hook テストは unmount で unlisten を検証
@@ -107,5 +113,5 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 - 品質ゲート一覧: `docs/steering/tech.md`
 
 ---
-_updated_at: 2026-09-06（Sync: transcribe テスト・check/test スクリプトを反映）_
+_updated_at: 2026-09-06（Sync: bun run test を src/ 配下に拡大）_
 _Focus on patterns and decisions. Tool-specific config lives in package.json / Cargo.toml._

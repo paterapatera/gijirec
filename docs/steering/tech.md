@@ -26,7 +26,8 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 | 文字起こし | `whisper-cpp-plus`（`WhisperCppAdapter`） | VAD 駆動ストリーミング推論。専用ワーカースレッド + rtrb |
 | 転写ブロック配信 | `TranscriptBlockBus`（presentation） | `whisper-transcribe://block-appended` で追記のみ配信 |
 | マウント同期 | `TranscribeStatusCache`（presentation） | モデル取得中でもブロックしないフェーズ／進捗スナップショット |
-| エディタ | Slate.js / Lexical 等（設計で確定） | 部分ロック付きストリーミング表示（未着手） |
+| エディタ | Slate.js（編集面）+ shadcn/ui + Sonner | 部分ロック付き二重エディタ（ADR-0005 / ADR-0006） |
+| 保存ダイアログ | `@tauri-apps/plugin-dialog` | 保存先ディレクトリ選択（`pick_save_directory`） |
 | アーキテクチャ検証 | cargo bylaw、dependency-cruiser | レイヤ依存の自動チェック |
 
 ## Development Standards
@@ -55,7 +56,7 @@ bun run rust:arch     # cargo bylaw（Rust レイヤ）
 
 - **Frontend**: Bun 組み込みテスト（`bun:test`）+ happy-dom + Testing Library。フックは injectable `listenFn` / `invokeFn` で Tauri なし単体テスト
 - **Rust**: crate 内ユニットテスト、presentation の統合テスト（合成 rtrb・パイプラインスモーク）
-- **品質ゲート**: `bun run check` は format / typecheck / lint / arch（depcruise）/ knip。`bun run test` は明示ファイルリスト（capture + transcribe フック含む）。depcruise fixture は `scripts/verify-depcruise-layers.test.ts`。長時間性能・E2E は手動チェックリスト（CI 対象外）
+- **品質ゲート**: `bun run verify` が完成判定（`check` + `test` + `test:arch` + `rust:check` + `rust:test`）。`bun run check` は format / typecheck / lint / arch（depcruise）/ knip。`bun run test` は `src/{presentation,application,domain,infrastructure}`。`bun run test:arch` は `scripts/verify-depcruise-layers.test.ts`。長時間性能・E2E は手動チェックリスト（CI 対象外）
 - **方針**: 契約形状は `docs/contracts/` を正本とし、feature spec の Validation フェーズでテストを追加
 
 ## Development Environment
@@ -70,12 +71,17 @@ bun run rust:arch     # cargo bylaw（Rust レイヤ）
 ### Common Commands
 
 ```bash
+# 完成判定（lint + test 一式）
+bun run verify
+
 # Frontend quality gate
 bun run check          # format + typecheck + lint + arch + knip
-bun run test           # 明示ファイルリスト（App + capture/transcribe hooks）
+bun run test           # src/{presentation,application,domain,infrastructure}
+bun run test:arch      # depcruise layer fixture
 
 # Rust quality gate
 bun run rust:check     # fmt + check + clippy + bylaw + machete
+bun run rust:test      # cargo test --workspace
 
 # Desktop dev
 cd src-tauri && cargo tauri dev   # beforeDevCommand で bun run dev を自動実行
@@ -99,5 +105,5 @@ bun run rust:typecheck
 永続的な技術判断は `docs/architecture/adr/` に ADR として記録する。
 
 ---
-_updated_at: 2026-09-06（Sync: ADR-0004 kotoba-whisper モデルを反映）_
+_updated_at: 2026-09-06（Sync: bun run test を src/ 配下に拡大）_
 _Document standards and patterns, not every dependency_
