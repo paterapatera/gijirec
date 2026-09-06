@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { setupTestDom } from "../test-setup";
+import { setupTestDom } from "../../test-setup";
 import type { CaptureEventListenFn, CapturePhaseChanged, CaptureUserError } from "./capture-status";
 import { ERROR_EVENT, INITIAL_CAPTURE_STATUS, PHASE_CHANGED_EVENT } from "./capture-status";
 import { useCaptureStatus } from "./useCaptureStatus";

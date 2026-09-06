@@ -14,7 +14,7 @@ export default defineConfig(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ["eslint.config.js"],
+          allowDefaultProject: ["eslint.config.js", "postcss.config.js", "tailwind.config.ts"],
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -34,8 +34,20 @@ export default defineConfig(
     },
   },
   {
-    files: ["eslint.config.js"],
+    // Plain JS entry points are not part of the TS project (no allowJs), so lint them
+    // without type information instead of failing in the project service.
+    files: ["eslint.config.js", "scripts/**/*.mjs"],
     extends: [tseslint.configs.disableTypeChecked],
+  },
+  {
+    // Node CLI wrappers: declare Node globals and allow spawning `cargo` from PATH.
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: { process: "readonly" },
+    },
+    rules: {
+      "sonarjs/no-os-command-from-path": "off",
+    },
   },
   {
     ignores: [
@@ -49,7 +61,7 @@ export default defineConfig(
       "scripts/**/*.test.ts",
       "src/**/*.test.ts",
       "src/**/*.test.tsx",
-      "src/presentation/test-setup.ts",
+      "src/test-setup.ts",
     ],
   },
 );

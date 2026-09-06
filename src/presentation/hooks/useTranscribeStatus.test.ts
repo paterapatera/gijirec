@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { setupTestDom } from "../test-setup";
+import { setupTestDom } from "../../test-setup";
 import type {
   ModelDownloadProgress,
   TranscribeEventListenFn,

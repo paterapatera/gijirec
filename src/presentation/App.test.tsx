@@ -1,5 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import type { SaveTranscriptSessionResult } from "../infrastructure/tauri/editorCommands";
+import { setupTestDom } from "../test-setup";
 import { App } from "./App";
 import type {
   CaptureEventListenFn,
@@ -7,6 +9,8 @@ import type {
   CaptureUserError,
 } from "./hooks/capture-status";
 import { ERROR_EVENT, PHASE_CHANGED_EVENT } from "./hooks/capture-status";
+import type { EditorSettings } from "./hooks/editor-settings";
+import { DEFAULT_EDITOR_SETTINGS } from "./hooks/editor-settings";
 import type {
   ModelDownloadProgress,
   TranscribeEventListenFn,
@@ -18,7 +22,7 @@ import {
   TRANSCRIBE_ERROR_EVENT,
   PHASE_CHANGED_EVENT as TRANSCRIBE_PHASE_CHANGED_EVENT,
 } from "./hooks/transcribe-status";
-import { setupTestDom } from "./test-setup";
+import { BLOCK_APPENDED_EVENT } from "./hooks/transcript-blocks";
 
 beforeAll(() => {
   setupTestDom();
@@ -55,10 +59,195 @@ function createMockListen() {
   return { listenFn, emit, listeners };
 }
 
+const mockInvokeFn = async (cmd: string, _args?: Record<string, unknown>) => {
+  if (cmd === "get_editor_settings") {
+    return { save_directory: null, export_jsonl_enabled: false };
+  }
+  if (cmd === "list_audio_devices") {
+    return { inputs: [], outputs: [] };
+  }
+  if (cmd === "get_device_selection") {
+    return { microphone_id: null, speaker_id: null };
+  }
+  if (cmd === "set_audio_device_ui_visible") {
+    return;
+  }
+  return {};
+};
+
+type InvokeCall = { cmd: string; args?: Record<string, unknown> };
+
+function createStatefulMockInvoke(
+  options: { initial?: EditorSettings; pickResult?: string | null } = {},
+) {
+  let persisted: EditorSettings = { ...(options.initial ?? DEFAULT_EDITOR_SETTINGS) };
+  const calls: InvokeCall[] = [];
+  const pickResult = options.pickResult ?? null;
+
+  const invokeFn = async (cmd: string, args?: Record<string, unknown>) => {
+    calls.push({ cmd, args });
+    switch (cmd) {
+      case "get_editor_settings":
+        return { ...persisted };
+      case "set_editor_settings":
+        persisted = { ...persisted, ...args };
+        return { ...persisted };
+      case "pick_save_directory":
+        return pickResult;
+      case "list_audio_devices":
+        return { inputs: [], outputs: [] };
+      case "get_device_selection":
+        return { microphone_id: null, speaker_id: null };
+      case "set_audio_device_ui_visible":
+        return;
+      case "save_transcript_session":
+        if (persisted.save_directory === null) {
+          return {
+            success: false,
+            error: {
+              code: "SAVE_DIRECTORY_NOT_SET",
+              message_ja: "保存先が設定されていません",
+              action_ja: "保存先フォルダを選択してください",
+              recoverable: true,
+            },
+          } satisfies SaveTranscriptSessionResult;
+        }
+        return {
+          success: true,
+          output_directory: `${persisted.save_directory}\\2026\\09\\06\\14_30_00`,
+          files_written: [`${persisted.save_directory}\\2026\\09\\06\\14_30_00\\handwriting.md`],
+        } satisfies SaveTranscriptSessionResult;
+      default:
+        return {};
+    }
+  };
+
+  return { invokeFn, calls, getPersisted: () => ({ ...persisted }) };
+}
+
+async function waitForToolbarReady(getByTestId: (id: string) => HTMLElement): Promise<void> {
+  await waitFor(() => {
+    expect(getByTestId("pick-directory-button").hasAttribute("disabled")).toBe(false);
+  });
+}
+
 describe("App", () => {
+  test("renders DeviceSelectorPanel adjacent to capture status (req 2.1)", async () => {
+    const { listenFn } = createMockListen();
+    const { getByTestId, getByLabelText } = render(
+      <App listenFn={listenFn} invokeFn={mockInvokeFn} />,
+    );
+
+    await waitFor(() => {
+      expect(getByTestId("capture-phase")).toBeTruthy();
+      expect(getByLabelText("オーディオデバイス選択")).toBeTruthy();
+    });
+
+    const capturePhase = getByTestId("capture-phase");
+    const devicePanel = getByLabelText("オーディオデバイス選択");
+    expect(
+      capturePhase.compareDocumentPosition(devicePanel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(getByTestId("microphone-empty")).toBeTruthy();
+    expect(getByTestId("speaker-empty")).toBeTruthy();
+  });
+
+  test("renders exactly one Toaster at root", async () => {
+    const { listenFn } = createMockListen();
+    render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
+
+    await waitFor(() => {
+      expect(document.querySelectorAll('[aria-label="Notifications alt+T"]')).toHaveLength(1);
+    });
+  });
+
+  test("save succeeds with updated save_directory after pick directory", async () => {
+    const selectedPath = "C:\\Users\\test\\transcripts";
+    const mock = createStatefulMockInvoke({ pickResult: selectedPath });
+    const { listenFn } = createMockListen();
+    const { getByTestId } = render(<App listenFn={listenFn} invokeFn={mock.invokeFn} />);
+
+    await waitForToolbarReady(getByTestId);
+
+    await act(async () => {
+      fireEvent.click(getByTestId("pick-directory-button"));
+    });
+
+    await waitFor(() => {
+      expect(mock.getPersisted().save_directory).toBe(selectedPath);
+    });
+
+    await act(async () => {
+      fireEvent.click(getByTestId("save-button"));
+    });
+
+    await waitFor(() => {
+      const saveCall = mock.calls.find((c) => c.cmd === "save_transcript_session");
+      expect(saveCall).toBeDefined();
+      expect(mock.getPersisted().save_directory).toBe(selectedPath);
+    });
+
+    const saveResults = mock.calls.filter((c) => c.cmd === "save_transcript_session");
+    expect(saveResults.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("save request includes jsonl when export toggle updated via shared settings", async () => {
+    const selectedPath = "C:\\Users\\test\\transcripts";
+    const mock = createStatefulMockInvoke({ pickResult: selectedPath });
+    const { listenFn } = createMockListen();
+    const { getByTestId } = render(<App listenFn={listenFn} invokeFn={mock.invokeFn} />);
+
+    await waitForToolbarReady(getByTestId);
+
+    await act(async () => {
+      fireEvent.click(getByTestId("pick-directory-button"));
+    });
+
+    await waitFor(() => {
+      expect(mock.getPersisted().save_directory).toBe(selectedPath);
+    });
+
+    await act(async () => {
+      fireEvent.click(getByTestId("export-jsonl-switch"));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId("export-jsonl-switch").getAttribute("data-state")).toBe("checked");
+    });
+
+    await act(async () => {
+      fireEvent.click(getByTestId("save-button"));
+    });
+
+    await waitFor(() => {
+      const saveCall = mock.calls.find((c) => c.cmd === "save_transcript_session");
+      expect(saveCall?.args?.ai_transcription_jsonl).toBeDefined();
+    });
+  });
+
+  test("renders transcript editor with dual Slate editors", async () => {
+    const { listenFn } = createMockListen();
+    const { getByTestId } = render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
+
+    await waitFor(() => {
+      expect(getByTestId("transcript-editor-view")).toBeTruthy();
+      expect(getByTestId("handwriting-editor")).toBeTruthy();
+      expect(getByTestId("ai-transcript-editor")).toBeTruthy();
+    });
+  });
+
+  test("subscribes to block-appended events via shared listenFn", async () => {
+    const { listenFn, listeners } = createMockListen();
+    render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
+
+    await waitFor(() => {
+      expect(listeners.has(BLOCK_APPENDED_EVENT)).toBe(true);
+    });
+  });
+
   test("shows capturing phase after phase-changed event", async () => {
     const { listenFn, emit, listeners } = createMockListen();
-    const { getByTestId } = render(<App listenFn={listenFn} />);
+    const { getByTestId } = render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
 
     await waitFor(() => {
       expect(listeners.has(PHASE_CHANGED_EVENT)).toBe(true);
@@ -79,7 +268,7 @@ describe("App", () => {
 
   test("shows message_ja and prominent action_ja for permission denied", async () => {
     const { listenFn, emit, listeners } = createMockListen();
-    const { getByTestId, container } = render(<App listenFn={listenFn} />);
+    const { getByTestId, container } = render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
 
     await waitFor(() => {
       expect(listeners.has(ERROR_EVENT)).toBe(true);
@@ -110,7 +299,7 @@ describe("App", () => {
   // E2E 1: アプリ起動 → モデル未取得時 loading_model 表示と進捗バー
   test("shows loading_model and model progress bar during model download (E2E 1)", async () => {
     const { listenFn, emit, listeners } = createMockListen();
-    const { getByTestId } = render(<App listenFn={listenFn} />);
+    const { getByTestId } = render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
 
     await waitFor(() => {
       expect(listeners.has(TRANSCRIBE_PHASE_CHANGED_EVENT)).toBe(true);
@@ -142,7 +331,7 @@ describe("App", () => {
   // E2E 2: キャプチャ中 → transcribing フェーズ表示（capture capturing と連動）
   test("shows transcribing phase when capture becomes capturing and transcribe starts (E2E 2)", async () => {
     const { listenFn, emit, listeners } = createMockListen();
-    const { getByTestId } = render(<App listenFn={listenFn} />);
+    const { getByTestId } = render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
 
     await waitFor(() => {
       expect(listeners.has(PHASE_CHANGED_EVENT)).toBe(true);
@@ -169,12 +358,14 @@ describe("App", () => {
   // E2E 3: ウィンドウ閉鎖 / アプリ終了時のクリーンアップ・リスナー解除
   test("unsubscribes transcribe listeners cleanly on unmount (E2E 3)", async () => {
     const { listenFn, listeners } = createMockListen();
-    const { unmount } = render(<App listenFn={listenFn} />);
+    const { unmount } = render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
 
     await waitFor(() => {
       expect(listeners.get(TRANSCRIBE_PHASE_CHANGED_EVENT)?.length).toBe(1);
       expect(listeners.get(MODEL_PROGRESS_EVENT)?.length).toBe(1);
-      expect(listeners.get(TRANSCRIBE_ERROR_EVENT)?.length).toBe(1);
+      // useTranscribeStatus + TranscriptEditorView (retain-on-error) both subscribe
+      expect(listeners.get(TRANSCRIBE_ERROR_EVENT)?.length).toBe(2);
+      expect(listeners.has(BLOCK_APPENDED_EVENT)).toBe(true);
     });
 
     unmount();
@@ -182,12 +373,13 @@ describe("App", () => {
     expect(listeners.get(TRANSCRIBE_PHASE_CHANGED_EVENT)?.length).toBe(0);
     expect(listeners.get(MODEL_PROGRESS_EVENT)?.length).toBe(0);
     expect(listeners.get(TRANSCRIBE_ERROR_EVENT)?.length).toBe(0);
+    expect(listeners.get(BLOCK_APPENDED_EVENT)?.length).toBe(0);
   });
 
   // E2E 4: モデル破損ファイル → エラーメッセージと action_ja 表示
   test("shows transcribe error message and action_ja when transcribe error event fires (E2E 4)", async () => {
     const { listenFn, emit, listeners } = createMockListen();
-    const { getByTestId, container } = render(<App listenFn={listenFn} />);
+    const { getByTestId, container } = render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
 
     await waitFor(() => {
       expect(listeners.has(TRANSCRIBE_ERROR_EVENT)).toBe(true);

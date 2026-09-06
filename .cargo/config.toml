@@ -1,0 +1,20 @@
+# リポジトリ内のどの cwd から cargo を起こしても読まれるよう、ルートに置く。
+# （src-tauri/.cargo/config.toml は cwd が src-tauri 配下のときしか読まれない。
+#   cargo tauri build / bun scripts / 手動 cargo で cwd が揺れると、whisper-rs-sys の
+#   出力ディレクトリのハッシュが変わり、無最適化の旧ビルドが再利用されることがあった。）
+#
+# cmake crate は MSVC + Visual Studio ジェネレータで CMAKE_<LANG>_FLAGS_<CMAKE_BUILD_TYPE> を
+# cc の最小フラグ（/MD のみ、最適化なし）で上書きする。whisper-rs-sys は debug では
+# CMAKE_BUILD_TYPE=RelWithDebInfo（上書き先が未使用で無害）、release では Release を定義するため、
+# release だけ ggml/whisper.cpp が /O2 なしでビルドされ、推論が約 15 倍遅くなっていた。
+# 自前で定義しておくと cmake crate は上書きしない（cmake-0.1.58 lib.rs L754）。
+# whisper-rs-sys は CMAKE_* 環境変数をそのまま CMake の -D に転送する。
+# -O2 -DNDEBUG は MSVC / clang 双方で有効。CRT は CMP0091=NEW で /MD を維持する。
+#
+# 注意: これらの変更はビルドスクリプトの再実行判定に入らない。値を変えたら
+# `cargo clean -p whisper-rs-sys` を同じ cwd で実行してから再ビルドすること。
+[env]
+CMAKE_C_FLAGS_RELEASE = "-O2 -DNDEBUG"
+CMAKE_CXX_FLAGS_RELEASE = "-O2 -DNDEBUG"
+CMAKE_POLICY_DEFAULT_CMP0091 = "NEW"
+CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreadedDLL"
