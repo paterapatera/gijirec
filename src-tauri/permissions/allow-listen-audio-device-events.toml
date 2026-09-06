@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-listen-audio-device-events"
+description = "Allows the frontend to listen for audio device list and selection events."
+[[permission.event.allow]]
+event = "audio-device-selection://devices-changed"
+[[permission.event.allow]]
+event = "audio-device-selection://selection-changed"

@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-listen-capture-events"
+description = "Allows the frontend to listen for audio-capture lifecycle events."
+[[permission.event.allow]]
+event = "audio-capture://phase-changed"
+[[permission.event.allow]]
+event = "audio-capture://error"
