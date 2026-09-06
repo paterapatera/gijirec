@@ -6,7 +6,7 @@ use gijirec_lib::transcribe_observability::TracingTranscribeObservability;
 use gijirec_presentation::domain::transcribe::{TranscribeError, TranscribePhase};
 use gijirec_presentation::transcribe::observability::{
     TRANSCRIBE_LOG_TARGET, log_block_buffer_drop, log_inference_latency, log_pcm_sequence_gaps,
-    log_phase_transition, log_transcribe_error, set_transcribe_observability,
+    log_phase_transition, log_stall_detected, log_transcribe_error, set_transcribe_observability,
 };
 
 struct TranscribeWriter(Arc<Mutex<Vec<u8>>>);
@@ -91,6 +91,27 @@ fn inference_latency_records_latency_ms() {
         "log must record transcribe_inference_latency_ms: {logs}"
     );
     assert!(logs.contains("450"));
+}
+
+#[test]
+fn stall_detected_records_diagnostic_once() {
+    let logs = with_transcribe_tracing_logs(|| {
+        log_stall_detected();
+    });
+
+    assert!(
+        logs.contains("transcribe_stall_detected=true")
+            || (logs.contains("transcribe_stall_detected") && logs.contains("true")),
+        "log must record transcribe_stall_detected: {logs}"
+    );
+    assert!(
+        logs.contains("error_code=INFERENCE_FAILED") || logs.contains("INFERENCE_FAILED"),
+        "stall log must include INFERENCE_FAILED error_code: {logs}"
+    );
+    assert!(
+        logs.contains("session_id="),
+        "stall log must include session_id: {logs}"
+    );
 }
 
 #[test]
