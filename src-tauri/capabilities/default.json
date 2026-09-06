@@ -7,6 +7,12 @@
     "core:default",
     "allow-get-capture-phase",
     "allow-get-transcribe-phase",
-    "allow-listen-transcribe-events"
+    "allow-listen-capture-events",
+    "allow-listen-transcribe-events",
+    "allow-editor-commands",
+    "allow-audio-device-commands",
+    "allow-listen-audio-device-events",
+    "fs:default",
+    "dialog:default"
   ]
 }

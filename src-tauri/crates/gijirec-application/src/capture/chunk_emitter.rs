@@ -59,6 +59,11 @@ impl ChunkEmitter {
         self.buffer.clear();
     }
 
+    /// Drops buffered samples without resetting sequence (device recapture).
+    pub fn discard_partial_buffer(&mut self) {
+        self.buffer.clear();
+    }
+
     pub fn is_stopped(&self) -> bool {
         self.stopped
     }
@@ -164,5 +169,18 @@ mod tests {
         let more = emitter.emit_ready();
         assert_eq!(more[0].timestamp_ms(), 100);
         assert_eq!(more[0].sequence(), 1);
+    }
+
+    #[test]
+    fn discard_partial_buffer_preserves_next_sequence() {
+        let mut emitter = ChunkEmitter::new();
+        push_frames(&mut emitter, CHUNK_FRAME_COUNT as usize, 0.5);
+        push_frames(&mut emitter, 800, 0.5);
+        emitter.discard_partial_buffer();
+        push_frames(&mut emitter, CHUNK_FRAME_COUNT as usize, 0.5);
+        let chunks = emitter.emit_ready();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].sequence(), 0);
+        assert_eq!(emitter.next_sequence(), 1);
     }
 }

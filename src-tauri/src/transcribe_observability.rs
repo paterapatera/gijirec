@@ -1,6 +1,8 @@
 //! Host tracing backend for whisper transcribe observability.
 
-use gijirec_presentation::domain::transcribe::{TranscribeError, TranscribePhase};
+use gijirec_presentation::domain::transcribe::{
+    TranscribeError, TranscribeErrorCode, TranscribePhase,
+};
 use gijirec_presentation::tauri::observability::session_id;
 use gijirec_presentation::transcribe::observability::{
     TRANSCRIBE_LOG_TARGET, TranscribeObservability,
@@ -55,6 +57,43 @@ impl TranscribeObservability for TracingTranscribeObservability {
             error_code = code.as_str(),
             session_id = session_id(),
             "transcribe error occurred"
+        );
+    }
+
+    fn log_stall_detected(&self) {
+        tracing::warn!(
+            target: TRANSCRIBE_LOG_TARGET,
+            transcribe_stall_detected = true,
+            error_code = TranscribeErrorCode::InferenceFailed.as_str(),
+            session_id = session_id(),
+            "transcription stall detected"
+        );
+    }
+
+    fn log_engine_ready(&self) {
+        tracing::info!(
+            target: TRANSCRIBE_LOG_TARGET,
+            transcribe_engine_ready = true,
+            session_id = session_id(),
+            "whisper engine ready on worker thread"
+        );
+    }
+
+    fn log_inference_started(&self) {
+        tracing::info!(
+            target: TRANSCRIBE_LOG_TARGET,
+            transcribe_inference_started = true,
+            session_id = session_id(),
+            "transcribe inference started"
+        );
+    }
+
+    fn log_inference_progress(&self, percent: i32) {
+        tracing::info!(
+            target: TRANSCRIBE_LOG_TARGET,
+            transcribe_inference_progress_pct = percent,
+            session_id = session_id(),
+            "transcribe inference progress"
         );
     }
 }

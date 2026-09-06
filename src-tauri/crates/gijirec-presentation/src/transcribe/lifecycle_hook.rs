@@ -9,25 +9,67 @@ use gijirec_domain::transcribe::{TranscribeError, TranscribePhase};
 
 use crate::tauri::lifecycle::CaptureProcessingHook;
 use crate::transcribe::event_emitter::TranscribeEventEmitter;
+use crate::transcribe::observability;
+use crate::transcribe::stall_watchdog::{
+    OrchestratorStallAdapter, SharedTranscribeEmitter, StallClock, StallWatchdogRuntime,
+    TranscribeStallWatchdog,
+};
 
 /// Default join timeout when stopping transcribe worker on lifecycle events.
 pub const DEFAULT_TRANSCRIBE_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
+type StallWatchdogHandle =
+    TranscribeStallWatchdog<OrchestratorStallAdapter, SharedTranscribeEmitter>;
+
+struct StallWatchdogBundle {
+    adapter: Arc<Mutex<OrchestratorStallAdapter>>,
+    watchdog: Arc<StallWatchdogHandle>,
+    runtime: StallWatchdogRuntime,
+}
+
 /// Hooks capture events and app termination into [`TranscribeOrchestrator`].
 pub struct TranscribeLifecycleHook {
     orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
-    emitter: Mutex<Arc<dyn TranscribeEventEmitter>>,
+    emitter: Arc<Mutex<Arc<dyn TranscribeEventEmitter>>>,
+    stall: Option<StallWatchdogBundle>,
 }
 
 impl TranscribeLifecycleHook {
-    /// Creates a new `TranscribeLifecycleHook`.
+    /// Creates a new `TranscribeLifecycleHook` without stall watchdog wiring.
     pub fn new(
         orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
         emitter: Arc<dyn TranscribeEventEmitter>,
     ) -> Self {
         Self {
             orchestrator,
-            emitter: Mutex::new(emitter),
+            emitter: Arc::new(Mutex::new(emitter)),
+            stall: None,
+        }
+    }
+
+    /// Creates a hook with stall watchdog polling enabled for capture/transcribe sessions.
+    pub fn with_stall_watchdog(
+        orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
+        emitter: Arc<dyn TranscribeEventEmitter>,
+        clock: StallClock,
+    ) -> Self {
+        let emitter_cell = Arc::new(Mutex::new(emitter));
+        let adapter = Arc::new(Mutex::new(OrchestratorStallAdapter::new(Arc::clone(
+            &orchestrator,
+        ))));
+        let watchdog = Arc::new(TranscribeStallWatchdog::new(
+            Arc::clone(&adapter),
+            Arc::new(SharedTranscribeEmitter::new(Arc::clone(&emitter_cell))),
+            clock,
+        ));
+        Self {
+            orchestrator,
+            emitter: emitter_cell,
+            stall: Some(StallWatchdogBundle {
+                adapter,
+                watchdog,
+                runtime: StallWatchdogRuntime::new(),
+            }),
         }
     }
 
@@ -38,34 +80,138 @@ impl TranscribeLifecycleHook {
         }
     }
 
+    /// Returns the stall watchdog when lifecycle wiring is enabled.
+    pub fn stall_watchdog(&self) -> Option<Arc<StallWatchdogHandle>> {
+        self.stall
+            .as_ref()
+            .map(|bundle| Arc::clone(&bundle.watchdog))
+    }
+
     fn emitter(&self) -> Arc<dyn TranscribeEventEmitter> {
         self.emitter.lock().expect("lock emitter").clone()
+    }
+
+    fn emit_phase(&self, emitter: &dyn TranscribeEventEmitter, phase: TranscribePhase) {
+        observability::log_phase_transition(phase);
+        let _ = emitter.emit_phase_changed(phase);
+    }
+
+    fn emit_error(&self, emitter: &dyn TranscribeEventEmitter, error: &TranscribeError) {
+        observability::log_transcribe_error(error);
+        let _ = emitter.emit_error(error);
+    }
+
+    fn start_stall_watchdog(&self) {
+        if let Some(bundle) = &self.stall {
+            bundle
+                .adapter
+                .lock()
+                .expect("lock adapter")
+                .set_upstream_capturing(true);
+            bundle.watchdog.arm();
+            bundle.runtime.start(Arc::clone(&bundle.watchdog));
+        }
+    }
+
+    fn stop_stall_watchdog(&self) {
+        if let Some(bundle) = &self.stall {
+            bundle.runtime.stop();
+            bundle.watchdog.disarm();
+            bundle
+                .adapter
+                .lock()
+                .expect("lock adapter")
+                .set_upstream_capturing(false);
+        }
+    }
+
+    fn start_transcribing_if_ready(&self) {
+        let emitter = self.emitter();
+        let started_transcribing = {
+            let mut orch = self.orchestrator.lock().expect("lock orchestrator");
+            orch.set_upstream_capturing(true);
+            if orch.phase() == TranscribePhase::Ready
+                && let Ok(()) = orch.start()
+            {
+                let phase = orch.phase();
+                self.emit_phase(emitter.as_ref(), phase);
+                phase == TranscribePhase::Transcribing
+            } else {
+                false
+            }
+        };
+        if started_transcribing {
+            self.start_stall_watchdog();
+        }
+    }
+
+    /// Surfaces a worker-thread engine failure (load/init) that would otherwise be silent.
+    pub fn on_worker_engine_failed(&self, error: TranscribeError) {
+        self.stop_stall_watchdog();
+        let emitter = self.emitter();
+        let mut orch = self.orchestrator.lock().expect("lock orchestrator");
+        orch.fail_inference();
+        self.emit_error(emitter.as_ref(), &error);
+        self.emit_phase(emitter.as_ref(), orch.phase());
+    }
+
+    /// Starts transcription after the model becomes ready if capture is already active.
+    /// Does not mark upstream capturing by itself — that remains the capture hook's job.
+    pub fn on_model_ready(&self) {
+        let emitter = self.emitter();
+        let started_transcribing = {
+            let mut orch = self.orchestrator.lock().expect("lock orchestrator");
+            if orch.phase() == TranscribePhase::Ready
+                && let Ok(()) = orch.start()
+            {
+                let phase = orch.phase();
+                self.emit_phase(emitter.as_ref(), phase);
+                phase == TranscribePhase::Transcribing
+            } else {
+                false
+            }
+        };
+        if started_transcribing {
+            self.start_stall_watchdog();
+        }
+    }
+
+    fn pause_transcribing_for_capture_stop(&self) {
+        self.stop_stall_watchdog();
+        let emitter = self.emitter();
+        let mut orch = self.orchestrator.lock().expect("lock orchestrator");
+        orch.pause_capture();
+        self.emit_phase(emitter.as_ref(), orch.phase());
+    }
+
+    fn stop_transcribing_worker(&self) {
+        self.stop_stall_watchdog();
+        let emitter = self.emitter();
+        let mut orch = self.orchestrator.lock().expect("lock orchestrator");
+        orch.set_upstream_capturing(false);
+        if orch.phase() == TranscribePhase::Transcribing {
+            let _ = orch.stop();
+            self.emit_phase(emitter.as_ref(), orch.phase());
+        }
     }
 
     /// Handles capture phase change notification (`audio-capture://phase-changed`).
     pub fn on_capture_phase_changed(&self, phase: CapturePhase) {
         let emitter = self.emitter();
-        let mut orch = self.orchestrator.lock().expect("lock orchestrator");
         match phase {
-            CapturePhase::Capturing => {
-                // Set upstream capturing to true so start gate can pass
-                orch.set_upstream_capturing(true);
-                // If model is ready, start transcription
-                if orch.phase() == TranscribePhase::Ready
-                    && let Ok(()) = orch.start()
-                {
-                    let _ = emitter.emit_phase_changed(orch.phase());
-                }
-            }
+            CapturePhase::Capturing => self.start_transcribing_if_ready(),
             CapturePhase::Error => {
-                // Upstream capture error: stop processing new PCM, emit UPSTREAM_CAPTURE_ERROR
+                self.stop_stall_watchdog();
+                let mut orch = self.orchestrator.lock().expect("lock orchestrator");
                 orch.on_upstream_capture_error();
-                let _ = emitter.emit_error(&TranscribeError::UpstreamCaptureError);
-                let _ = emitter.emit_phase_changed(orch.phase());
+                self.emit_error(emitter.as_ref(), &TranscribeError::UpstreamCaptureError);
+                self.emit_phase(emitter.as_ref(), orch.phase());
             }
             CapturePhase::Stopping | CapturePhase::Idle => {
+                self.stop_stall_watchdog();
+                let mut orch = self.orchestrator.lock().expect("lock orchestrator");
                 orch.pause_capture();
-                let _ = emitter.emit_phase_changed(orch.phase());
+                self.emit_phase(emitter.as_ref(), orch.phase());
             }
             _ => {}
         }
@@ -73,46 +219,36 @@ impl TranscribeLifecycleHook {
 
     /// Handles application shutdown or window close.
     pub fn on_app_exit(&self) {
+        self.stop_transcribing_worker();
         let emitter = self.emitter();
         let mut orch = self.orchestrator.lock().expect("lock orchestrator");
-        orch.set_upstream_capturing(false);
-        if orch.phase() == TranscribePhase::Transcribing
-            || orch.phase() == TranscribePhase::LoadingModel
-        {
+        if orch.phase() == TranscribePhase::LoadingModel {
             let _ = orch.stop();
-            let _ = emitter.emit_phase_changed(orch.phase());
+            self.emit_phase(emitter.as_ref(), orch.phase());
         }
     }
 }
 
 impl CaptureProcessingHook for TranscribeLifecycleHook {
     fn on_capture_started(&self) {
-        let emitter = self.emitter();
-        let mut orch = self.orchestrator.lock().expect("lock orchestrator");
-        orch.set_upstream_capturing(true);
-        if orch.phase() == TranscribePhase::Ready
-            && let Ok(()) = orch.start()
-        {
-            let _ = emitter.emit_phase_changed(orch.phase());
-        }
+        self.start_transcribing_if_ready();
     }
 
     fn on_capture_stopping(&self) {
-        let emitter = self.emitter();
-        let mut orch = self.orchestrator.lock().expect("lock orchestrator");
-        orch.set_upstream_capturing(false);
-        if orch.phase() == TranscribePhase::Transcribing {
-            let _ = orch.stop();
-            let _ = emitter.emit_phase_changed(orch.phase());
-        }
+        self.pause_transcribing_for_capture_stop();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcribe::observability::{
+        RecordingTranscribeObservability, with_isolated_transcribe_observability,
+        with_test_transcribe_observability,
+    };
     use gijirec_application::transcribe::ModelDownloadProgress;
     use gijirec_domain::transcribe::{TranscribeErrorCode, UserFacingTranscribeError};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     struct MockOrchestrator {
         phase: TranscribePhase,
@@ -120,6 +256,7 @@ mod tests {
         start_count: u32,
         stop_count: u32,
         upstream_error_count: u32,
+        fail_inference_count: u32,
     }
 
     impl MockOrchestrator {
@@ -130,6 +267,7 @@ mod tests {
                 start_count: 0,
                 stop_count: 0,
                 upstream_error_count: 0,
+                fail_inference_count: 0,
             }
         }
     }
@@ -199,6 +337,12 @@ mod tests {
         fn set_upstream_capturing(&mut self, capturing: bool) {
             self.upstream_capturing = capturing;
         }
+
+        fn fail_inference(&mut self) {
+            self.fail_inference_count += 1;
+            self.upstream_capturing = false;
+            self.phase = TranscribePhase::Error;
+        }
     }
 
     #[derive(Default)]
@@ -232,109 +376,237 @@ mod tests {
         }
     }
 
+    fn test_clock() -> StallClock {
+        let time = Arc::new(AtomicU64::new(0));
+        Arc::new(move || time.load(Ordering::SeqCst))
+    }
+
     #[test]
     fn on_capture_started_sets_upstream_and_starts_orchestrator_when_ready() {
-        let orch = Arc::new(Mutex::new(MockOrchestrator::new(TranscribePhase::Ready)));
-        let emitter = Arc::new(MockEmitter::default());
-        let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
+        with_isolated_transcribe_observability(|| {
+            let orch = Arc::new(Mutex::new(MockOrchestrator::new(TranscribePhase::Ready)));
+            let emitter = Arc::new(MockEmitter::default());
+            let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
 
-        hook.on_capture_started();
+            hook.on_capture_started();
 
-        assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
-        assert_eq!(orch.lock().unwrap().start_count, 1);
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
+            assert_eq!(orch.lock().unwrap().start_count, 1);
+            assert_eq!(
+                *emitter.phases.lock().unwrap(),
+                vec![TranscribePhase::Transcribing]
+            );
+        });
+    }
+
+    #[test]
+    fn on_capture_stopping_pauses_to_ready_when_transcribing() {
+        with_isolated_transcribe_observability(|| {
+            let mut o = MockOrchestrator::new(TranscribePhase::Ready);
+            o.set_upstream_capturing(true);
+            o.start().unwrap();
+
+            let orch = Arc::new(Mutex::new(o));
+            let emitter = Arc::new(MockEmitter::default());
+            let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
+
+            hook.on_capture_stopping();
+
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
+            assert_eq!(orch.lock().unwrap().stop_count, 1);
+            assert!(!orch.lock().unwrap().upstream_capturing);
+            assert_eq!(
+                *emitter.phases.lock().unwrap(),
+                vec![TranscribePhase::Ready]
+            );
+        });
+    }
+
+    #[test]
+    fn on_model_ready_starts_and_arms_watchdog_when_capture_already_active() {
+        with_isolated_transcribe_observability(|| {
+            let orch = Arc::new(Mutex::new(MockOrchestrator::new(TranscribePhase::Ready)));
+            let emitter = Arc::new(MockEmitter::default());
+            let hook = TranscribeLifecycleHook::with_stall_watchdog(
+                orch.clone(),
+                emitter.clone(),
+                test_clock(),
+            );
+            orch.lock().unwrap().set_upstream_capturing(true);
+
+            hook.on_model_ready();
+
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
+            assert_eq!(orch.lock().unwrap().start_count, 1);
+            assert!(hook.stall_watchdog().expect("stall watchdog").is_armed());
+            assert_eq!(
+                *emitter.phases.lock().unwrap(),
+                vec![TranscribePhase::Transcribing]
+            );
+        });
+    }
+
+    #[test]
+    fn on_worker_engine_failed_emits_error_and_error_phase() {
+        with_isolated_transcribe_observability(|| {
+            let mut o = MockOrchestrator::new(TranscribePhase::Ready);
+            o.set_upstream_capturing(true);
+            o.start().unwrap();
+
+            let orch = Arc::new(Mutex::new(o));
+            let emitter = Arc::new(MockEmitter::default());
+            let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
+
+            hook.on_worker_engine_failed(TranscribeError::ModelCorrupt {
+                detail: "load failed".to_string(),
+            });
+
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Error);
+            assert_eq!(orch.lock().unwrap().fail_inference_count, 1);
+            let errors = emitter.errors.lock().unwrap().clone();
+            assert_eq!(errors.len(), 1);
+            assert_eq!(errors[0].code, TranscribeErrorCode::ModelCorrupt);
+            assert_eq!(
+                *emitter.phases.lock().unwrap(),
+                vec![TranscribePhase::Error]
+            );
+        });
+    }
+
+    #[test]
+    fn upstream_capture_error_notifies_orchestrator_and_capturing_resumes() {
+        with_isolated_transcribe_observability(|| {
+            let mut o = MockOrchestrator::new(TranscribePhase::Ready);
+            o.set_upstream_capturing(true);
+            o.start().unwrap();
+
+            let orch = Arc::new(Mutex::new(o));
+            let emitter = Arc::new(MockEmitter::default());
+            let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
+
+            hook.on_capture_phase_changed(CapturePhase::Error);
+
+            assert_eq!(orch.lock().unwrap().upstream_error_count, 1);
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
+            assert!(!orch.lock().unwrap().upstream_capturing);
+            let errors = emitter.errors.lock().unwrap().clone();
+            assert_eq!(errors.len(), 1);
+            assert_eq!(errors[0].code, TranscribeErrorCode::UpstreamCaptureError);
+
+            hook.on_capture_phase_changed(CapturePhase::Capturing);
+
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
+            assert!(orch.lock().unwrap().upstream_capturing);
+            let phases = emitter.phases.lock().unwrap().clone();
+            assert_eq!(
+                phases,
+                vec![TranscribePhase::Ready, TranscribePhase::Transcribing]
+            );
+        });
+    }
+
+    #[test]
+    fn capture_pause_via_phase_changed_stopping_transitions_to_ready_and_can_restart() {
+        with_isolated_transcribe_observability(|| {
+            let mut o = MockOrchestrator::new(TranscribePhase::Ready);
+            o.set_upstream_capturing(true);
+            o.start().unwrap();
+
+            let orch = Arc::new(Mutex::new(o));
+            let emitter = Arc::new(MockEmitter::default());
+            let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
+
+            hook.on_capture_phase_changed(CapturePhase::Stopping);
+
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
+            assert_eq!(orch.lock().unwrap().stop_count, 1);
+            assert!(!orch.lock().unwrap().upstream_capturing);
+
+            hook.on_capture_phase_changed(CapturePhase::Capturing);
+
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
+            assert_eq!(orch.lock().unwrap().start_count, 2);
+        });
+    }
+
+    #[test]
+    fn on_app_exit_stops_transcribing_worker() {
+        with_isolated_transcribe_observability(|| {
+            let mut o = MockOrchestrator::new(TranscribePhase::Ready);
+            o.set_upstream_capturing(true);
+            o.start().unwrap();
+
+            let orch = Arc::new(Mutex::new(o));
+            let emitter = Arc::new(MockEmitter::default());
+            let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
+
+            hook.on_app_exit();
+
+            assert_eq!(orch.lock().unwrap().stop_count, 1);
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Idle);
+        });
+    }
+
+    #[test]
+    fn on_capture_started_logs_phase_transition_via_observability() {
+        let recorder = RecordingTranscribeObservability::new();
+        with_test_transcribe_observability(&recorder, || {
+            let orch = Arc::new(Mutex::new(MockOrchestrator::new(TranscribePhase::Ready)));
+            let emitter = Arc::new(MockEmitter::default());
+            let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
+            hook.on_capture_started();
+        });
+
         assert_eq!(
-            *emitter.phases.lock().unwrap(),
+            *recorder.phases.lock().expect("lock"),
             vec![TranscribePhase::Transcribing]
         );
     }
 
     #[test]
-    fn on_capture_stopping_stops_orchestrator_when_transcribing() {
-        let mut o = MockOrchestrator::new(TranscribePhase::Ready);
-        o.set_upstream_capturing(true);
-        o.start().unwrap();
+    fn with_stall_watchdog_arms_on_transcribing_and_disarms_on_capture_stop() {
+        with_isolated_transcribe_observability(|| {
+            let orch = Arc::new(Mutex::new(MockOrchestrator::new(TranscribePhase::Ready)));
+            let emitter = Arc::new(MockEmitter::default());
+            let hook =
+                TranscribeLifecycleHook::with_stall_watchdog(orch.clone(), emitter, test_clock());
+            let watchdog = hook
+                .stall_watchdog()
+                .expect("stall watchdog must be configured");
 
-        let orch = Arc::new(Mutex::new(o));
-        let emitter = Arc::new(MockEmitter::default());
-        let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
+            hook.on_capture_started();
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
+            assert!(watchdog.is_armed());
 
-        hook.on_capture_stopping();
-
-        assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Idle);
-        assert_eq!(orch.lock().unwrap().stop_count, 1);
-        assert!(!orch.lock().unwrap().upstream_capturing);
-        assert_eq!(*emitter.phases.lock().unwrap(), vec![TranscribePhase::Idle]);
+            hook.on_capture_stopping();
+            assert!(!watchdog.is_armed());
+        });
     }
 
     #[test]
-    fn upstream_capture_error_notifies_orchestrator_and_capturing_resumes() {
-        let mut o = MockOrchestrator::new(TranscribePhase::Ready);
-        o.set_upstream_capturing(true);
-        o.start().unwrap();
+    fn with_stall_watchdog_disarms_on_capture_error_and_pause() {
+        with_isolated_transcribe_observability(|| {
+            let mut o = MockOrchestrator::new(TranscribePhase::Ready);
+            o.set_upstream_capturing(true);
+            o.start().unwrap();
 
-        let orch = Arc::new(Mutex::new(o));
-        let emitter = Arc::new(MockEmitter::default());
-        let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
+            let orch = Arc::new(Mutex::new(o));
+            let emitter = Arc::new(MockEmitter::default());
+            let hook =
+                TranscribeLifecycleHook::with_stall_watchdog(orch.clone(), emitter, test_clock());
+            let watchdog = hook
+                .stall_watchdog()
+                .expect("stall watchdog must be configured");
+            watchdog.arm();
 
-        // 1. Upstream capture error happens
-        hook.on_capture_phase_changed(CapturePhase::Error);
+            hook.on_capture_phase_changed(CapturePhase::Error);
+            assert!(!watchdog.is_armed());
 
-        assert_eq!(orch.lock().unwrap().upstream_error_count, 1);
-        assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
-        assert!(!orch.lock().unwrap().upstream_capturing);
-        let errors = emitter.errors.lock().unwrap().clone();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].code, TranscribeErrorCode::UpstreamCaptureError);
+            hook.on_capture_phase_changed(CapturePhase::Capturing);
+            assert!(watchdog.is_armed());
 
-        // 2. Upstream capture resumes (Capturing)
-        hook.on_capture_phase_changed(CapturePhase::Capturing);
-
-        assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
-        assert!(orch.lock().unwrap().upstream_capturing);
-        let phases = emitter.phases.lock().unwrap().clone();
-        assert_eq!(
-            phases,
-            vec![TranscribePhase::Ready, TranscribePhase::Transcribing]
-        );
-    }
-
-    #[test]
-    fn capture_pause_via_phase_changed_stopping_transitions_to_ready_and_can_restart() {
-        let mut o = MockOrchestrator::new(TranscribePhase::Ready);
-        o.set_upstream_capturing(true);
-        o.start().unwrap();
-
-        let orch = Arc::new(Mutex::new(o));
-        let emitter = Arc::new(MockEmitter::default());
-        let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
-
-        // 1. Capture stops/pauses
-        hook.on_capture_phase_changed(CapturePhase::Stopping);
-
-        assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
-        assert_eq!(orch.lock().unwrap().stop_count, 1);
-        assert!(!orch.lock().unwrap().upstream_capturing);
-
-        // 2. Capture starts again in same session
-        hook.on_capture_phase_changed(CapturePhase::Capturing);
-
-        assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
-        assert_eq!(orch.lock().unwrap().start_count, 2);
-    }
-
-    #[test]
-    fn on_app_exit_stops_transcribing_worker() {
-        let mut o = MockOrchestrator::new(TranscribePhase::Ready);
-        o.set_upstream_capturing(true);
-        o.start().unwrap();
-
-        let orch = Arc::new(Mutex::new(o));
-        let emitter = Arc::new(MockEmitter::default());
-        let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
-
-        hook.on_app_exit();
-
-        assert_eq!(orch.lock().unwrap().stop_count, 1);
-        assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Idle);
+            hook.on_capture_phase_changed(CapturePhase::Stopping);
+            assert!(!watchdog.is_armed());
+        });
     }
 }

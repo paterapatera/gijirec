@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 pub const MODEL_FILENAME: &str = "kotoba-whisper-v2.2-ggml-q5_0.bin";
 
 const MODELS_SUBDIR: &str = "models";
+const LEGACY_APP_SUBDIR: &str = "gijirec";
 
 /// Resolves and validates the local whisper model under Tauri `app_data_dir`.
 pub struct ModelStore {
@@ -20,6 +21,56 @@ pub struct ModelStore {
 impl ModelStore {
     pub fn new(base_data_dir: PathBuf) -> Self {
         Self { base_data_dir }
+    }
+
+    /// Legacy `%LOCALAPPDATA%/gijirec/models/` directory (pre ADR-0008).
+    pub fn legacy_local_models_dir() -> Option<PathBuf> {
+        dirs::data_local_dir().map(|local| local.join(LEGACY_APP_SUBDIR).join(MODELS_SUBDIR))
+    }
+
+    /// Copies a legacy local model into `{app_data_dir}/models/` when present.
+    /// Copy failures are ignored so the existing download flow can recover.
+    pub fn maybe_migrate_from_legacy_local(&self) -> Result<(), TranscribeError> {
+        if self.base_data_dir.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let Some(legacy_models_dir) = Self::legacy_local_models_dir() else {
+            return Ok(());
+        };
+        self.maybe_migrate_from_legacy_models_dir(&legacy_models_dir)
+    }
+
+    /// Copies from an explicit legacy models directory (tests / overrides).
+    pub fn maybe_migrate_from_legacy_models_dir(
+        &self,
+        legacy_models_dir: &Path,
+    ) -> Result<(), TranscribeError> {
+        if self.base_data_dir.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let destination = self.model_path();
+        if destination.exists() {
+            return Ok(());
+        }
+
+        let legacy_path = legacy_models_dir.join(MODEL_FILENAME);
+        if !legacy_path.is_file() {
+            return Ok(());
+        }
+
+        if let Some(parent) = destination.parent()
+            && fs::create_dir_all(parent).is_err()
+        {
+            return Ok(());
+        }
+
+        match fs::copy(&legacy_path, &destination) {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                remove_corrupt_file(&destination);
+                Ok(())
+            }
+        }
     }
 
     pub fn models_dir(&self) -> PathBuf {
@@ -217,5 +268,122 @@ mod tests {
         assert!(!store.model_path().exists());
 
         cleanup(&base);
+    }
+
+    fn temp_legacy_models_dir() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "gijirec-legacy-models-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn maybe_migrate_from_legacy_models_dir_skips_empty_base_data_dir() {
+        let legacy_models = temp_legacy_models_dir();
+        fs::create_dir_all(&legacy_models).expect("create legacy models dir");
+        fs::write(legacy_models.join(MODEL_FILENAME), b"legacy-copy-me")
+            .expect("write legacy model");
+
+        let store = ModelStore::new(PathBuf::new());
+        let cwd_pollution = std::env::current_dir()
+            .expect("cwd")
+            .join("models")
+            .join(MODEL_FILENAME);
+
+        store
+            .maybe_migrate_from_legacy_models_dir(&legacy_models)
+            .expect("empty base must skip migration");
+
+        assert!(
+            !cwd_pollution.exists(),
+            "empty base_data_dir must not copy into cwd/models"
+        );
+
+        cleanup(&legacy_models);
+    }
+
+    #[test]
+    fn maybe_migrate_from_legacy_models_dir_copies_model_for_verify() {
+        let (store, base) = temp_store();
+        let legacy_models = temp_legacy_models_dir();
+        fs::create_dir_all(&legacy_models).expect("create legacy models dir");
+        let content = b"migrated-whisper-model-bytes";
+        fs::write(legacy_models.join(MODEL_FILENAME), content).expect("write legacy model");
+
+        store
+            .maybe_migrate_from_legacy_models_dir(&legacy_models)
+            .expect("migration should succeed");
+
+        let expected = sha256_hex(content);
+        store
+            .verify(Some(&expected))
+            .expect("migrated model should verify");
+
+        cleanup(&base);
+        cleanup(&legacy_models);
+    }
+
+    #[test]
+    fn maybe_migrate_from_legacy_models_dir_skips_when_destination_exists() {
+        let (store, base) = temp_store();
+        let legacy_models = temp_legacy_models_dir();
+        fs::create_dir_all(&legacy_models).expect("create legacy models dir");
+        fs::write(legacy_models.join(MODEL_FILENAME), b"legacy-only").expect("write legacy model");
+
+        fs::create_dir_all(store.models_dir()).expect("create destination models dir");
+        fs::write(store.model_path(), b"already-here").expect("write destination model");
+
+        store
+            .maybe_migrate_from_legacy_models_dir(&legacy_models)
+            .expect("migration should no-op");
+
+        let contents = fs::read(store.model_path()).expect("read destination model");
+        assert_eq!(contents, b"already-here");
+
+        cleanup(&base);
+        cleanup(&legacy_models);
+    }
+
+    #[test]
+    fn maybe_migrate_from_legacy_models_dir_skips_when_legacy_missing() {
+        let (store, base) = temp_store();
+        let legacy_models = temp_legacy_models_dir();
+
+        store
+            .maybe_migrate_from_legacy_models_dir(&legacy_models)
+            .expect("missing legacy should no-op");
+
+        assert!(matches!(
+            store.verify(None),
+            Err(TranscribeError::ModelNotFound { .. })
+        ));
+
+        cleanup(&base);
+    }
+
+    #[test]
+    fn maybe_migrate_from_legacy_models_dir_failure_leaves_model_not_found_for_download() {
+        let (store, base) = temp_store();
+        let legacy_models = temp_legacy_models_dir();
+        fs::create_dir_all(&legacy_models).expect("create legacy models dir");
+        fs::write(legacy_models.join(MODEL_FILENAME), b"legacy-copy-me")
+            .expect("write legacy model");
+        fs::write(store.models_dir(), b"not-a-directory").expect("block models dir path");
+
+        store
+            .maybe_migrate_from_legacy_models_dir(&legacy_models)
+            .expect("copy failure should delegate to download flow");
+
+        assert!(matches!(
+            store.verify(None),
+            Err(TranscribeError::ModelNotFound { .. })
+        ));
+
+        cleanup(&base);
+        cleanup(&legacy_models);
     }
 }

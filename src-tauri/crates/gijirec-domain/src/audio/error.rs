@@ -10,6 +10,9 @@ pub enum UserFacingErrorCode {
     SystemAudioUnavailable,
     SystemAudioPermissionDenied,
     DeviceDisconnected,
+    SelectedMicUnavailable,
+    SelectedSystemAudioUnavailable,
+    MacosOutputNotDefault,
     Internal,
 }
 
@@ -21,6 +24,9 @@ impl UserFacingErrorCode {
             Self::SystemAudioUnavailable => "SYSTEM_AUDIO_UNAVAILABLE",
             Self::SystemAudioPermissionDenied => "SYSTEM_AUDIO_PERMISSION_DENIED",
             Self::DeviceDisconnected => "DEVICE_DISCONNECTED",
+            Self::SelectedMicUnavailable => "SELECTED_MIC_UNAVAILABLE",
+            Self::SelectedSystemAudioUnavailable => "SELECTED_SYSTEM_AUDIO_UNAVAILABLE",
+            Self::MacosOutputNotDefault => "MACOS_OUTPUT_NOT_DEFAULT",
             Self::Internal => "INTERNAL",
         }
     }
@@ -49,6 +55,9 @@ pub enum CaptureError {
     SystemAudioUnavailable,
     SystemAudioPermissionDenied,
     DeviceDisconnected,
+    SelectedMicUnavailable,
+    SelectedSystemAudioUnavailable,
+    MacosOutputNotDefault,
     Internal { detail: String },
 }
 
@@ -87,6 +96,27 @@ impl CaptureError {
                 action_ja: "デバイスを再接続してアプリを再起動してください。".to_string(),
                 recoverable: true,
             },
+            Self::SelectedMicUnavailable => UserFacingError {
+                code: UserFacingErrorCode::SelectedMicUnavailable,
+                message_ja: "選択したマイクが利用できません。".to_string(),
+                action_ja: "別のマイクを選ぶか、接続とマイク権限を確認してください".to_string(),
+                recoverable: true,
+            },
+            Self::SelectedSystemAudioUnavailable => UserFacingError {
+                code: UserFacingErrorCode::SelectedSystemAudioUnavailable,
+                message_ja: "選択したスピーカーが利用できません。".to_string(),
+                action_ja: "別のスピーカーを選ぶか、出力デバイスと権限を確認してください"
+                    .to_string(),
+                recoverable: true,
+            },
+            Self::MacosOutputNotDefault => UserFacingError {
+                code: UserFacingErrorCode::MacosOutputNotDefault,
+                message_ja: "選択したスピーカーがシステムの出力先になっていません。".to_string(),
+                action_ja:
+                    "システム設定 → サウンドで出力先を変更するか、現在の出力先を選んでください"
+                        .to_string(),
+                recoverable: true,
+            },
             Self::Internal { detail: _ } => UserFacingError {
                 code: UserFacingErrorCode::Internal,
                 message_ja: "予期しないエラーが発生しました。".to_string(),
@@ -106,6 +136,13 @@ impl fmt::Display for CaptureError {
             Self::SystemAudioUnavailable => write!(f, "system audio unavailable"),
             Self::SystemAudioPermissionDenied => write!(f, "system audio permission denied"),
             Self::DeviceDisconnected => write!(f, "audio device disconnected"),
+            Self::SelectedMicUnavailable => write!(f, "selected microphone unavailable"),
+            Self::SelectedSystemAudioUnavailable => {
+                write!(f, "selected system audio output unavailable")
+            }
+            Self::MacosOutputNotDefault => {
+                write!(f, "macos selected output is not system default")
+            }
             Self::Internal { detail } => write!(f, "internal capture error: {detail}"),
         }
     }
@@ -124,6 +161,9 @@ mod tests {
             CaptureError::SystemAudioUnavailable,
             CaptureError::SystemAudioPermissionDenied,
             CaptureError::DeviceDisconnected,
+            CaptureError::SelectedMicUnavailable,
+            CaptureError::SelectedSystemAudioUnavailable,
+            CaptureError::MacosOutputNotDefault,
             CaptureError::Internal {
                 detail: "test".to_string(),
             },
@@ -139,6 +179,9 @@ mod tests {
             "SYSTEM_AUDIO_UNAVAILABLE",
             "SYSTEM_AUDIO_PERMISSION_DENIED",
             "DEVICE_DISCONNECTED",
+            "SELECTED_MIC_UNAVAILABLE",
+            "SELECTED_SYSTEM_AUDIO_UNAVAILABLE",
+            "MACOS_OUTPUT_NOT_DEFAULT",
             "INTERNAL",
         ];
 
@@ -185,6 +228,36 @@ mod tests {
             CaptureError::SystemAudioPermissionDenied,
         ] {
             assert!(error.to_user_facing().recoverable);
+        }
+    }
+
+    #[test]
+    // audio-device-selection 4.1–4.2: 選択デバイス文脈エラーは契約 action_ja を含み回復可能
+    fn selected_device_errors_map_to_contract_payloads() {
+        let cases = [
+            (
+                CaptureError::SelectedMicUnavailable,
+                "SELECTED_MIC_UNAVAILABLE",
+                "別のマイクを選ぶか、接続とマイク権限を確認してください",
+            ),
+            (
+                CaptureError::SelectedSystemAudioUnavailable,
+                "SELECTED_SYSTEM_AUDIO_UNAVAILABLE",
+                "別のスピーカーを選ぶか、出力デバイスと権限を確認してください",
+            ),
+            (
+                CaptureError::MacosOutputNotDefault,
+                "MACOS_OUTPUT_NOT_DEFAULT",
+                "システム設定 → サウンドで出力先を変更するか、現在の出力先を選んでください",
+            ),
+        ];
+
+        for (error, code, action_ja) in cases {
+            let facing = error.to_user_facing();
+            assert_eq!(facing.code.as_str(), code);
+            assert_eq!(facing.action_ja, action_ja);
+            assert!(facing.recoverable);
+            assert!(!facing.message_ja.trim().is_empty());
         }
     }
 }

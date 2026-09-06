@@ -7,3 +7,5 @@ event = "whisper-transcribe://phase-changed"
 event = "whisper-transcribe://model-progress"
 [[permission.event.allow]]
 event = "whisper-transcribe://error"
+[[permission.event.allow]]
+event = "whisper-transcribe://block-appended"

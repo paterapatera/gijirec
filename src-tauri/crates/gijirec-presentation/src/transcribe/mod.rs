@@ -7,6 +7,7 @@ pub mod event_emitter;
 pub mod lifecycle_hook;
 pub mod observability;
 pub mod pcm_ingest_consumer;
+pub mod stall_watchdog;
 pub mod status_cache;
 pub mod transcript_block_bus;
 
@@ -28,6 +29,11 @@ pub use observability::{
     TRANSCRIBE_LOG_TARGET, TranscribeObservability, set_transcribe_observability,
 };
 pub use pcm_ingest_consumer::{PcmIngestConsumer, SequenceGapCallback};
+pub use stall_watchdog::{
+    OrchestratorStallAdapter, SILENCE_RMS_THRESHOLD, STALL_POLL_INTERVAL, STALL_THRESHOLD,
+    SharedTranscribeEmitter, StallClock, StallWatchdogRuntime, TranscribeStallOrchestrator,
+    TranscribeStallWatchdog, chunk_rms,
+};
 pub use status_cache::{TranscribeStatusCache, TranscribeStatusSnapshot};
 pub use transcript_block_bus::{
     BLOCK_APPENDED_EVENT, BlockDropCallback, MAX_QUEUED_BLOCKS, TauriTranscriptBlockEventEmitter,
@@ -177,6 +183,10 @@ impl TranscribeWorkerPortAdapter {
 }
 
 impl TranscribeWorkerPort for TranscribeWorkerPortAdapter {
+    fn prepare_model_path(&mut self, path: &Path) -> Result<(), TranscribeError> {
+        self.inner.prepare_model_path(path)
+    }
+
     fn spawn(&mut self) -> Result<(), TranscribeError> {
         self.inner.spawn()
     }
@@ -246,6 +256,32 @@ mod tests {
         ) -> Result<(), TranscribeError> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn transcribe_worker_port_prepare_model_path_does_not_load_until_spawn() {
+        struct NoopSegmentSink;
+
+        impl TranscriptSegmentSink for NoopSegmentSink {
+            fn on_segment(
+                &self,
+                _text: &str,
+                _start_ms: u64,
+                _language: &str,
+            ) -> Result<(), TranscribeError> {
+                Ok(())
+            }
+        }
+
+        let sink: Arc<dyn TranscriptSegmentSink> = Arc::new(NoopSegmentSink);
+        let mut adapter = TranscribeWorkerPortAdapter::new(sink);
+        assert!(!adapter.inner().is_engine_loaded());
+
+        let err = adapter
+            .prepare_model_path(Path::new("/nonexistent/gijirec-model.bin"))
+            .expect_err("missing model should fail");
+        assert!(matches!(err, TranscribeError::ModelNotFound { .. }));
+        assert!(!adapter.inner().is_engine_loaded());
     }
 
     #[test]

@@ -28,6 +28,8 @@ pub trait TranscribeOrchestrator: Send {
     fn phase(&self) -> TranscribePhase;
     fn on_upstream_capture_error(&mut self);
     fn set_upstream_capturing(&mut self, capturing: bool);
+    /// Marks inference failure during transcribing (`transcribing` → `error`).
+    fn fail_inference(&mut self);
 }
 
 /// Default orchestrator: gates `start` on `ready` + upstream capturing, joins worker on `stop`.
@@ -95,7 +97,9 @@ impl<W: TranscribeWorkerPort, C: WhisperContextPort, S, D>
     DefaultTranscribeOrchestrator<W, C, S, D>
 {
     fn ensure_model_loaded(&mut self, model_path: &Path) -> Result<(), TranscribeError> {
-        match self.context.load_model(model_path) {
+        // Defer whisper context creation to the worker thread (whisper.cpp is not thread-safe
+        // across load/inference when the context is moved between threads).
+        match self.worker.prepare_model_path(model_path) {
             Ok(()) => {
                 self.transition_to(TranscribePhase::Ready)?;
                 Ok(())
@@ -255,6 +259,14 @@ where
     fn set_upstream_capturing(&mut self, capturing: bool) {
         self.upstream_capturing = capturing;
     }
+
+    fn fail_inference(&mut self) {
+        if self.phase == TranscribePhase::Transcribing {
+            self.stop_worker();
+        }
+        self.upstream_capturing = false;
+        self.phase = TranscribePhase::Error;
+    }
 }
 
 #[cfg(test)]
@@ -273,18 +285,40 @@ mod tests {
     const MODEL_URL: &str = "https://example.test/model.bin";
 
     struct MockWorker {
+        prepare_calls: AtomicUsize,
         spawn_calls: AtomicUsize,
         stop_calls: AtomicUsize,
         spawn_result: Mutex<Result<(), TranscribeError>>,
+        last_prepared_path: Mutex<Option<PathBuf>>,
     }
 
     impl MockWorker {
         fn new() -> Arc<Mutex<Self>> {
             Arc::new(Mutex::new(Self {
+                prepare_calls: AtomicUsize::new(0),
                 spawn_calls: AtomicUsize::new(0),
                 stop_calls: AtomicUsize::new(0),
                 spawn_result: Mutex::new(Ok(())),
+                last_prepared_path: Mutex::new(None),
             }))
+        }
+
+        fn prepare_call_count(worker: &Arc<Mutex<Self>>) -> usize {
+            worker
+                .lock()
+                .expect("lock")
+                .prepare_calls
+                .load(Ordering::SeqCst)
+        }
+
+        fn prepared_path(worker: &Arc<Mutex<Self>>) -> Option<PathBuf> {
+            worker
+                .lock()
+                .expect("lock")
+                .last_prepared_path
+                .lock()
+                .expect("lock")
+                .clone()
         }
 
         fn spawn_call_count(worker: &Arc<Mutex<Self>>) -> usize {
@@ -314,6 +348,13 @@ mod tests {
     }
 
     impl TranscribeWorkerPort for Arc<Mutex<MockWorker>> {
+        fn prepare_model_path(&mut self, path: &Path) -> Result<(), TranscribeError> {
+            let inner = self.lock().expect("lock");
+            inner.prepare_calls.fetch_add(1, Ordering::SeqCst);
+            *inner.last_prepared_path.lock().expect("lock") = Some(path.to_path_buf());
+            Ok(())
+        }
+
         fn spawn(&mut self) -> Result<(), TranscribeError> {
             let inner = self.lock().expect("lock");
             inner.spawn_calls.fetch_add(1, Ordering::SeqCst);
@@ -457,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_model_transitions_to_ready_and_loads_context() {
+    fn ensure_model_transitions_to_ready_and_prepares_worker_model_path() {
         let worker = MockWorker::new();
         let context = MockContext::new();
         let store = MockStore::with_valid_model();
@@ -467,11 +508,12 @@ mod tests {
         orch.ensure_model().expect("ensure model");
 
         assert_eq!(orch.phase(), TranscribePhase::Ready);
-        assert_eq!(MockContext::load_call_count(&context), 1);
+        assert_eq!(MockWorker::prepare_call_count(&worker), 1);
         assert_eq!(
-            MockContext::loaded_path(&context),
+            MockWorker::prepared_path(&worker),
             Some(PathBuf::from("/tmp/models/model.bin"))
         );
+        assert_eq!(MockContext::load_call_count(&context), 0);
         assert_eq!(MockWorker::spawn_call_count(&worker), 0);
     }
 

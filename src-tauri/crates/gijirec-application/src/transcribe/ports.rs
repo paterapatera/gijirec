@@ -41,6 +41,7 @@ pub trait ModelDownloaderPort: Send {
 
 /// 推論ワーカーの起動・停止。infrastructure の TranscribeWorker が実装。
 pub trait TranscribeWorkerPort: Send {
+    fn prepare_model_path(&mut self, path: &Path) -> Result<(), TranscribeError>;
     fn spawn(&mut self) -> Result<(), TranscribeError>;
     fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError>;
 }
@@ -61,6 +62,10 @@ mod tests {
     struct MockDownloader;
 
     impl TranscribeWorkerPort for MockWorker {
+        fn prepare_model_path(&mut self, _path: &Path) -> Result<(), TranscribeError> {
+            Ok(())
+        }
+
         fn spawn(&mut self) -> Result<(), TranscribeError> {
             Ok(())
         }

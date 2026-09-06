@@ -1,0 +1,11 @@
+# Cargo の target は常に src-tauri/target に置く（マニフェスト基準の相対パス）。
+# リポジトリルートから --manifest-path を使う場合、CARGO_TARGET_DIR=src-tauri/target とすると
+# src-tauri/src-tauri/target が誤って生成されるため、ここで固定する。
+# エージェント環境が長い CARGO_TARGET_DIR を注入すると、Windows の MSVC FileTracker が
+# whisper-rs-sys の CMake try_compile で落ちる。bun の rust:* スクリプトは
+# scripts/cargo-src-tauri.mjs で短い target に上書きする。
+[build]
+target-dir = "target"
+
+# whisper.cpp（whisper-rs-sys）の release 最適化フラグは、cwd に依存せず読まれるよう
+# リポジトリルートの .cargo/config.toml の [env] で定義している。

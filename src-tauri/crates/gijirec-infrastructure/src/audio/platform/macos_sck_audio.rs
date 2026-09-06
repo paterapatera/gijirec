@@ -9,9 +9,7 @@ mod imp {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use crate::audio::mic_capture::DEFAULT_RING_CAPACITY;
-
-    /// SCK system audio adapter streaming f32 mono samples into an rtrb consumer.
+    use crate::audio::mic_capture::{DEFAULT_RING_CAPACITY, StreamRuntimeErrorCallback};
     pub struct MacScreenCaptureKitAdapter {
         stream: SCStream,
         running: Arc<AtomicBool>,
@@ -54,6 +52,7 @@ mod imp {
     struct AudioOutputHandler {
         producer: Mutex<rtrb::Producer<f32>>,
         permission_denied: Arc<AtomicBool>,
+        on_stream_error: Option<StreamRuntimeErrorCallback>,
     }
 
     impl SCStreamOutputTrait for AudioOutputHandler {
@@ -93,12 +92,22 @@ mod imp {
             if is_permission_denied_error(error.as_ref()) {
                 self.permission_denied.store(true, Ordering::SeqCst);
             }
+            if let Some(callback) = &self.on_stream_error {
+                callback();
+            }
         }
     }
 
     impl MacScreenCaptureKitAdapter {
         pub fn open(
             ring_capacity: usize,
+        ) -> Result<(Self, SckAudioSampleConsumer, u32), CaptureError> {
+            Self::open_with_runtime_hook(ring_capacity, None)
+        }
+
+        pub fn open_with_runtime_hook(
+            ring_capacity: usize,
+            on_stream_error: Option<StreamRuntimeErrorCallback>,
         ) -> Result<(Self, SckAudioSampleConsumer, u32), CaptureError> {
             let content = SCShareableContent::get().map_err(map_shareable_content_error)?;
             let display = content
@@ -124,6 +133,7 @@ mod imp {
             let handler = AudioOutputHandler {
                 producer: Mutex::new(producer),
                 permission_denied: Arc::clone(&permission_denied),
+                on_stream_error,
             };
 
             let mut stream = SCStream::new(&filter, &config);

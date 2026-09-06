@@ -38,7 +38,10 @@ dirs = "6"
 gijirec-presentation = { path = "crates/gijirec-presentation" }
 rtrb = "0.3"
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 tracing = "0.1"
+tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]

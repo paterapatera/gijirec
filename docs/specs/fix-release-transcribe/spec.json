@@ -1,0 +1,25 @@
+{
+  "feature_name": "fix-release-transcribe",
+  "created_at": "2026-09-06T08:56:00+09:00",
+  "updated_at": "2026-09-06T18:12:00+09:00",
+  "language": "ja",
+  "phase": "tasks-approved",
+  "complexity_tier": "L",
+  "complexity_score": 7,
+  "complexity_rationale": "brownfield +2, upstream dep +2, Path D force L +5, 参照実装明示 -1, complete brief -1",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}

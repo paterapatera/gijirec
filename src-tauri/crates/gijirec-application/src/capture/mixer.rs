@@ -23,6 +23,23 @@ const SOFT_LIMIT: f32 = 0.95;
 /// Floor to avoid division by zero in gain calculation.
 const MIN_RMS: f32 = 1e-8;
 
+/// Maximum normalization gain (+12 dB).
+///
+/// 無制限に `TARGET_RMS / rms` を掛けると、無音側トラックの床ノイズ（RMS 0.001 前後）が
+/// 100 倍以上に増幅されて -20 dBFS に張り付き、発話側と同レベルのノイズとして混ざる。
+/// 静かな発話（RMS 0.02〜0.05）を目標に寄せるには +12 dB で十分。
+const MAX_GAIN: f32 = 4.0;
+
+/// Noise gate: tracks whose 200 ms RMS is at or below this level are passed through
+/// unamplified (gain 1.0). Matches the transcribe-side `SILENCE_RMS_THRESHOLD` (-42 dBFS)
+/// so that a silent track never gets boosted above the VAD threshold by the mixer.
+const NOISE_GATE_RMS: f32 = 0.008;
+
+/// Largest forward timeline gap (1 s at 16 kHz) that is zero-filled when a track
+/// resumes after a delivery pause (e.g. WASAPI loopback delivering nothing while
+/// no application renders audio). Larger gaps restart the track at the new position.
+const MAX_GAP_FILL_SAMPLES: u64 = 16_000;
+
 /// Mixes mic and system audio with timeline alignment and level normalization.
 pub trait AudioMixer: Send {
     /// Pushes mic samples starting at `timeline_samples` on the unified 16 kHz timeline.
@@ -64,12 +81,14 @@ impl Default for DefaultAudioMixer {
 
 impl AudioMixer for DefaultAudioMixer {
     fn push_mic(&mut self, samples: &[f32], timeline_samples: u64) {
-        self.mic.push(samples, timeline_samples);
+        let timeline = live_timeline(&self.mic, self.next_emit_timeline, timeline_samples);
+        self.mic.push(samples, timeline);
         self.trim_retention();
     }
 
     fn push_system(&mut self, samples: &[f32], timeline_samples: u64) {
-        self.system.push(samples, timeline_samples);
+        let timeline = live_timeline(&self.system, self.next_emit_timeline, timeline_samples);
+        self.system.push(samples, timeline);
         self.trim_retention();
     }
 
@@ -175,6 +194,22 @@ impl DefaultAudioMixer {
     }
 }
 
+/// Resolves the timeline label for content arriving on `track`.
+///
+/// 呼び出し側のラベルは各ストリームの「配信済みサンプル数の累積」であり、配信開始が
+/// 遅れたソース（ループバック初期化遅延、無再生時にパケットを出さない WASAPI ループバック）
+/// は相手より恒常的に遅れたラベルを持つ。トラックが空のときに届いた内容は「いま」の音で
+/// あり、既に出力した位置（emit cursor）より前へ置くことはできないため、カーソルへ
+/// 引き上げる。引き上げずに整列処理へ渡すと、50 ms の整列窓を超えた遅れとして
+/// 到着のたびに全量捨てられ、そのソースが一切ミックスされなくなる。
+/// トラックが空でない場合はラベルを据え置き、`TimelineTrack::push` の連結規則に従う。
+fn live_timeline(track: &TimelineTrack, emit_cursor: Option<u64>, label: u64) -> u64 {
+    match (track.start_timeline(), emit_cursor) {
+        (None, Some(cursor)) => label.max(cursor),
+        _ => label,
+    }
+}
+
 fn earliest_mixable_timeline(mic: &TimelineTrack, system: &TimelineTrack) -> Option<u64> {
     match (mic.start_timeline(), system.start_timeline()) {
         (Some(m), Some(s)) => Some(m.max(s)),
@@ -210,8 +245,26 @@ impl TimelineTrack {
         }
         if self.start_timeline.is_none() {
             self.start_timeline = Some(timeline_samples);
+        } else {
+            self.fill_forward_gap(timeline_samples);
         }
         self.samples.extend(samples);
+    }
+
+    /// Handles a label ahead of the current end: zero-fills short delivery gaps,
+    /// restarts the track for long ones. Labels at or behind the end append contiguously.
+    fn fill_forward_gap(&mut self, timeline_samples: u64) {
+        let gap = timeline_samples.saturating_sub(self.end_timeline());
+        if gap == 0 {
+            return;
+        }
+        if gap <= MAX_GAP_FILL_SAMPLES {
+            self.samples
+                .extend(std::iter::repeat_n(0.0_f32, gap as usize));
+        } else {
+            self.samples.clear();
+            self.start_timeline = Some(timeline_samples);
+        }
     }
 
     fn start_timeline(&self) -> Option<u64> {
@@ -315,8 +368,20 @@ impl RmsWindow {
     }
 
     fn gain(&self) -> f32 {
-        TARGET_RMS / self.current_rms()
+        gain_for_rms(self.current_rms())
     }
+}
+
+/// Normalization gain toward `TARGET_RMS`, bounded by `MAX_GAIN` and gated below
+/// `NOISE_GATE_RMS`. The gate ramps linearly over `[NOISE_GATE_RMS, 2 * NOISE_GATE_RMS]`
+/// to avoid pumping at the threshold.
+fn gain_for_rms(rms: f32) -> f32 {
+    if rms <= NOISE_GATE_RMS {
+        return 1.0;
+    }
+    let normalizing = (TARGET_RMS / rms.max(MIN_RMS)).min(MAX_GAIN);
+    let blend = ((rms - NOISE_GATE_RMS) / NOISE_GATE_RMS).min(1.0);
+    1.0 + (normalizing - 1.0) * blend
 }
 
 #[cfg(test)]
@@ -442,5 +507,183 @@ mod tests {
         assert_eq!(soft_limit(1.5), SOFT_LIMIT);
         assert_eq!(soft_limit(-2.0), -SOFT_LIMIT);
         assert!((soft_limit(0.5) - 0.5).abs() < 1e-6);
+    }
+
+    fn rms_of(samples: &[f32]) -> f32 {
+        (samples
+            .iter()
+            .map(|s| (*s as f64) * (*s as f64))
+            .sum::<f64>()
+            / samples.len().max(1) as f64)
+            .sqrt() as f32
+    }
+
+    /// Deterministic pseudo-noise at a given peak amplitude (LCG, no external crate).
+    fn fill_noise(out: &mut Vec<f32>, frames: usize, amplitude: f32) {
+        let mut state: u32 = 0x1234_5678;
+        for _ in 0..frames {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let unit = (state >> 8) as f32 / (1u32 << 24) as f32; // [0, 1)
+            out.push(amplitude * (unit * 2.0 - 1.0));
+        }
+    }
+
+    #[test]
+    // 回帰: 無音側トラックの床ノイズを -20 dBFS まで持ち上げない（ノイズゲート）
+    fn silent_mic_noise_floor_is_not_boosted_while_system_speaks() {
+        let mut mixer = DefaultAudioMixer::new();
+        let frames = RMS_WINDOW_SAMPLES * 4;
+        let mut mic_noise = Vec::new();
+        let mut sys_speech = Vec::new();
+        fill_noise(&mut mic_noise, frames, 0.003); // 床ノイズ RMS ≈ 0.0017
+        fill_sine(&mut sys_speech, frames, 0.3);
+
+        mixer.push_mic(&mic_noise, 0);
+        mixer.push_system(&sys_speech, 0);
+        let mut out = Vec::new();
+        mixer.drain_mixed(&mut out);
+
+        // RMS 窓が埋まった後半だけを評価する。
+        let tail = &out[out.len() / 2..];
+        let sys_tail = &sys_speech[sys_speech.len() / 2..];
+        let sys_rms = rms_of(sys_tail);
+        // system は -20 dBFS 付近へ正規化されている前提で、その理想ゲインを逆算する。
+        let sys_gain = TARGET_RMS / sys_rms;
+        let residual: Vec<f32> = tail
+            .iter()
+            .zip(sys_tail)
+            .map(|(mixed, sys)| mixed - sys * sys_gain)
+            .collect();
+        let residual_rms = rms_of(&residual);
+        assert!(
+            residual_rms < NOISE_GATE_RMS,
+            "mic noise floor leaked into the mix: residual_rms={residual_rms}"
+        );
+    }
+
+    #[test]
+    fn mic_only_noise_floor_passes_through_unamplified() {
+        let mut mixer = DefaultAudioMixer::new();
+        let frames = RMS_WINDOW_SAMPLES * 4;
+        let mut mic_noise = Vec::new();
+        fill_noise(&mut mic_noise, frames, 0.003);
+
+        mixer.push_mic(&mic_noise, 0);
+        let mut out = Vec::new();
+        mixer.drain_mixed(&mut out);
+
+        let in_rms = rms_of(&mic_noise);
+        let out_rms = rms_of(&out);
+        assert!(
+            (out_rms - in_rms).abs() < in_rms * 0.05,
+            "gated track must pass through at unity gain: in={in_rms} out={out_rms}"
+        );
+    }
+
+    #[test]
+    fn gain_is_bounded_and_gated() {
+        assert_eq!(gain_for_rms(0.0), 1.0);
+        assert_eq!(gain_for_rms(NOISE_GATE_RMS), 1.0);
+        assert!(gain_for_rms(NOISE_GATE_RMS * 1.5) < MAX_GAIN);
+        assert!((gain_for_rms(NOISE_GATE_RMS * 2.0) - MAX_GAIN).abs() < 1e-6);
+        assert!((gain_for_rms(0.05) - 2.0).abs() < 1e-6);
+        // 大音量は減衰させる（クリップ回避、req 2.4）
+        assert!(gain_for_rms(0.6) < 0.2);
+        for rms in [1e-6_f32, 0.001, 0.01, 0.03, 0.1, 0.5] {
+            assert!(gain_for_rms(rms) <= MAX_GAIN, "rms={rms}");
+        }
+    }
+
+    #[test]
+    // 回帰: 配信が途切れた後にタイムラインが進んで再開しても、旧サンプルへ連結せず整列する
+    fn track_resuming_after_delivery_gap_stays_aligned() {
+        let mut mixer = DefaultAudioMixer::new();
+        let mut out = Vec::new();
+
+        // system: 先頭 800 サンプルの後、7_200 サンプル分（450 ms）配信が途切れて再開
+        let mut sys_head = Vec::new();
+        fill_sine(&mut sys_head, 800, 0.3);
+        mixer.push_system(&sys_head, 0);
+        let mut sys_tail = Vec::new();
+        fill_sine(&mut sys_tail, 4_800, 0.3);
+        mixer.push_system(&sys_tail, 8_000);
+
+        // mic: 連続無音（ゲート内の床ノイズ）
+        let mut mic = Vec::new();
+        fill_noise(&mut mic, 12_800, 0.001);
+        mixer.push_mic(&mic, 0);
+
+        mixer.drain_mixed(&mut out);
+        assert_eq!(
+            out.len(),
+            12_800,
+            "mixed output must cover the full mic span"
+        );
+
+        let gap = &out[800..8_000];
+        assert!(
+            rms_of(gap) < NOISE_GATE_RMS,
+            "gap must be near-silent, rms={}",
+            rms_of(gap)
+        );
+        let resumed = &out[8_000..12_800];
+        assert!(
+            rms_of(resumed) > 0.05,
+            "resumed system audio must be present at its timeline, rms={}",
+            rms_of(resumed)
+        );
+    }
+
+    #[test]
+    // 回帰: 配信開始が 50 ms 以上遅れたソースが、処理ループの定常状態（5 ms ごとに
+    // push→全量 drain）で以降ずっと捨てられない
+    fn late_starting_system_stream_is_mixed_in_steady_state() {
+        let mut mixer = DefaultAudioMixer::new();
+        let mut out = Vec::new();
+        let batch = 80_usize; // 5 ms @ 16 kHz
+        let mut mic_timeline = 0_u64;
+        let mut sys_timeline = 0_u64;
+        let mic_silence = vec![0.0_f32; batch];
+        let mut sys_batch = Vec::new();
+        fill_sine(&mut sys_batch, batch, 0.3);
+
+        // 先頭 300 ms は mic のみ配信（system はまだパケットが来ない）
+        for _ in 0..60 {
+            mixer.push_mic(&mic_silence, mic_timeline);
+            mic_timeline += batch as u64;
+            mixer.drain_mixed(&mut out);
+        }
+        let mic_only_len = out.len();
+
+        // 以降 1 s: 両方配信。system のラベルは累積カウンタなので 300 ms 遅れたまま
+        for _ in 0..200 {
+            mixer.push_mic(&mic_silence, mic_timeline);
+            mic_timeline += batch as u64;
+            mixer.push_system(&sys_batch, sys_timeline);
+            sys_timeline += batch as u64;
+            mixer.drain_mixed(&mut out);
+        }
+
+        assert!(
+            out.len() >= mic_only_len + 190 * batch,
+            "mixed output must keep flowing, got {} samples",
+            out.len()
+        );
+        // RMS 窓のランプイン（200 ms）を除いた後半を評価する
+        let tail = &out[mic_only_len + RMS_WINDOW_SAMPLES..];
+        assert!(
+            rms_of(tail) > 0.05,
+            "late-starting system audio must be present, rms={}",
+            rms_of(tail)
+        );
+    }
+
+    #[test]
+    fn track_gap_beyond_fill_limit_restarts_at_new_timeline() {
+        let mut track = TimelineTrack::new();
+        track.push(&[0.1; 100], 0);
+        track.push(&[0.2; 50], 100 + MAX_GAP_FILL_SAMPLES + 1);
+        assert_eq!(track.start_timeline(), Some(100 + MAX_GAP_FILL_SAMPLES + 1));
+        assert_eq!(track.samples.len(), 50);
     }
 }

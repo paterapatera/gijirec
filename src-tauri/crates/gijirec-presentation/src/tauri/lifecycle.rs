@@ -4,6 +4,7 @@ use crate::tauri::events::CaptureEventEmitter;
 use crate::tauri::observability;
 use crate::transcribe::TranscribeLifecycleHook;
 use gijirec_application::capture::orchestrator::CaptureOrchestrator;
+use gijirec_application::device_selection::DeviceSelectionService;
 use gijirec_domain::audio::{CaptureError, CapturePhase};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Builder, Manager, RunEvent, Runtime, WindowEvent};
@@ -60,9 +61,11 @@ pub trait CaptureProcessingHook: Send + Sync {
 }
 
 /// Starts capture on app setup when the platform is supported.
+#[allow(clippy::too_many_arguments)]
 pub fn on_app_setup(
     platform: &dyn CapturePlatformSupport,
     orchestrator: &mut dyn CaptureOrchestrator,
+    selection: &dyn DeviceSelectionService,
     emitter: &dyn CaptureEventEmitter,
     notifier: &dyn UnsupportedPlatformNotifier,
 ) -> Result<(), LifecycleError> {
@@ -71,11 +74,13 @@ pub fn on_app_setup(
         return Ok(());
     }
 
+    let startup_selection = selection.get_selection();
+
     if orchestrator.phase() == CapturePhase::Idle {
         emit_phase(emitter, CapturePhase::Starting)?;
     }
 
-    match orchestrator.start() {
+    match orchestrator.start_with_selection(&startup_selection) {
         Ok(()) => emit_phase(emitter, orchestrator.phase())?,
         Err(err) => {
             emit_error(emitter, err.clone())?;
@@ -138,6 +143,31 @@ fn emit_error(
         .map_err(|e| LifecycleError::Emitter(e.to_string()))
 }
 
+/// Handles runtime stream disconnect while capturing: stop processing, error phase, emit (req 4.3).
+pub fn handle_capture_device_disconnected(
+    orchestrator: &mut dyn CaptureOrchestrator,
+    emitter: &dyn CaptureEventEmitter,
+    processing: Option<&dyn CaptureProcessingHook>,
+) -> Result<(), LifecycleError> {
+    if orchestrator.phase() != CapturePhase::Capturing {
+        return Ok(());
+    }
+
+    if let Some(hook) = processing {
+        hook.on_capture_stopping();
+    }
+
+    match orchestrator.on_device_disconnected() {
+        Ok(()) => Ok(()),
+        Err(CaptureError::DeviceDisconnected) => {
+            emit_error(emitter, CaptureError::DeviceDisconnected)?;
+            emit_phase(emitter, CapturePhase::Error)?;
+            Ok(())
+        }
+        Err(err) => Err(LifecycleError::Orchestrator(err)),
+    }
+}
+
 /// Records unsupported-platform notifications in tests.
 #[derive(Debug, Default)]
 pub struct RecordingUnsupportedPlatformNotifier {
@@ -178,7 +208,8 @@ impl UnsupportedPlatformNotifier for OsUnsupportedPlatformNotifier {
 
 /// Managed state for Tauri lifecycle wiring (consumed by task 7.1).
 pub struct CaptureLifecycleState {
-    orchestrator: Mutex<Box<dyn CaptureOrchestrator>>,
+    orchestrator: Arc<Mutex<dyn CaptureOrchestrator>>,
+    device_selection: Arc<dyn DeviceSelectionService>,
     emitter: Mutex<Option<Arc<dyn CaptureEventEmitter>>>,
     platform: Arc<dyn CapturePlatformSupport>,
     notifier: Arc<dyn UnsupportedPlatformNotifier>,
@@ -187,12 +218,14 @@ pub struct CaptureLifecycleState {
 
 impl CaptureLifecycleState {
     pub fn new(
-        orchestrator: Box<dyn CaptureOrchestrator>,
+        orchestrator: Arc<Mutex<dyn CaptureOrchestrator>>,
+        device_selection: Arc<dyn DeviceSelectionService>,
         platform: Arc<dyn CapturePlatformSupport>,
         notifier: Arc<dyn UnsupportedPlatformNotifier>,
     ) -> Self {
         Self {
-            orchestrator: Mutex::new(orchestrator),
+            orchestrator,
+            device_selection,
             emitter: Mutex::new(None),
             platform,
             notifier,
@@ -236,6 +269,22 @@ impl CaptureLifecycleState {
     fn emitter(&self) -> Option<Arc<dyn CaptureEventEmitter>> {
         self.emitter.lock().expect("lock").clone()
     }
+
+    /// Invoked when a capture stream reports disconnect/error during `capturing` (req 4.3).
+    pub fn handle_stream_disconnected(&self) {
+        if !self.platform.is_capture_supported() {
+            return;
+        }
+        let Some(emitter) = self.emitter() else {
+            return;
+        };
+        let mut orchestrator = self.orchestrator.lock().expect("lock");
+        let processing = self.processing.lock().expect("lock");
+        let hook = processing
+            .as_ref()
+            .map(|arc| arc.as_ref() as &dyn CaptureProcessingHook);
+        let _ = handle_capture_device_disconnected(&mut *orchestrator, emitter.as_ref(), hook);
+    }
 }
 
 struct ChainedProcessingHook {
@@ -267,14 +316,14 @@ pub(crate) fn perform_app_exit_shutdown(
     }
     if let Some(emitter) = capture_state.emitter() {
         let mut orch = capture_state.orchestrator.lock().expect("lock");
-        let _ = on_app_shutdown(orch.as_mut(), emitter.as_ref());
+        let _ = on_app_shutdown(&mut *orch, emitter.as_ref());
     }
 }
 
 pub(crate) fn handle_window_close_requested<R: Runtime>(app: &AppHandle<R>) {
     let transcribe_hook = app.try_state::<Arc<TranscribeLifecycleHook>>();
-    let state = app.state::<CaptureLifecycleState>();
-    perform_app_exit_shutdown(transcribe_hook.as_ref().map(|h| &***h), &state);
+    let state = app.state::<Arc<CaptureLifecycleState>>();
+    perform_app_exit_shutdown(transcribe_hook.as_ref().map(|h| &***h), state.as_ref());
 }
 
 /// Initializes capture emitter and starts capture on app setup.
@@ -282,7 +331,7 @@ pub(crate) fn handle_window_close_requested<R: Runtime>(app: &AppHandle<R>) {
 /// Tauri allows only one `.setup()` callback; call this from the composition root's
 /// unified setup instead of registering a second handler.
 pub fn run_capture_app_setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), LifecycleError> {
-    let managed = app.state::<CaptureLifecycleState>();
+    let managed = app.state::<Arc<CaptureLifecycleState>>();
     managed.init_emitter(Arc::new(
         crate::tauri::events::TauriCaptureEventEmitter::new(app.clone()),
     ));
@@ -292,7 +341,8 @@ pub fn run_capture_app_setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Lifec
     let mut orch = managed.orchestrator.lock().expect("lock");
     on_app_setup(
         managed.platform.as_ref(),
-        orch.as_mut(),
+        &mut *orch,
+        managed.device_selection.as_ref(),
         emitter.as_ref(),
         managed.notifier.as_ref(),
     )?;
@@ -308,7 +358,7 @@ pub fn run_capture_app_setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Lifec
 /// Registers managed state, window close, and documents exit handling for capture lifecycle.
 pub fn attach_capture_lifecycle<R: Runtime>(
     builder: Builder<R>,
-    state: CaptureLifecycleState,
+    state: Arc<CaptureLifecycleState>,
 ) -> Builder<R> {
     builder.manage(state).on_window_event(|window, event| {
         if matches!(event, WindowEvent::CloseRequested { .. }) {
@@ -321,8 +371,8 @@ pub fn attach_capture_lifecycle<R: Runtime>(
 pub fn handle_capture_run_event<R: Runtime>(app: &AppHandle<R>, event: &RunEvent) {
     if matches!(event, RunEvent::Exit) {
         let transcribe_hook = app.try_state::<Arc<TranscribeLifecycleHook>>();
-        let state = app.state::<CaptureLifecycleState>();
-        perform_app_exit_shutdown(transcribe_hook.as_ref().map(|h| &***h), &state);
+        let state = app.state::<Arc<CaptureLifecycleState>>();
+        perform_app_exit_shutdown(transcribe_hook.as_ref().map(|h| &***h), state.as_ref());
     }
 }
 
@@ -344,9 +394,117 @@ mod tests {
     use gijirec_application::capture::orchestrator::{
         CaptureOrchestrator, DefaultCaptureOrchestrator, MicCapturePort, SystemAudioCapturePort,
     };
+    use gijirec_application::device_selection::{DeviceSelectionError, DeviceSelectionService};
+    use gijirec_domain::audio::DeviceSelection;
     use gijirec_domain::transcribe::{TranscribeError, TranscribePhase};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    struct StubSelectionService {
+        selection: DeviceSelection,
+        get_selection_called: Arc<AtomicBool>,
+    }
+
+    impl StubSelectionService {
+        fn with_selection(selection: DeviceSelection) -> Self {
+            Self {
+                selection,
+                get_selection_called: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        fn default_unmodified() -> Self {
+            Self::with_selection(DeviceSelection::default())
+        }
+
+        fn get_selection_was_called(&self) -> bool {
+            self.get_selection_called.load(Ordering::SeqCst)
+        }
+    }
+
+    impl DeviceSelectionService for StubSelectionService {
+        fn list_devices(
+            &self,
+        ) -> Result<gijirec_domain::audio::AudioDeviceList, DeviceSelectionError> {
+            Ok(gijirec_domain::audio::AudioDeviceList::default())
+        }
+
+        fn get_selection(&self) -> DeviceSelection {
+            self.get_selection_called.store(true, Ordering::SeqCst);
+            self.selection.clone()
+        }
+
+        fn set_selection(
+            &self,
+            _selection: DeviceSelection,
+        ) -> Result<DeviceSelection, DeviceSelectionError> {
+            Ok(self.selection.clone())
+        }
+
+        fn set_ui_visible(&self, _visible: bool) {}
+    }
+
+    struct TrackingOrchestrator {
+        phase: CapturePhase,
+        start_called: Arc<AtomicBool>,
+        start_with_selection_calls: Arc<Mutex<Vec<DeviceSelection>>>,
+    }
+
+    impl TrackingOrchestrator {
+        fn new() -> Self {
+            Self {
+                phase: CapturePhase::Idle,
+                start_called: Arc::new(AtomicBool::new(false)),
+                start_with_selection_calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl CaptureOrchestrator for TrackingOrchestrator {
+        fn start(&mut self) -> Result<(), CaptureError> {
+            self.start_called.store(true, Ordering::SeqCst);
+            Err(CaptureError::Internal {
+                detail: "start() must not be called from on_app_setup".to_string(),
+            })
+        }
+
+        fn start_with_selection(
+            &mut self,
+            selection: &DeviceSelection,
+        ) -> Result<(), CaptureError> {
+            self.start_with_selection_calls
+                .lock()
+                .expect("lock")
+                .push(selection.clone());
+            self.phase = CapturePhase::Capturing;
+            Ok(())
+        }
+
+        fn restart_with_selection(
+            &mut self,
+            selection: &DeviceSelection,
+        ) -> Result<(), CaptureError> {
+            self.start_with_selection(selection)
+        }
+
+        fn stop(&mut self) -> Result<(), CaptureError> {
+            self.phase = CapturePhase::Idle;
+            Ok(())
+        }
+
+        fn phase(&self) -> CapturePhase {
+            self.phase
+        }
+
+        fn on_device_disconnected(&mut self) -> Result<(), CaptureError> {
+            if self.phase != CapturePhase::Capturing {
+                return Ok(());
+            }
+            self.phase = CapturePhase::Error;
+            Err(CaptureError::DeviceDisconnected)
+        }
+    }
 
     struct FixedPlatformSupport {
         supported: bool,
@@ -465,13 +623,77 @@ mod tests {
     }
 
     #[test]
+    fn handle_capture_device_disconnected_emits_device_disconnected_and_error_phase() {
+        let (mic, system, mut orch) = make_orchestrator();
+        orch.start_with_selection(&DeviceSelection::default())
+            .expect("start capturing");
+        assert_eq!(orch.phase(), CapturePhase::Capturing);
+        assert!(mic.is_open());
+        assert!(system.is_open());
+
+        let emitter = RecordingEventEmitter::new();
+        handle_capture_device_disconnected(&mut orch, &emitter, None).expect("disconnect");
+
+        assert_eq!(orch.phase(), CapturePhase::Error);
+        assert!(!mic.is_open());
+        assert!(!system.is_open());
+
+        let errors = emitter.errors();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, "DEVICE_DISCONNECTED");
+        assert!(!errors[0].action_ja.is_empty());
+
+        let phases = emitter.phases();
+        assert!(
+            phases.iter().any(|payload| payload.phase == "error"),
+            "expected error phase event: {phases:?}"
+        );
+    }
+
+    #[test]
+    fn handle_capture_device_disconnected_noop_when_not_capturing() {
+        let (_, _, mut orch) = make_orchestrator();
+        let emitter = RecordingEventEmitter::new();
+        handle_capture_device_disconnected(&mut orch, &emitter, None).expect("noop");
+        assert_eq!(orch.phase(), CapturePhase::Idle);
+        assert!(emitter.errors().is_empty());
+        assert!(emitter.phases().is_empty());
+    }
+
+    #[test]
+    fn setup_resolves_selection_via_get_selection_and_calls_start_with_selection() {
+        let platform = FixedPlatformSupport { supported: true };
+        let notifier = RecordingUnsupportedPlatformNotifier::new();
+        let emitter = RecordingEventEmitter::new();
+        let selection = StubSelectionService::default_unmodified();
+        let mut orch = TrackingOrchestrator::new();
+        let start_called = Arc::clone(&orch.start_called);
+        let calls = Arc::clone(&orch.start_with_selection_calls);
+
+        on_app_setup(&platform, &mut orch, &selection, &emitter, &notifier).expect("setup");
+
+        assert!(selection.get_selection_was_called());
+        assert!(
+            !start_called.load(Ordering::SeqCst),
+            "must not call start()"
+        );
+        let applied = calls.lock().expect("lock");
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0], DeviceSelection::default());
+        assert!(applied[0].resolves_microphone_to_os_default());
+        assert!(applied[0].resolves_speaker_to_os_default());
+        assert_eq!(orch.phase(), CapturePhase::Capturing);
+    }
+
+    #[test]
     fn setup_on_supported_platform_starts_capture_and_emits_phases() {
         let platform = FixedPlatformSupport { supported: true };
         let notifier = RecordingUnsupportedPlatformNotifier::new();
         let emitter = RecordingEventEmitter::new();
+        let selection = StubSelectionService::default_unmodified();
         let (mic, system, mut orch) = make_orchestrator();
 
-        on_app_setup(&platform, &mut orch, &emitter, &notifier).expect("setup");
+        on_app_setup(&platform, &mut orch, &selection, &emitter, &notifier).expect("setup");
 
         assert_eq!(orch.phase(), CapturePhase::Capturing);
         assert!(mic.is_open());
@@ -489,14 +711,16 @@ mod tests {
         let platform = FixedPlatformSupport { supported: false };
         let notifier = RecordingUnsupportedPlatformNotifier::new();
         let emitter = RecordingEventEmitter::new();
+        let selection = StubSelectionService::default_unmodified();
         let (mic, system, mut orch) = make_orchestrator();
 
-        on_app_setup(&platform, &mut orch, &emitter, &notifier).expect("setup");
+        on_app_setup(&platform, &mut orch, &selection, &emitter, &notifier).expect("setup");
 
         assert_eq!(orch.phase(), CapturePhase::Idle);
         assert!(!mic.is_open());
         assert!(!system.is_open());
         assert!(notifier.was_notified());
+        assert!(!selection.get_selection_was_called());
         assert!(emitter.phases().is_empty());
     }
 
@@ -558,8 +782,9 @@ mod tests {
         let system = MockSystem::succeeds();
         let mut orch = DefaultCaptureOrchestrator::new(mic, system);
 
-        let err =
-            on_app_setup(&platform, &mut orch, &emitter, &notifier).expect_err("setup should fail");
+        let selection = StubSelectionService::default_unmodified();
+        let err = on_app_setup(&platform, &mut orch, &selection, &emitter, &notifier)
+            .expect_err("setup should fail");
         assert!(matches!(
             err,
             LifecycleError::Orchestrator(CaptureError::MicUnavailable)
@@ -612,9 +837,11 @@ mod tests {
         let hook = Arc::new(RecordingProcessingHook::new());
         let (mic, system, mut orch) = make_orchestrator();
 
+        let selection = StubSelectionService::default_unmodified();
         on_app_setup(
             &FixedPlatformSupport { supported: true },
             &mut orch,
+            &selection,
             &emitter,
             &RecordingUnsupportedPlatformNotifier::new(),
         )
@@ -650,6 +877,13 @@ mod tests {
             stop_timeout: Arc<Mutex<Option<Duration>>>,
         }
         impl TranscribeWorkerPort for MockWorker {
+            fn prepare_model_path(
+                &mut self,
+                _path: &std::path::Path,
+            ) -> Result<(), TranscribeError> {
+                Ok(())
+            }
+
             fn spawn(&mut self) -> Result<(), TranscribeError> {
                 Ok(())
             }
@@ -758,6 +992,13 @@ mod tests {
             stop_timeout: Arc<Mutex<Option<Duration>>>,
         }
         impl TranscribeWorkerPort for MockWorker {
+            fn prepare_model_path(
+                &mut self,
+                _path: &std::path::Path,
+            ) -> Result<(), TranscribeError> {
+                Ok(())
+            }
+
             fn spawn(&mut self) -> Result<(), TranscribeError> {
                 Ok(())
             }
@@ -845,7 +1086,8 @@ mod tests {
 
         let (_, _, capture_orch) = make_orchestrator();
         let state = CaptureLifecycleState::new(
-            Box::new(capture_orch),
+            Arc::new(Mutex::new(capture_orch)),
+            Arc::new(StubSelectionService::default_unmodified()),
             Arc::new(FixedPlatformSupport { supported: true }),
             Arc::new(RecordingUnsupportedPlatformNotifier::new()),
         );

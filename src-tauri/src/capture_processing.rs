@@ -76,7 +76,7 @@ impl ResampledStream {
 struct ProcessingContext {
     stop: Arc<AtomicBool>,
     mixer: DefaultAudioMixer,
-    chunk_emitter: ChunkEmitter,
+    chunk_emitter: Arc<Mutex<ChunkEmitter>>,
     pcm_bus: Arc<PcmChunkBus>,
     mic: Box<dyn F32SampleSource>,
     system: Box<dyn F32SampleSource>,
@@ -91,7 +91,7 @@ impl ProcessingContext {
         let ProcessingContext {
             stop,
             mut mixer,
-            mut chunk_emitter,
+            chunk_emitter,
             pcm_bus,
             mut mic,
             mut system,
@@ -139,8 +139,9 @@ impl ProcessingContext {
             mixed.clear();
             let _ = mixer.drain_mixed(&mut mixed);
             if !mixed.is_empty() {
-                chunk_emitter.push_mixed(&mixed);
-                publish_ready_chunks(&mut chunk_emitter, &pcm_bus);
+                let mut emitter = chunk_emitter.lock().expect("lock");
+                emitter.push_mixed(&mixed);
+                publish_ready_chunks(&mut emitter, &pcm_bus);
             }
 
             loop_count += 1;
@@ -153,8 +154,6 @@ impl ProcessingContext {
 
             thread::sleep(LOOP_SLEEP);
         }
-
-        chunk_emitter.stop();
     }
 }
 
@@ -217,7 +216,7 @@ pub(crate) struct ProcessingSpawnParams {
     pub mic_rate_hz: u32,
     pub system_rate_hz: u32,
     pub mixer: DefaultAudioMixer,
-    pub chunk_emitter: ChunkEmitter,
+    pub chunk_emitter: Arc<Mutex<ChunkEmitter>>,
     pub pcm_bus: Arc<PcmChunkBus>,
 }
 
@@ -261,26 +260,39 @@ impl CaptureProcessingHandle {
 }
 
 /// Owns pipeline state and coordinates processing thread lifecycle.
-pub(crate) struct CapturePipelineState {
+pub struct CapturePipelineState {
     pub mixer: Mutex<DefaultAudioMixer>,
-    pub chunk_emitter: Mutex<ChunkEmitter>,
+    pub chunk_emitter: Arc<Mutex<ChunkEmitter>>,
     pub pcm_bus: Arc<PcmChunkBus>,
     pub streams: CaptureStreamHandles,
     processing: Mutex<Option<CaptureProcessingHandle>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessingStopMode {
+    Recapture,
+    Final,
 }
 
 impl CapturePipelineState {
     pub(crate) fn new(streams: CaptureStreamHandles) -> Self {
         Self {
             mixer: Mutex::new(DefaultAudioMixer::new()),
-            chunk_emitter: Mutex::new(ChunkEmitter::new()),
+            chunk_emitter: Arc::new(Mutex::new(ChunkEmitter::new())),
             pcm_bus: Arc::new(PcmChunkBus::new()),
             streams,
             processing: Mutex::new(None),
         }
     }
 
-    pub(crate) fn start_processing(&self) -> Result<(), ProcessingStartError> {
+    pub fn set_stream_disconnect_handler(
+        &self,
+        handler: crate::capture_ports::StreamDisconnectHandler,
+    ) {
+        self.streams.set_stream_disconnect_handler(handler);
+    }
+
+    pub fn start_processing(&self) -> Result<(), ProcessingStartError> {
         let mut guard = self.processing.lock().expect("lock");
         if guard.is_some() {
             return Ok(());
@@ -304,9 +316,8 @@ impl CapturePipelineState {
             .ok_or(ProcessingStartError::SystemRateMissing)?;
 
         let mut mixer_guard = self.mixer.lock().expect("lock");
-        let mut emitter_guard = self.chunk_emitter.lock().expect("lock");
         let mixer = std::mem::replace(&mut *mixer_guard, DefaultAudioMixer::new());
-        let chunk_emitter = std::mem::replace(&mut *emitter_guard, ChunkEmitter::new());
+        let chunk_emitter = Arc::clone(&self.chunk_emitter);
         let pcm_bus = Arc::clone(&self.pcm_bus);
 
         *guard = Some(CaptureProcessingHandle::spawn(ProcessingSpawnParams {
@@ -321,15 +332,34 @@ impl CapturePipelineState {
         Ok(())
     }
 
-    pub(crate) fn stop_processing(&self) {
+    fn stop_processing_with_mode(&self, mode: ProcessingStopMode) {
         if let Some(handle) = self.processing.lock().expect("lock").take() {
             handle.stop();
+            let mut emitter = self.chunk_emitter.lock().expect("lock");
+            match mode {
+                ProcessingStopMode::Recapture => emitter.discard_partial_buffer(),
+                ProcessingStopMode::Final => emitter.stop(),
+            }
+            *self.mixer.lock().expect("lock") = DefaultAudioMixer::new();
         }
     }
 
+    pub fn stop_processing_for_recapture(&self) {
+        self.stop_processing_with_mode(ProcessingStopMode::Recapture);
+    }
+
+    pub(crate) fn stop_processing(&self) {
+        self.stop_processing_with_mode(ProcessingStopMode::Final);
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn restart_processing_for_recapture(&self) -> Result<(), ProcessingStartError> {
+        self.stop_processing_for_recapture();
+        self.start_processing()
+    }
+
     /// Returns whether the dedicated processing thread is still running.
-    #[cfg(test)]
-    pub(crate) fn processing_is_active(&self) -> bool {
+    pub fn processing_is_active(&self) -> bool {
         self.processing.lock().expect("lock").is_some()
     }
 }
@@ -346,7 +376,7 @@ impl gijirec_presentation::tauri::lifecycle::CaptureProcessingHook for CapturePi
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
-pub(crate) enum ProcessingStartError {
+pub enum ProcessingStartError {
     MicConsumerMissing,
     SystemConsumerMissing,
     MicRateMissing,
@@ -356,9 +386,13 @@ pub(crate) enum ProcessingStartError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gijirec_presentation::application::capture::orchestrator::{
+        CaptureOrchestrator, DefaultCaptureOrchestrator,
+    };
     use gijirec_presentation::domain::audio::pcm_chunk::{
         CHUNK_FRAME_COUNT, PcmChunk, PcmChunkConsumer, PcmConsumerError, SAMPLE_RATE_HZ,
     };
+    use gijirec_presentation::tauri::lifecycle::CaptureProcessingHook;
     use rtrb::RingBuffer;
     use std::time::Instant;
 
@@ -435,6 +469,73 @@ mod tests {
     }
 
     #[test]
+    // 回帰: system ソースが無配信のまま経過した後（＝mic より 50 ms 以上遅れて配信開始）に
+    // 届いた音声がミックスへ乗る
+
+    fn system_audio_arriving_after_idle_gap_reaches_mixed_output() {
+        let rate_hz = SAMPLE_RATE_HZ;
+        let (mut producers, mic, system) = spawn_synthetic_sources(rate_hz);
+        let bus = Arc::new(PcmChunkBus::new());
+        let recorder = Arc::new(RecordingChunkConsumer::new());
+        bus.register(Arc::clone(&recorder) as Arc<dyn PcmChunkConsumer>);
+
+        let handle = CaptureProcessingHandle::spawn(ProcessingSpawnParams {
+            mic,
+            system,
+            mic_rate_hz: rate_hz,
+            system_rate_hz: rate_hz,
+            mixer: DefaultAudioMixer::new(),
+            chunk_emitter: Arc::new(Mutex::new(ChunkEmitter::new())),
+            pcm_bus: Arc::clone(&bus),
+        });
+
+        let frame_batch = (rate_hz / 100) as usize; // 10 ms
+        // 前半 600 ms: mic は無音（ゲート内）、system は無配信
+        for _ in 0..60 {
+            for _ in 0..frame_batch {
+                let _ = producers.mic.push(0.0);
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        // 後半 600 ms: system が再生開始（0.3 のサイン波）、mic は引き続き無音
+        for tick in 0..60_usize {
+            for i in 0..frame_batch {
+                let _ = producers.mic.push(0.0);
+                let n = (tick * frame_batch + i) as f32;
+                let _ = producers.system.push(0.3 * (n * 0.17).sin());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        thread::sleep(Duration::from_millis(100));
+        handle.stop();
+
+        let chunks = recorder.chunks();
+        assert!(
+            chunks.len() >= 8,
+            "expected several chunks, got {}",
+            chunks.len()
+        );
+        let last = &chunks[chunks.len() - 2..];
+        let audible = last.iter().any(|chunk| {
+            let rms = (chunk
+                .samples()
+                .iter()
+                .map(|s| {
+                    let v = *s as f64 / 32_768.0;
+                    v * v
+                })
+                .sum::<f64>()
+                / chunk.samples().len() as f64)
+                .sqrt();
+            rms > 0.03
+        });
+        assert!(
+            audible,
+            "system audio that started after an idle gap must appear in the mixed output"
+        );
+    }
+
+    #[test]
     fn pipeline_smoke_emits_100ms_chunks_with_monotonic_sequence() {
         let rate_hz = SAMPLE_RATE_HZ;
         let (mut producers, mic, system) = spawn_synthetic_sources(rate_hz);
@@ -448,7 +549,7 @@ mod tests {
             mic_rate_hz: rate_hz,
             system_rate_hz: rate_hz,
             mixer: DefaultAudioMixer::new(),
-            chunk_emitter: ChunkEmitter::new(),
+            chunk_emitter: Arc::new(Mutex::new(ChunkEmitter::new())),
             pcm_bus: Arc::clone(&bus),
         });
 
@@ -491,6 +592,130 @@ mod tests {
                 (80..=120).contains(&delta),
                 "expected ~100 ms between chunks, got {delta} ms"
             );
+        }
+    }
+
+    #[test]
+    fn recapture_processing_preserves_chunk_emitter_sequence() {
+        use crate::capture_ports::{CaptureStreamHandles, SyntheticMicPort, SyntheticSystemPort};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mic_opened = Arc::new(Mutex::new(false));
+        let sys_opened = Arc::new(Mutex::new(false));
+        let mic_open_count = Arc::new(AtomicUsize::new(0));
+        let mic_close_count = Arc::new(AtomicUsize::new(0));
+        let sys_open_count = Arc::new(AtomicUsize::new(0));
+        let sys_close_count = Arc::new(AtomicUsize::new(0));
+        let mic_prod = Arc::new(Mutex::new(None));
+        let sys_prod = Arc::new(Mutex::new(None));
+
+        let (streams, _mic_port, _sys_port) = CaptureStreamHandles::new_pair();
+        let mic_port = SyntheticMicPort::new_instrumented(
+            streams.clone(),
+            Arc::clone(&mic_opened),
+            Arc::clone(&mic_open_count),
+            Arc::clone(&mic_close_count),
+            Arc::clone(&mic_prod),
+        );
+        let sys_port = SyntheticSystemPort::new_instrumented(
+            streams.clone(),
+            Arc::clone(&sys_opened),
+            Arc::clone(&sys_open_count),
+            Arc::clone(&sys_close_count),
+            Arc::clone(&sys_prod),
+        );
+
+        let pipeline = CapturePipelineState::new(streams);
+        let recorder = Arc::new(RecordingChunkConsumer::new());
+        pipeline
+            .pcm_bus
+            .register(Arc::clone(&recorder) as Arc<dyn PcmChunkConsumer>);
+
+        let orchestrator = Arc::new(Mutex::new(DefaultCaptureOrchestrator::new(
+            mic_port, sys_port,
+        )));
+        orchestrator
+            .lock()
+            .expect("lock")
+            .start_with_selection(&gijirec_presentation::domain::audio::DeviceSelection::default())
+            .expect("start");
+        pipeline.on_capture_started();
+
+        let frames_per_chunk = CHUNK_FRAME_COUNT as usize;
+        pump_producers(&mic_prod, &sys_prod, frames_per_chunk * 4);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while recorder.chunks().len() < 3 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        let before = recorder
+            .chunks()
+            .iter()
+            .map(PcmChunk::sequence)
+            .collect::<Vec<_>>();
+        assert!(
+            before.len() >= 3,
+            "expected chunks before recapture: {before:?}"
+        );
+        let last_before = *before.last().expect("last");
+        let seq_before_recapture = pipeline.chunk_emitter.lock().expect("lock").next_sequence();
+        assert!(seq_before_recapture >= 3);
+
+        pipeline.stop_processing_for_recapture();
+        orchestrator
+            .lock()
+            .expect("lock")
+            .restart_with_selection(
+                &gijirec_presentation::domain::audio::DeviceSelection::default(),
+            )
+            .expect("orchestrator restart");
+        pipeline.start_processing().expect("restart processing");
+
+        assert!(mic_close_count.load(Ordering::SeqCst) >= 1);
+        assert!(mic_open_count.load(Ordering::SeqCst) >= 2);
+
+        pump_producers(&mic_prod, &sys_prod, frames_per_chunk * 4);
+        let after_deadline = Instant::now() + Duration::from_secs(2);
+        while recorder.chunks().len() < before.len() + 3 && Instant::now() < after_deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        let all: Vec<u64> = recorder.chunks().iter().map(PcmChunk::sequence).collect();
+        for window in all.windows(2) {
+            assert_eq!(
+                window[1],
+                window[0] + 1,
+                "sequence must stay monotonic across recapture: {all:?}"
+            );
+        }
+        let after_change = &all[before.len()..];
+        assert!(!after_change.is_empty());
+        assert_eq!(
+            after_change[0],
+            last_before + 1,
+            "ChunkEmitter must not reset on recapture: last_before={last_before} after={after_change:?}"
+        );
+        assert_eq!(
+            pipeline.chunk_emitter.lock().expect("lock").next_sequence(),
+            after_change.last().expect("last after") + 1
+        );
+
+        pipeline.on_capture_stopping();
+    }
+
+    fn pump_producers(
+        mic_prod: &Arc<Mutex<Option<rtrb::Producer<f32>>>>,
+        sys_prod: &Arc<Mutex<Option<rtrb::Producer<f32>>>>,
+        samples: usize,
+    ) {
+        let mut mic = mic_prod.lock().expect("lock");
+        let mut sys = sys_prod.lock().expect("lock");
+        let mic = mic.as_mut().expect("mic producer must be installed");
+        let sys = sys.as_mut().expect("sys producer must be installed");
+        for i in 0..samples {
+            let sample = 0.2 * ((i as f32) * 0.01).sin();
+            let _ = mic.push(sample);
+            let _ = sys.push(sample * 0.5);
         }
     }
 }

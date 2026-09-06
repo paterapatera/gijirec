@@ -1,10 +1,19 @@
 //! Dual-capture lifecycle orchestration with no silent fallback.
 
-use gijirec_domain::audio::{CaptureError, CapturePhase};
+use gijirec_domain::audio::{AudioDeviceId, CaptureError, CapturePhase, DeviceSelection};
 
 /// Port for opening/closing the microphone capture stream.
 pub trait MicCapturePort: Send {
     fn open(&mut self) -> Result<(), CaptureError>;
+
+    fn open_with_selection(
+        &mut self,
+        device_id: Option<&AudioDeviceId>,
+    ) -> Result<(), CaptureError> {
+        let _ = device_id;
+        self.open()
+    }
+
     fn close(&mut self);
     fn is_open(&self) -> bool;
 }
@@ -12,6 +21,15 @@ pub trait MicCapturePort: Send {
 /// Port for opening/closing the system audio capture stream.
 pub trait SystemAudioCapturePort: Send {
     fn open(&mut self) -> Result<(), CaptureError>;
+
+    fn open_with_selection(
+        &mut self,
+        device_id: Option<&AudioDeviceId>,
+    ) -> Result<(), CaptureError> {
+        let _ = device_id;
+        self.open()
+    }
+
     fn close(&mut self);
     fn is_open(&self) -> bool;
 }
@@ -19,8 +37,13 @@ pub trait SystemAudioCapturePort: Send {
 /// Orchestrates mic + system audio capture lifecycle.
 pub trait CaptureOrchestrator: Send {
     fn start(&mut self) -> Result<(), CaptureError>;
+    fn start_with_selection(&mut self, selection: &DeviceSelection) -> Result<(), CaptureError>;
+    fn restart_with_selection(&mut self, selection: &DeviceSelection) -> Result<(), CaptureError>;
     fn stop(&mut self) -> Result<(), CaptureError>;
     fn phase(&self) -> CapturePhase;
+
+    /// Safe stop when the active capture device disconnects during `capturing` (req 4.3).
+    fn on_device_disconnected(&mut self) -> Result<(), CaptureError>;
 }
 
 /// Default orchestrator: mic first, system second; no silent mic-only fallback.
@@ -53,8 +76,8 @@ impl<M: MicCapturePort, S: SystemAudioCapturePort> DefaultCaptureOrchestrator<M,
         Ok(())
     }
 
-    /// Handles device disconnect during capture (5.3).
-    pub fn on_device_disconnected(&mut self) -> Result<(), CaptureError> {
+    /// Handles device disconnect during capture (req 4.3).
+    fn on_device_disconnected(&mut self) -> Result<(), CaptureError> {
         if self.phase != CapturePhase::Capturing {
             return Ok(());
         }
@@ -68,6 +91,30 @@ impl<M: MicCapturePort, S: SystemAudioCapturePort> DefaultCaptureOrchestrator<M,
         self.system.close();
         self.mic.close();
     }
+
+    fn release_to_idle(&mut self) {
+        self.force_stop_streams();
+        if self.phase == CapturePhase::Capturing || self.phase == CapturePhase::Starting {
+            let _ = self.set_phase(CapturePhase::Stopping);
+        }
+        self.phase = CapturePhase::Idle;
+    }
+
+    fn open_streams(&mut self, selection: &DeviceSelection) -> Result<(), CaptureError> {
+        if let Err(err) = self.mic.open_with_selection(selection.microphone_id()) {
+            self.force_stop_streams();
+            self.phase = CapturePhase::Error;
+            return Err(err);
+        }
+
+        if let Err(err) = self.system.open_with_selection(selection.speaker_id()) {
+            self.mic.close();
+            self.phase = CapturePhase::Error;
+            return Err(err);
+        }
+
+        Ok(())
+    }
 }
 
 impl<M: MicCapturePort, S: SystemAudioCapturePort> CaptureOrchestrator
@@ -78,6 +125,10 @@ impl<M: MicCapturePort, S: SystemAudioCapturePort> CaptureOrchestrator
     }
 
     fn start(&mut self) -> Result<(), CaptureError> {
+        self.start_with_selection(&DeviceSelection::default())
+    }
+
+    fn start_with_selection(&mut self, selection: &DeviceSelection) -> Result<(), CaptureError> {
         if self.phase == CapturePhase::Capturing {
             return Ok(());
         }
@@ -91,26 +142,28 @@ impl<M: MicCapturePort, S: SystemAudioCapturePort> CaptureOrchestrator
         }
         if self.phase == CapturePhase::Error {
             return Err(CaptureError::Internal {
-                detail: "cannot start from error without stop".to_string(),
+                detail: "cannot start from error without restart_with_selection".to_string(),
             });
         }
 
         self.set_phase(CapturePhase::Starting)?;
-
-        if let Err(err) = self.mic.open() {
-            self.force_stop_streams();
-            self.phase = CapturePhase::Error;
-            return Err(err);
-        }
-
-        if let Err(err) = self.system.open() {
-            self.mic.close();
-            self.phase = CapturePhase::Error;
-            return Err(err);
-        }
-
+        self.open_streams(selection)?;
         self.set_phase(CapturePhase::Capturing)?;
         Ok(())
+    }
+
+    fn restart_with_selection(&mut self, selection: &DeviceSelection) -> Result<(), CaptureError> {
+        if self.phase == CapturePhase::Stopping {
+            return Err(CaptureError::Internal {
+                detail: "cannot restart while stopping".to_string(),
+            });
+        }
+
+        if self.phase != CapturePhase::Idle {
+            self.release_to_idle();
+        }
+
+        self.start_with_selection(selection)
     }
 
     fn stop(&mut self) -> Result<(), CaptureError> {
@@ -126,6 +179,10 @@ impl<M: MicCapturePort, S: SystemAudioCapturePort> CaptureOrchestrator
         self.phase = CapturePhase::Idle;
         Ok(())
     }
+
+    fn on_device_disconnected(&mut self) -> Result<(), CaptureError> {
+        DefaultCaptureOrchestrator::on_device_disconnected(self)
+    }
 }
 
 #[cfg(test)]
@@ -136,6 +193,7 @@ mod tests {
         open_ok: bool,
         opened: bool,
         close_count: usize,
+        last_selection: Option<String>,
     }
 
     impl MockMic {
@@ -144,6 +202,7 @@ mod tests {
                 open_ok: true,
                 opened: false,
                 close_count: 0,
+                last_selection: None,
             }
         }
 
@@ -152,12 +211,21 @@ mod tests {
                 open_ok: false,
                 opened: false,
                 close_count: 0,
+                last_selection: None,
             }
         }
     }
 
     impl MicCapturePort for MockMic {
         fn open(&mut self) -> Result<(), CaptureError> {
+            self.open_with_selection(None)
+        }
+
+        fn open_with_selection(
+            &mut self,
+            device_id: Option<&AudioDeviceId>,
+        ) -> Result<(), CaptureError> {
+            self.last_selection = device_id.map(|id| id.as_str().to_string());
             if self.open_ok {
                 self.opened = true;
                 Ok(())
@@ -179,40 +247,85 @@ mod tests {
     }
 
     struct MockSystem {
-        open_ok: bool,
+        opens_before_success: usize,
+        open_attempts: usize,
         opened: bool,
         close_count: usize,
         error: CaptureError,
+        last_selection: Option<String>,
+        fail_on_attempt: Option<usize>,
     }
 
     impl MockSystem {
         fn succeeds() -> Self {
             Self {
-                open_ok: true,
+                opens_before_success: 0,
+                open_attempts: 0,
                 opened: false,
                 close_count: 0,
                 error: CaptureError::SystemAudioUnavailable,
+                last_selection: None,
+                fail_on_attempt: None,
             }
         }
 
         fn fails_with(error: CaptureError) -> Self {
             Self {
-                open_ok: false,
+                opens_before_success: usize::MAX,
+                open_attempts: 0,
                 opened: false,
                 close_count: 0,
                 error,
+                last_selection: None,
+                fail_on_attempt: None,
+            }
+        }
+
+        fn fails_first_open(error: CaptureError) -> Self {
+            Self {
+                opens_before_success: 1,
+                open_attempts: 0,
+                opened: false,
+                close_count: 0,
+                error,
+                last_selection: None,
+                fail_on_attempt: None,
+            }
+        }
+
+        fn succeeds_except_on_attempt(attempt: usize, error: CaptureError) -> Self {
+            Self {
+                opens_before_success: 0,
+                open_attempts: 0,
+                opened: false,
+                close_count: 0,
+                error,
+                last_selection: None,
+                fail_on_attempt: Some(attempt),
             }
         }
     }
 
     impl SystemAudioCapturePort for MockSystem {
         fn open(&mut self) -> Result<(), CaptureError> {
-            if self.open_ok {
-                self.opened = true;
-                Ok(())
-            } else {
-                Err(self.error.clone())
+            self.open_with_selection(None)
+        }
+
+        fn open_with_selection(
+            &mut self,
+            device_id: Option<&AudioDeviceId>,
+        ) -> Result<(), CaptureError> {
+            self.last_selection = device_id.map(|id| id.as_str().to_string());
+            self.open_attempts += 1;
+            if self.open_attempts <= self.opens_before_success {
+                return Err(self.error.clone());
             }
+            if self.fail_on_attempt == Some(self.open_attempts) {
+                self.opened = false;
+                return Err(self.error.clone());
+            }
+            self.opened = true;
+            Ok(())
         }
 
         fn close(&mut self) {
@@ -261,6 +374,25 @@ mod tests {
     }
 
     #[test]
+    // req 4.2: 選択スピーカー失敗時にマイク単独で継続しない
+    fn start_with_selection_speaker_failure_closes_mic_no_mic_only() {
+        let mut orch = DefaultCaptureOrchestrator::new(
+            MockMic::succeeds(),
+            MockSystem::fails_with(CaptureError::SelectedSystemAudioUnavailable),
+        );
+        let selection = DeviceSelection::new(
+            Some(AudioDeviceId::new("mic-1".to_string()).expect("mic id")),
+            Some(AudioDeviceId::new("spk-1".to_string()).expect("speaker id")),
+        );
+
+        let err = orch.start_with_selection(&selection).unwrap_err();
+        assert_eq!(err, CaptureError::SelectedSystemAudioUnavailable);
+        assert_eq!(orch.phase(), CapturePhase::Error);
+        assert!(!orch.mic.is_open(), "mic must not remain open");
+        assert!(!orch.system.is_open());
+    }
+
+    #[test]
     // Testing Strategy 4: マイク失敗時にシステム単独で継続しない (req 1.3, 5.2)
     fn mic_failure_does_not_open_system() {
         let system = MockSystem::succeeds();
@@ -277,6 +409,42 @@ mod tests {
         assert!(
             !orch.system.is_open(),
             "system must not open when mic fails"
+        );
+    }
+
+    /// Design unit test 5: `restart_with_selection` speaker failure must not leave mic-only capture.
+    #[test]
+    fn restart_with_selection_speaker_failure_closes_mic_no_mic_only() {
+        let mut orch = DefaultCaptureOrchestrator::new(
+            MockMic::succeeds(),
+            MockSystem::succeeds_except_on_attempt(2, CaptureError::SelectedSystemAudioUnavailable),
+        );
+        let initial = DeviceSelection::new(
+            Some(AudioDeviceId::new("mic-1".to_string()).expect("mic id")),
+            Some(AudioDeviceId::new("spk-1".to_string()).expect("speaker id")),
+        );
+        orch.start_with_selection(&initial)
+            .expect("initial capture must reach capturing");
+        assert_eq!(orch.phase(), CapturePhase::Capturing);
+        assert!(orch.mic.is_open());
+        assert!(orch.system.is_open());
+
+        let changed = DeviceSelection::new(
+            Some(AudioDeviceId::new("mic-2".to_string()).expect("mic id")),
+            Some(AudioDeviceId::new("spk-2".to_string()).expect("speaker id")),
+        );
+        let err = orch.restart_with_selection(&changed).unwrap_err();
+        assert_eq!(err, CaptureError::SelectedSystemAudioUnavailable);
+        assert_eq!(orch.phase(), CapturePhase::Error);
+        assert!(
+            !orch.mic.is_open(),
+            "mic must not remain open after restart speaker failure"
+        );
+        assert!(!orch.system.is_open());
+        assert_ne!(
+            orch.phase(),
+            CapturePhase::Capturing,
+            "must not fall back to mic-only capture on restart"
         );
     }
 
@@ -322,5 +490,74 @@ mod tests {
         orch.stop().expect("stop from error");
         assert_eq!(orch.phase(), CapturePhase::Idle);
         assert!(!orch.mic.is_open());
+    }
+
+    /// Design unit test 6: `restart_with_selection` recovers from error to capturing.
+    #[test]
+    fn restart_from_error_recovers_to_capturing() {
+        let mut orch = DefaultCaptureOrchestrator::new(
+            MockMic::succeeds(),
+            MockSystem::fails_first_open(CaptureError::SelectedSystemAudioUnavailable),
+        );
+
+        orch.start_with_selection(&DeviceSelection::default())
+            .expect_err("first start fails");
+        assert_eq!(orch.phase(), CapturePhase::Error);
+
+        orch.restart_with_selection(&DeviceSelection::default())
+            .expect("restart after error");
+        assert_eq!(orch.phase(), CapturePhase::Capturing);
+        assert!(orch.mic.is_open());
+        assert!(orch.system.is_open());
+    }
+
+    /// Design unit test 6 (restart path): error after failed restart, then recover via `restart_with_selection`.
+    #[test]
+    fn restart_with_selection_recovers_after_failed_restart() {
+        let mut orch = DefaultCaptureOrchestrator::new(
+            MockMic::succeeds(),
+            MockSystem::succeeds_except_on_attempt(2, CaptureError::SelectedSystemAudioUnavailable),
+        );
+
+        orch.start_with_selection(&DeviceSelection::default())
+            .expect("initial start");
+        assert_eq!(orch.phase(), CapturePhase::Capturing);
+
+        let bad = DeviceSelection::new(
+            Some(AudioDeviceId::new("mic-bad-restart".to_string()).expect("mic id")),
+            Some(AudioDeviceId::new("spk-bad-restart".to_string()).expect("speaker id")),
+        );
+        let err = orch.restart_with_selection(&bad).unwrap_err();
+        assert_eq!(err, CaptureError::SelectedSystemAudioUnavailable);
+        assert_eq!(orch.phase(), CapturePhase::Error);
+        assert!(!orch.mic.is_open());
+
+        orch.restart_with_selection(&DeviceSelection::default())
+            .expect("restart after failed restart");
+        assert_eq!(orch.phase(), CapturePhase::Capturing);
+        assert!(orch.mic.is_open());
+        assert!(orch.system.is_open());
+    }
+
+    #[test]
+    fn start_with_selection_passes_device_ids_to_ports() {
+        let mut orch = DefaultCaptureOrchestrator::new(MockMic::succeeds(), MockSystem::succeeds());
+        let selection = DeviceSelection::new(
+            Some(AudioDeviceId::new("mic-a".to_string()).expect("mic id")),
+            Some(AudioDeviceId::new("spk-b".to_string()).expect("speaker id")),
+        );
+
+        orch.start_with_selection(&selection).expect("start");
+        assert_eq!(orch.mic.last_selection.as_deref(), Some("mic-a"));
+        assert_eq!(orch.system.last_selection.as_deref(), Some("spk-b"));
+    }
+
+    #[test]
+    fn start_uses_os_default_when_selection_is_default() {
+        let mut orch = DefaultCaptureOrchestrator::new(MockMic::succeeds(), MockSystem::succeeds());
+
+        orch.start().expect("start");
+        assert_eq!(orch.mic.last_selection, None);
+        assert_eq!(orch.system.last_selection, None);
     }
 }

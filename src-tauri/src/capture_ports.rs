@@ -3,17 +3,48 @@
 use gijirec_presentation::application::capture::orchestrator::{
     MicCapturePort, SystemAudioCapturePort,
 };
-use gijirec_presentation::domain::audio::CaptureError;
+use gijirec_presentation::domain::audio::{AudioDeviceId, CaptureError};
 use gijirec_presentation::infrastructure::audio::mic_capture::{
     DEFAULT_RING_CAPACITY, MicCaptureAdapter, MicSampleConsumer,
 };
 use gijirec_presentation::tauri::observability;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[cfg(target_os = "windows")]
 use gijirec_presentation::infrastructure::audio::LoopbackSampleConsumer;
 #[cfg(target_os = "macos")]
 use gijirec_presentation::infrastructure::audio::SckAudioSampleConsumer;
+
+/// Callback invoked when a live capture stream reports disconnect/error (req 4.3).
+pub(crate) type StreamDisconnectHandler = Arc<dyn Fn() + Send + Sync>;
+
+pub(crate) struct StreamDisconnectSlot {
+    handler: Mutex<Option<StreamDisconnectHandler>>,
+}
+
+impl StreamDisconnectSlot {
+    fn new() -> Self {
+        Self {
+            handler: Mutex::new(None),
+        }
+    }
+
+    fn set_handler(&self, handler: StreamDisconnectHandler) {
+        *self.handler.lock().expect("lock") = Some(handler);
+    }
+
+    fn notify(&self) {
+        if let Some(handler) = self.handler.lock().expect("lock").clone() {
+            handler();
+        }
+    }
+}
+
+pub(crate) struct MicStreamShared {
+    consumer: Mutex<Option<MicSampleConsumer>>,
+    sample_rate_hz: Mutex<Option<u32>>,
+}
 
 /// Platform-specific system audio consumer held for the processing thread.
 pub(crate) enum SystemSampleConsumer {
@@ -25,11 +56,6 @@ pub(crate) enum SystemSampleConsumer {
     Unavailable,
 }
 
-pub(crate) struct MicStreamShared {
-    consumer: Mutex<Option<MicSampleConsumer>>,
-    sample_rate_hz: Mutex<Option<u32>>,
-}
-
 pub(crate) struct SystemStreamShared {
     consumer: Mutex<Option<SystemSampleConsumer>>,
     sample_rate_hz: Mutex<Option<u32>>,
@@ -37,13 +63,15 @@ pub(crate) struct SystemStreamShared {
 
 /// Shared handles for handing rtrb consumers to the processing thread after open.
 #[derive(Clone)]
-pub(crate) struct CaptureStreamHandles {
+pub struct CaptureStreamHandles {
     mic: Arc<MicStreamShared>,
     system: Arc<SystemStreamShared>,
+    disconnect: Arc<StreamDisconnectSlot>,
 }
 
 impl CaptureStreamHandles {
     pub(crate) fn new_pair() -> (Self, MicPortAdapter, SystemPortAdapter) {
+        let disconnect = Arc::new(StreamDisconnectSlot::new());
         let mic = Arc::new(MicStreamShared {
             consumer: Mutex::new(None),
             sample_rate_hz: Mutex::new(None),
@@ -55,12 +83,22 @@ impl CaptureStreamHandles {
         let handles = Self {
             mic: Arc::clone(&mic),
             system: Arc::clone(&system),
+            disconnect: Arc::clone(&disconnect),
         };
         (
             handles,
-            MicPortAdapter::new(mic),
-            SystemPortAdapter::new(system),
+            MicPortAdapter::new(mic, Arc::clone(&disconnect)),
+            SystemPortAdapter::new(system, Arc::clone(&disconnect)),
         )
+    }
+
+    pub(crate) fn set_stream_disconnect_handler(&self, handler: StreamDisconnectHandler) {
+        self.disconnect.set_handler(handler);
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn notify_stream_disconnected(&self) {
+        self.disconnect.notify();
     }
 
     pub(crate) fn take_mic_consumer(&self) -> Option<MicSampleConsumer> {
@@ -80,7 +118,7 @@ impl CaptureStreamHandles {
     }
 
     /// Installs synthetic rtrb consumers for integration tests (no hardware).
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     #[allow(dead_code)]
     pub(crate) fn install_synthetic_mic(&self, sample_rate_hz: u32) {
         let (_prod, cons) = rtrb::RingBuffer::<f32>::new(DEFAULT_RING_CAPACITY);
@@ -89,14 +127,14 @@ impl CaptureStreamHandles {
         *self.mic.sample_rate_hz.lock().expect("lock") = Some(sample_rate_hz);
     }
 
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     #[allow(dead_code)]
     pub(crate) fn clear_mic(&self) {
         *self.mic.consumer.lock().expect("lock") = None;
         *self.mic.sample_rate_hz.lock().expect("lock") = None;
     }
 
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     #[allow(dead_code)]
     pub(crate) fn install_synthetic_system(&self, sample_rate_hz: u32) {
         let (_prod, cons) = rtrb::RingBuffer::<f32>::new(DEFAULT_RING_CAPACITY);
@@ -104,7 +142,7 @@ impl CaptureStreamHandles {
         *self.system.sample_rate_hz.lock().expect("lock") = Some(sample_rate_hz);
     }
 
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     #[allow(dead_code)]
     pub(crate) fn clear_system(&self) {
         *self.system.consumer.lock().expect("lock") = None;
@@ -112,7 +150,7 @@ impl CaptureStreamHandles {
     }
 }
 
-#[cfg(test)]
+#[cfg(debug_assertions)]
 #[allow(dead_code)]
 fn install_system_consumer(shared: &SystemStreamShared, cons: rtrb::Consumer<f32>) {
     #[cfg(target_os = "windows")]
@@ -134,32 +172,73 @@ fn install_system_consumer(shared: &SystemStreamShared, cons: rtrb::Consumer<f32
 }
 
 /// Mic port that installs synthetic streams into shared handles (integration tests).
-#[cfg(test)]
+#[cfg(debug_assertions)]
 #[allow(dead_code)]
-pub(crate) struct SyntheticMicPort {
+pub struct SyntheticMicPort {
     handles: CaptureStreamHandles,
     opened: Arc<Mutex<bool>>,
+    open_count: Option<Arc<AtomicUsize>>,
+    close_count: Option<Arc<AtomicUsize>>,
+    producer: Option<Arc<Mutex<Option<rtrb::Producer<f32>>>>>,
 }
 
-#[cfg(test)]
+#[cfg(debug_assertions)]
 #[allow(dead_code)]
 impl SyntheticMicPort {
     pub(crate) fn new(handles: CaptureStreamHandles, opened: Arc<Mutex<bool>>) -> Self {
-        Self { handles, opened }
+        Self {
+            handles,
+            opened,
+            open_count: None,
+            close_count: None,
+            producer: None,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_instrumented(
+        handles: CaptureStreamHandles,
+        opened: Arc<Mutex<bool>>,
+        open_count: Arc<AtomicUsize>,
+        close_count: Arc<AtomicUsize>,
+        producer: Arc<Mutex<Option<rtrb::Producer<f32>>>>,
+    ) -> Self {
+        Self {
+            handles,
+            opened,
+            open_count: Some(open_count),
+            close_count: Some(close_count),
+            producer: Some(producer),
+        }
     }
 }
 
-#[cfg(test)]
+#[cfg(debug_assertions)]
 impl MicCapturePort for SyntheticMicPort {
     fn open(&mut self) -> Result<(), CaptureError> {
         use gijirec_presentation::domain::audio::pcm_chunk::SAMPLE_RATE_HZ;
-        self.handles.install_synthetic_mic(SAMPLE_RATE_HZ);
+        let (prod, cons) = rtrb::RingBuffer::<f32>::new(DEFAULT_RING_CAPACITY);
+        *self.handles.mic.consumer.lock().expect("lock") =
+            Some(MicSampleConsumer::from_ring_consumer(cons));
+        *self.handles.mic.sample_rate_hz.lock().expect("lock") = Some(SAMPLE_RATE_HZ);
+        if let Some(slot) = &self.producer {
+            *slot.lock().expect("lock") = Some(prod);
+        }
+        if let Some(count) = &self.open_count {
+            count.fetch_add(1, Ordering::SeqCst);
+        }
         *self.opened.lock().expect("lock") = true;
         Ok(())
     }
 
     fn close(&mut self) {
         self.handles.clear_mic();
+        if let Some(count) = &self.close_count {
+            count.fetch_add(1, Ordering::SeqCst);
+        }
+        if let Some(slot) = &self.producer {
+            *slot.lock().expect("lock") = None;
+        }
         *self.opened.lock().expect("lock") = false;
     }
 
@@ -169,32 +248,72 @@ impl MicCapturePort for SyntheticMicPort {
 }
 
 /// System port that installs synthetic streams into shared handles (integration tests).
-#[cfg(test)]
+#[cfg(debug_assertions)]
 #[allow(dead_code)]
-pub(crate) struct SyntheticSystemPort {
+pub struct SyntheticSystemPort {
     handles: CaptureStreamHandles,
     opened: Arc<Mutex<bool>>,
+    open_count: Option<Arc<AtomicUsize>>,
+    close_count: Option<Arc<AtomicUsize>>,
+    producer: Option<Arc<Mutex<Option<rtrb::Producer<f32>>>>>,
 }
 
-#[cfg(test)]
+#[cfg(debug_assertions)]
 #[allow(dead_code)]
 impl SyntheticSystemPort {
     pub(crate) fn new(handles: CaptureStreamHandles, opened: Arc<Mutex<bool>>) -> Self {
-        Self { handles, opened }
+        Self {
+            handles,
+            opened,
+            open_count: None,
+            close_count: None,
+            producer: None,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_instrumented(
+        handles: CaptureStreamHandles,
+        opened: Arc<Mutex<bool>>,
+        open_count: Arc<AtomicUsize>,
+        close_count: Arc<AtomicUsize>,
+        producer: Arc<Mutex<Option<rtrb::Producer<f32>>>>,
+    ) -> Self {
+        Self {
+            handles,
+            opened,
+            open_count: Some(open_count),
+            close_count: Some(close_count),
+            producer: Some(producer),
+        }
     }
 }
 
-#[cfg(test)]
+#[cfg(debug_assertions)]
 impl SystemAudioCapturePort for SyntheticSystemPort {
     fn open(&mut self) -> Result<(), CaptureError> {
         use gijirec_presentation::domain::audio::pcm_chunk::SAMPLE_RATE_HZ;
-        self.handles.install_synthetic_system(SAMPLE_RATE_HZ);
+        let (prod, cons) = rtrb::RingBuffer::<f32>::new(DEFAULT_RING_CAPACITY);
+        install_system_consumer(&self.handles.system, cons);
+        *self.handles.system.sample_rate_hz.lock().expect("lock") = Some(SAMPLE_RATE_HZ);
+        if let Some(slot) = &self.producer {
+            *slot.lock().expect("lock") = Some(prod);
+        }
+        if let Some(count) = &self.open_count {
+            count.fetch_add(1, Ordering::SeqCst);
+        }
         *self.opened.lock().expect("lock") = true;
         Ok(())
     }
 
     fn close(&mut self) {
         self.handles.clear_system();
+        if let Some(count) = &self.close_count {
+            count.fetch_add(1, Ordering::SeqCst);
+        }
+        if let Some(slot) = &self.producer {
+            *slot.lock().expect("lock") = None;
+        }
         *self.opened.lock().expect("lock") = false;
     }
 
@@ -207,14 +326,24 @@ impl SystemAudioCapturePort for SyntheticSystemPort {
 pub(crate) struct MicPortAdapter {
     adapter: Option<MicCaptureAdapter>,
     shared: Arc<MicStreamShared>,
+    disconnect: Arc<StreamDisconnectSlot>,
 }
 
 impl MicPortAdapter {
-    pub(crate) fn new(shared: Arc<MicStreamShared>) -> Self {
+    pub(crate) fn new(shared: Arc<MicStreamShared>, disconnect: Arc<StreamDisconnectSlot>) -> Self {
         Self {
             adapter: None,
             shared,
+            disconnect,
         }
+    }
+
+    fn stream_runtime_hook(
+        &self,
+    ) -> Option<gijirec_presentation::infrastructure::audio::mic_capture::StreamRuntimeErrorCallback>
+    {
+        let disconnect = Arc::clone(&self.disconnect);
+        Some(Arc::new(move || disconnect.notify()))
     }
 }
 
@@ -228,10 +357,21 @@ impl Default for MicPortAdapter {
 
 impl MicCapturePort for MicPortAdapter {
     fn open(&mut self) -> Result<(), CaptureError> {
+        self.open_with_selection(None)
+    }
+
+    fn open_with_selection(
+        &mut self,
+        device_id: Option<&AudioDeviceId>,
+    ) -> Result<(), CaptureError> {
         if self.adapter.is_some() {
             return Ok(());
         }
-        match MicCaptureAdapter::open(DEFAULT_RING_CAPACITY) {
+        match MicCaptureAdapter::open_with_device_id_and_runtime_hook(
+            device_id,
+            DEFAULT_RING_CAPACITY,
+            self.stream_runtime_hook(),
+        ) {
             Ok((adapter, consumer, sample_rate_hz)) => {
                 *self.shared.consumer.lock().expect("lock") = Some(consumer);
                 *self.shared.sample_rate_hz.lock().expect("lock") = Some(sample_rate_hz);
@@ -264,14 +404,28 @@ mod system {
     pub(crate) struct SystemPortAdapter {
         adapter: Option<WindowsLoopbackAdapter>,
         shared: Arc<SystemStreamShared>,
+        disconnect: Arc<StreamDisconnectSlot>,
     }
 
     impl SystemPortAdapter {
-        pub(crate) fn new(shared: Arc<SystemStreamShared>) -> Self {
+        pub(crate) fn new(
+            shared: Arc<SystemStreamShared>,
+            disconnect: Arc<StreamDisconnectSlot>,
+        ) -> Self {
             Self {
                 adapter: None,
                 shared,
+                disconnect,
             }
+        }
+
+        fn stream_runtime_hook(
+            &self,
+        ) -> Option<
+            gijirec_presentation::infrastructure::audio::mic_capture::StreamRuntimeErrorCallback,
+        > {
+            let disconnect = Arc::clone(&self.disconnect);
+            Some(Arc::new(move || disconnect.notify()))
         }
     }
 
@@ -284,10 +438,21 @@ mod system {
 
     impl SystemAudioCapturePort for SystemPortAdapter {
         fn open(&mut self) -> Result<(), CaptureError> {
+            self.open_with_selection(None)
+        }
+
+        fn open_with_selection(
+            &mut self,
+            device_id: Option<&AudioDeviceId>,
+        ) -> Result<(), CaptureError> {
             if self.adapter.is_some() {
                 return Ok(());
             }
-            match WindowsLoopbackAdapter::open(DEFAULT_RING_CAPACITY) {
+            match WindowsLoopbackAdapter::open_with_device_id_and_runtime_hook(
+                device_id,
+                DEFAULT_RING_CAPACITY,
+                self.stream_runtime_hook(),
+            ) {
                 Ok((adapter, consumer, sample_rate_hz)) => {
                     *self.shared.consumer.lock().expect("lock") =
                         Some(SystemSampleConsumer::Loopback(consumer));
@@ -326,14 +491,28 @@ mod system {
     pub(crate) struct SystemPortAdapter {
         adapter: Option<MacScreenCaptureKitAdapter>,
         shared: Arc<SystemStreamShared>,
+        disconnect: Arc<StreamDisconnectSlot>,
     }
 
     impl SystemPortAdapter {
-        pub(crate) fn new(shared: Arc<SystemStreamShared>) -> Self {
+        pub(crate) fn new(
+            shared: Arc<SystemStreamShared>,
+            disconnect: Arc<StreamDisconnectSlot>,
+        ) -> Self {
             Self {
                 adapter: None,
                 shared,
+                disconnect,
             }
+        }
+
+        fn stream_runtime_hook(
+            &self,
+        ) -> Option<
+            gijirec_presentation::infrastructure::audio::mic_capture::StreamRuntimeErrorCallback,
+        > {
+            let disconnect = Arc::clone(&self.disconnect);
+            Some(Arc::new(move || disconnect.notify()))
         }
     }
 
@@ -349,7 +528,10 @@ mod system {
             if self.adapter.is_some() {
                 return Ok(());
             }
-            match MacScreenCaptureKitAdapter::open(DEFAULT_RING_CAPACITY) {
+            match MacScreenCaptureKitAdapter::open_with_runtime_hook(
+                DEFAULT_RING_CAPACITY,
+                self.stream_runtime_hook(),
+            ) {
                 Ok((adapter, consumer, sample_rate_hz)) => {
                     *self.shared.consumer.lock().expect("lock") =
                         Some(SystemSampleConsumer::Sck(consumer));
@@ -386,11 +568,16 @@ mod system {
 
     pub(crate) struct SystemPortAdapter {
         shared: Arc<SystemStreamShared>,
+        #[expect(dead_code)]
+        disconnect: Arc<StreamDisconnectSlot>,
     }
 
     impl SystemPortAdapter {
-        pub(crate) fn new(shared: Arc<SystemStreamShared>) -> Self {
-            Self { shared }
+        pub(crate) fn new(
+            shared: Arc<SystemStreamShared>,
+            disconnect: Arc<StreamDisconnectSlot>,
+        ) -> Self {
+            Self { shared, disconnect }
         }
     }
 
