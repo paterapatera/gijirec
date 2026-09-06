@@ -28,6 +28,8 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 | マウント同期 | `TranscribeStatusCache`（presentation） | モデル取得中でもブロックしないフェーズ／進捗スナップショット |
 | エディタ | Slate.js（編集面）+ shadcn/ui + Sonner | 部分ロック付き二重エディタ（ADR-0005 / ADR-0006） |
 | 保存ダイアログ | `@tauri-apps/plugin-dialog` | 保存先ディレクトリ選択（`pick_save_directory`） |
+| デバイス選択 | `DeviceSelectionService` + cpal 列挙 | セッション内マイク／スピーカー選択・キャプチャ再開（ADR-0009） |
+| 診断ログ | `src-tauri/src/logging/`（`--log`） | リリースビルドのファイル永続化（ADR-0007）。`app_data_dir/logs/` |
 | アーキテクチャ検証 | cargo bylaw、dependency-cruiser | レイヤ依存の自動チェック |
 
 ## Development Standards
@@ -101,9 +103,10 @@ bun run rust:typecheck
 | 仮想デバイス不使用 | ユーザー設定コストと環境依存を排除 |
 | Mac / Windows のみ | 各 OS のループバック API を直接利用（Linux は Out） |
 | Bun（npm 非前提） | Tauri 2 公式サポート、単一フロントツールチェーン（ADR-0002） |
+| ModelStore は `app_data_dir`（ADR-0008） | モデル・editor 設定・release ログの保存先を Tauri 配下に統一 |
 
 永続的な技術判断は `docs/architecture/adr/` に ADR として記録する。
 
 ---
-_updated_at: 2026-09-06（Sync: bun run test を src/ 配下に拡大）_
+_updated_at: 2026-09-07（Sync: fix-release-transcribe 完了・ADR-0008 を反映）_
 _Document standards and patterns, not every dependency_

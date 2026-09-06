@@ -14,7 +14,7 @@
 | `gijirec-application` | `gijirec-domain` | オーケストレーション |
 | `gijirec-infrastructure` | `gijirec-domain` | OS / cpal / SCK アダプタ |
 | `gijirec-domain` | 他 crate | **禁止** |
-| `whisper-transcribe`（将来） | `audio-capture` の `PcmChunk` 契約 | 下流は PCM バスのみ依存。キャプチャ実装に直接依存しない |
+| `whisper-transcribe` | `audio-capture` の `PcmChunk` 契約 | 下流は PCM バスのみ依存。キャプチャ実装に直接依存しない |
 
 ## audio-capture ドメイン境界
 
@@ -61,7 +61,7 @@
 | `gijirec-application` | `gijirec-domain` | オーケストレーション |
 | `gijirec-infrastructure` | `gijirec-domain` | OS / cpal / SCK アダプタ |
 | `gijirec-domain` | 他 crate | **禁止** |
-| `whisper-transcribe`（将来） | `PcmChunk` 契約のみ | キャプチャ実装 crate に直接依存しない |
+| `whisper-transcribe` | `PcmChunk` 契約のみ | キャプチャ実装 crate に直接依存しない |
 
 ## audio-device-selection ドメイン境界
 
@@ -74,7 +74,7 @@
 | デバイス列挙・ホットプラグ通知 | `AudioDeviceEnumerator`（cpal 入出力一覧）、`audio-device-selection://devices-changed`（UI 表示中のみ） |
 | セッション内選択状態 | `DeviceSelectionStore`（非永続、`DeviceSelection`） |
 | 選択変更オーケストレーション | `DeviceSelectionService`（一覧更新・選択・再キャプチャ起動） |
-| Tauri デバイス選択 IPC | `list_audio_devices` / `get_device_selection` / `set_device_selection`、`audio-device-selection://selection-changed`（契約: `audio-device-selection.md`） |
+| Tauri デバイス選択 IPC | `list_audio_devices` / `get_device_selection` / `set_device_selection` / `set_audio_device_ui_visible`、`audio-device-selection://selection-changed` / `devices-changed`（契約: `audio-device-selection.md`） |
 | デバイス選択 UI | `DeviceSelectorPanel`、`useAudioDevices`（React） |
 | 選択デバイスでのキャプチャ | `CaptureOrchestrator` 拡張（選択 ID 伝播・`restart_with_selection`） |
 | 選択デバイス文脈の利用者向けエラー | `CaptureError` → `audio-capture://error`（`SELECTED_MIC_UNAVAILABLE` 等、`audio-capture-status.md` 拡張） |
@@ -219,7 +219,7 @@
 | リリースビルド診断ログのファイル永続化 | ホスト crate `logging/` モジュール、`init_tracing()` の Registry 構成、**`--log` CLI opt-in** |
 | ログ保存場所・セッション識別 | `{app_data_dir}/logs/sessions/{run_session_id}/`、 `latest-session.txt` |
 | 運用者向け収集手順 | `docs/specs/release-logging/operations.md` |
-| 永persist 失敗時の degrade | 非ブロッキング継続 + diagnostic surface |
+| 永続化失敗時の degrade | 非ブロッキング継続 + diagnostic surface |
 
 ### Out of Boundary（境界外）
 
@@ -286,3 +286,4 @@
 - PCM チャンク形状変更は `whisper-transcribe` の再検証トリガー
 - `TranscriptBlock` 形状変更は `transcript-editor` の再検証トリガー
 - observability イベント形状または禁止フィールド方針の変更は `release-logging` の再検証トリガー
+- `fix-release-transcribe` は実装完了（tasks 全 [x]）。境界定義はリリースパリティ修正の参照用として維持

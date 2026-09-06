@@ -32,3 +32,6 @@
 
 - feature 配下 (`docs/specs/{feature}/contracts/`) を永続契約の正本にしない
 - AI は contracts index → 本ファイルのみ Read（全量禁止）
+- 新規追加時は `docs/contracts/README.md` の Entries 行を必ず更新
+- Command 面は Tauri invoke エラー payload を Contract 内に表で定義（例: `audio-device-selection.md`）
+- TypeScript ミラー場所は Notes に 1 行で記載（例: `src/presentation/hooks/` または `src/infrastructure/tauri/`）

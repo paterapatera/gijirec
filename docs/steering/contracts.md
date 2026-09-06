@@ -15,7 +15,8 @@
 |--------|-----|--------|
 | Event | `audio-capture://phase-changed` | audio-capture |
 | Data | `PcmChunk` 形状・供給規約 | audio-capture |
-| Command | `get_capture_phase`、`get_transcribe_phase`、`get_transcribe_status`、`save_transcript_session`、`get_editor_settings`、`set_editor_settings`、`pick_save_directory` | audio-capture / whisper-transcribe / transcript-editor |
+| Command | `get_capture_phase`、`get_transcribe_phase`、`get_transcribe_status`、`list_audio_devices`、`get_device_selection`、`set_device_selection`、`set_audio_device_ui_visible`、`save_transcript_session`、`get_editor_settings`、`set_editor_settings`、`pick_save_directory` | audio-capture / whisper-transcribe / audio-device-selection / transcript-editor |
+| Data | リリース診断ログの保存場所・セッション ID・禁止フィールド | release-logging |
 
 **入れないもの**: 実装手順、タスク分解、ADR 全文、UI モック、一時的な spike メモ。
 
@@ -25,6 +26,8 @@
   - `audio-capture-status.md` — イベント
   - `audio-capture-pcm.md` — データ所有
   - `transcript-editor-save.md` / `transcript-editor-settings.md` / `transcript-editor-status.md` — 保存・設定 command とエラー形状
+  - `audio-device-selection.md` — デバイス一覧・セッション選択 command / イベント
+  - `release-logging-persistence.md` — リリース診断ログの永続化規約（cross-cutting）
 - **イベント名**: `<domain>://<verb-or-noun>`（例: `audio-capture://error`）
 - **index 必須**: 新規契約追加時は `docs/contracts/README.md` の Entries 行を更新（欠落禁止）
 
@@ -52,7 +55,8 @@
 |------|----------|
 | データ形状 | `gijirec-domain`（例: `PcmChunk`, `UserFacingError`, `TranscriptBlock`, `TranscribePhase`, `EditorSettings`, `EditorError`） |
 | イベント定数・payload | `gijirec-presentation::tauri::events`（capture）、`gijirec-presentation::transcribe::event_emitter`（transcribe） |
-| emit / command | `gijirec-presentation::tauri`（capture）、`gijirec-presentation::editor`（save/settings）、`src-tauri/src/commands.rs`（ホスト登録） |
+| emit / command | `gijirec-presentation::tauri`（capture / device_selection）、`gijirec-presentation::editor`（save/settings）、`src-tauri/src/commands.rs`（ホスト登録） |
+| 診断ログ永続化 | `src-tauri/src/logging/`（ホストのみ。`--log` 時 `app_data_dir/logs/`） |
 
 domain に契約コメントで path を参照:
 
@@ -64,7 +68,7 @@ pub struct UserFacingError { ... }
 ### TypeScript（読み取り専用ミラー）
 
 - **イベント／状態**: `src/presentation/hooks/{domain}-status.ts`（例: `capture-status.ts`、`transcribe-status.ts`、`transcript-blocks.ts`、`editor-settings.ts`）
-- **Command 面**: `src/infrastructure/tauri/editorCommands.ts`（save / settings / pick directory）。イベント購読ではなく invoke ラップ
+- **Command 面**: `src/infrastructure/tauri/editorCommands.ts`（save / settings / pick directory）、`src/infrastructure/tauri/audioDeviceCommands.ts`（デバイス一覧・選択）。イベント購読ではなく invoke ラップ
 - **内容**: イベント名定数 + interface（契約と同一フィールド名）
 - **変換なし**: snake_case フィールド（`timestamp_ms`）は契約どおり維持。hook 内で camelCase に変換する場合は state 型のみ
 
@@ -114,5 +118,5 @@ export const PHASE_CHANGED_EVENT = "audio-capture://phase-changed" as const;
 | `docs/specs/{feature}/design.md` | feature 内の設計・シーケンス |
 
 ---
-_updated_at: 2026-09-06（Sync: transcript-editor command 契約と TS ミラー場所を反映）_
+_updated_at: 2026-09-07（Sync: audio-device-selection・release-logging-persistence 契約を反映）_
 _Document contract lifecycle and mirroring, not every field of every contract._

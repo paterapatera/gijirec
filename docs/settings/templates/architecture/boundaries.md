@@ -11,6 +11,30 @@
 |------|-----|------|
 | {{FROM}} | {{TO}} | {{RULE}} |
 
+## {{DOMAIN}} ドメイン境界
+
+<!-- Repeat per feature/domain. One section = Owns / Out / Allowed Dependencies / 依存方向 -->
+
+`docs/specs/{{FEATURE}}/` の設計に基づく。契約の正本は `docs/contracts/` を参照。
+
+### Owns（この Spec が所有）
+
+| 領域 | コンポーネント / 成果物 |
+|------|-------------------------|
+| {{AREA}} | {{COMPONENTS}} |
+
+### Out of Boundary（境界外）
+
+| 領域 | 備考 |
+|------|------|
+| {{AREA}} | {{NOTE}} |
+
+### Allowed Dependencies（許可依存）
+
+| 種別 | 依存 |
+|------|------|
+| {{KIND}} | {{DEPS}} |
+
 ## 境界メモ
 
 - {{BOUNDARY_NOTE}}

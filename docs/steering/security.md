@@ -47,6 +47,12 @@ gijirec のセキュリティ姿勢。ローカルファーストのデスクト
 - ログターゲット `gijirec_editor` では転写全文・手書き全文を出さない
 - クラウド STT は product スコープ外
 
+### 診断ログ（release `--log`）
+
+- 保存先: `{app_data_dir}/logs/sessions/{run_session_id}/gijirec.log`（契約: `release-logging-persistence.md`）
+- 会議音声・転写全文・PCM は記録しない（observability と同一マスキング）
+- 永続化失敗時は非ブロッキング degrade（アプリ起動は継続）
+
 ### ログ
 
 **ログしてよい**:
@@ -97,5 +103,5 @@ gijirec のセキュリティ姿勢。ローカルファーストのデスクト
 - 契約（PCM 非送信）: `docs/contracts/audio-capture-pcm.md`
 
 ---
-_updated_at: 2026-09-06（Sync: 明示保存・設定永続化・editor ログマスキングを反映）_
+_updated_at: 2026-09-07（Sync: release 診断ログ永続化を反映）_
 _Focus on local-first desktop posture, not enterprise IAM patterns._

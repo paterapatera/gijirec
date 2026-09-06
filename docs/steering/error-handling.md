@@ -83,7 +83,7 @@ CaptureUserErrorPayload {
 
 ## Logging & Observability
 
-- **tracing ターゲット**: `gijirec_capture`、`gijirec_transcribe`、`gijirec_editor`
+- **tracing ターゲット**: `gijirec_capture`、`gijirec_transcribe`、`gijirec_editor`、`gijirec_device`
 - **presentation 層**: `CaptureObservability` トレイト経由。マクロは host（`run()`）側で実装（bylaw 対策）
 - **ログに含める**: phase 遷移、`capture_buffer_drops_total`、error code、correlation `session_id`
 - **ログに含めない**: PCM サンプル配列、会議内容、マイクデバイス表示名の生文字列
@@ -110,6 +110,8 @@ capture と transcribe で同パターンを踏襲:
 
 **Editor 固有**: `EditorError::to_user_facing()`。保存／設定失敗はイベントではなく command 結果の `error` フィールド。UI は `SaveResultToast`（Sonner）で `message_ja` / `action_ja` を出す。
 
+**Device selection 固有**: 選択デバイス不可は `audio-capture://error` 経由（`SELECTED_MIC_UNAVAILABLE` / `SELECTED_SYSTEM_AUDIO_UNAVAILABLE` / `MACOS_OUTPUT_NOT_DEFAULT`）。command 側の `INVALID_DEVICE` は `set_device_selection` 失敗時。サイレントフォールバック禁止（別デバイスへ自動切替しない）。
+
 ## Retry
 
 - **音声キャプチャ**: リアルタイムコールバック内での自動リトライなし。失敗は phase `error` + イベント
@@ -133,5 +135,5 @@ capture と transcribe で同パターンを踏襲:
 - 境界（外部送信なし）: `docs/architecture/boundaries.md`
 
 ---
-_updated_at: 2026-09-06（Sync: EditorError・command 結果エラー・gijirec_editor を反映）_
+_updated_at: 2026-09-07（Sync: デバイス選択エラー・gijirec_device tracing を反映）_
 _Focus on patterns and decisions, not every error variant._

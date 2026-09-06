@@ -5,6 +5,7 @@ Web 会議中にマイクとシステム音声を仮想オーディオデバイ�
 ## できること
 
 - マイク＋スピーカー（ループバック）を 16 kHz モノラル PCM にリアルタイム合成
+- 利用可能なマイク／スピーカーの一覧表示とセッション内デバイス選択（キャプチャ中の切り替え・再開）
 - whisper.cpp（`whisper-cpp-plus`）によるローカル逐次文字起こし
 - 手書きメモと AI 転写の二重エディタ（部分ロック、タイムスタンプ維持）
 - 保存先ディレクトリへの Markdown / 任意 JSONL 出力
@@ -69,6 +70,18 @@ cargo tauri dev
 
 `tauri.conf.json` の `beforeDevCommand` により、起動前に自動で `bun run dev` が実行されます。
 
+### リリースビルド診断ログ
+
+配布用ビルドで障害調査が必要な場合のみ、起動時に `--log` を付けてください（通常起動ではログは残りません）。
+
+```bash
+# ビルド例（src-tauri から）
+cargo tauri build
+# 生成された実行ファイルを --log 付きで起動（OS ごとのパスは build 出力を参照）
+```
+
+詳細な保存場所・収集手順は [release-logging 運用手順](docs/specs/release-logging/operations.md) を参照。
+
 ## 品質チェック
 
 ```bash
@@ -96,7 +109,7 @@ bun run rust:test
 |----------|------|
 | `bun run verify` | **完成判定** — 下記の lint・テストをすべて実行 |
 | `bun run check` | Biome・ESLint・TypeScript・dependency-cruiser・knip |
-| `bun run test` | フロント4レイヤ配下のテスト（キャプチャ／文字起こし／エディタ） |
+| `bun run test` | フロント4レイヤ配下のテスト（キャプチャ／文字起こし／エディタ／デバイス選択） |
 | `bun run test:arch` | dependency-cruiser レイヤルールの fixture テスト |
 | `bun run rust:check` | rustfmt・cargo check・clippy・cargo bylaw・cargo machete |
 | `bun run rust:test` | Rust ワークスペースの `cargo test` |
@@ -157,6 +170,8 @@ RUST_LOG=gijirec_capture=info cargo tauri dev --manifest-path src-tauri/Cargo.to
 - `PcmChunkBus` 統合テスト（バックプレッシャー・100 ms チャンク配信）
 - 合成 rtrb による処理スレッド結線スモーク（`compose` 統合テスト）
 - オーディオパイプライン単体テスト（mixer / ChunkEmitter / orchestrator）
+- デバイス選択の統合・性能スモーク（`src-tauri/tests/device_selection_*.rs`）
+- リリース診断ログの結合スモーク（`src-tauri/src/logging/`）
 
 ## 手動検証（会議アプリ並走・マイク解放）
 
@@ -171,13 +186,18 @@ RUST_LOG=gijirec_capture=info cargo tauri dev --manifest-path src-tauri/Cargo.to
 │   ├── application/
 │   ├── infrastructure/
 │   └── presentation/
-├── src-tauri/            # Rust バックエンド（Tauri ホスト）
-│   └── crates/           # gijirec-domain / application / infrastructure / presentation
-├── docs/specs/           # 機能仕様（spec-driven development）
+├── src-tauri/            # Rust バックエンド（Tauri ホスト + logging）
+│   ├── crates/           # gijirec-domain / application / infrastructure / presentation
+│   └── src/              # composition root（compose, commands, logging）
+├── docs/
+│   ├── specs/            # 機能仕様（spec-driven development）
+│   ├── steering/         # プロジェクト横断メモリ
+│   ├── contracts/        # 永続 IPC 契約
+│   └── architecture/     # 境界・ADR
 └── package.json          # Bun スクリプト定義
 ```
 
-機能仕様は `docs/specs/`（audio-capture / whisper-transcribe / transcript-editor）、横断メモリは `docs/steering/`、IPC 契約は `docs/contracts/` です。
+機能仕様は `docs/specs/`（audio-capture / whisper-transcribe / transcript-editor / audio-device-selection / release-logging / fix-release-transcribe 等）、横断メモリは `docs/steering/`、IPC 契約は `docs/contracts/`、境界と ADR は `docs/architecture/` です。
 
 フロントエンドは `dependency-cruiser`、Rust は `cargo bylaw` でレイヤ依存を CI 検証します。`src/` から `src-tauri/` への直接 import は禁止です。
 

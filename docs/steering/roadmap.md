@@ -13,10 +13,10 @@
 ## Specs (dependency order)
 - [x] audio-capture -- マイク＋システム音声を同時取得し 16kHz モノラルへミックス
 - [x] whisper-transcribe -- チャンク投入・低遅延ストリーミング・タイムスタンプ付きブロック供給（状態 UI まで完了。転写テキスト表示は transcript-editor へ委譲）
-- [x] transcript-editor -- 部分ロック編集・タイムスタンプ維持・Markdown / JSONL 保存。Dependencies: whisper-transcribe（葉タスク完了。spec 親チェック／phase は未クローズ）
-- [ ] release-logging -- ビルド版ログ確認。Dependencies: none
-- [ ] fix-release-transcribe -- release 文字起こし不具合修正。Dependencies: release-logging
-- [ ] audio-device-selection -- マイク/スピーカーデバイス選択。Dependencies: none
+- [x] transcript-editor -- 部分ロック編集・タイムスタンプ維持・Markdown / JSONL 保存。Dependencies: whisper-transcribe
+- [x] release-logging -- リリースビルド `--log` 診断ログ永続化。Dependencies: none
+- [x] fix-release-transcribe -- release 文字起こしパリティ修正（ModelStore app_data_dir、block-appended ACL、TranscribeStallWatchdog）。Dependencies: release-logging
+- [x] audio-device-selection -- マイク/スピーカーデバイス選択・キャプチャ再開。Dependencies: none
 
 ## Direct Implementation Candidates
-- [ ] default-window-size -- tauri.conf でデフォルトウィンドウを 1000×800 に設定
+- [x] default-window-size -- `src-tauri/tauri.conf.json` で main ウィンドウ 1000×800（実装済み）

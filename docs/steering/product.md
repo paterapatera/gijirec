@@ -40,10 +40,14 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 |------|------|------|
 | audio-capture | 完了 | 二重キャプチャ・PCM ミックス・ライフサイクル・状態 UI |
 | whisper-transcribe | 完了 | ローカル推論・モデル取得・フェーズ／進捗。ブロック供給は `whisper-transcribe://block-appended` |
-| transcript-editor | 実装済み（葉タスク完了） | 二重エディタ・部分ロック・保存／設定 IPC。spec.json は `tasks-approved` のまま親チェック未更新 |
+| transcript-editor | 完了 | 二重エディタ・部分ロック・保存／設定 IPC |
+| audio-device-selection | 完了 | マイク／スピーカー一覧・セッション選択・キャプチャ再開・`DeviceSelectorPanel` |
+| release-logging | 完了 | リリースビルド `--log` 時の診断ログ永続化（`app_data_dir/logs/`） |
+| fix-release-transcribe | 完了 | `app_data_dir` モデルパス（ADR-0008）、`block-appended` ACL、`TranscribeStallWatchdog`、compose 起動順序 |
+| default-window-size | 完了 | `src-tauri/tauri.conf.json` — main ウィンドウ 1000×800 |
 
-**現 UI の範囲**: キャプチャ／文字起こしフェーズ、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、手書き＋AI 転写の二重エディタ、保存ツールバー・結果トースト。
+**現 UI の範囲**: キャプチャ／文字起こしフェーズ、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、マイク／スピーカー選択パネル、手書き＋AI 転写の二重エディタ、保存ツールバー・結果トースト。起動時ウィンドウは 1000×800。
 
 ---
-_updated_at: 2026-09-06（Sync: transcript-editor 実装・UI 範囲を反映）_
+_updated_at: 2026-09-07（Sync: default-window-size 完了を反映）_
 _Focus on patterns and purpose, not exhaustive feature lists_

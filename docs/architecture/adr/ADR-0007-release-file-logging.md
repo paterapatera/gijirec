@@ -14,7 +14,7 @@
 1. **`tracing-appender`** をホスト crate（`src-tauri`）に追加し、`cfg!(not(debug_assertions))`（release ビルド）**かつ `--log` CLI オプション指定時のみ** non-blocking file layer を `tracing_subscriber::Registry` に載せる。オプション未指定の release 起動ではログ出力しない（noop subscriber）。
 2. ログファイルは Tauri **`app_data_dir/logs/sessions/{run_session_id}/gijirec.log`** に書き込む。最新セッションは **`logs/latest-session.txt`** で参照する（`--log` 起動時のみ更新）。
 3. **`WorkerGuard`** は Tauri managed state でプロセス寿命中保持し、異常終了時も flush を保証する。
-4. presentation / application / infrastructure の observability trait とマスキング実装は **変更しない**。永persist は subscriber レイヤのみ。
+4. presentation / application / infrastructure の observability trait とマスキング実装は **変更しない**。永続化は subscriber レイヤのみ。
 5. 永続化失敗時はユーザー機能をブロックせず、diagnostic 出力 + WARN イベントで surface する。
 
 ## Consequences

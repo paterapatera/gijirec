@@ -19,9 +19,10 @@ gijirec のテスト方針。何をどこで検証し、何を CI に載せな�
 | 統合テスト（複数コンポーネント跨ぎ） | `src/presentation/integration/*.integration.test.tsx` | 配線・保存フローなど |
 | React hooks | `src/presentation/hooks/*.test.ts` | 同上 |
 | TS domain / application | `src/domain/**/*.test.ts`、`src/application/**/*.test.ts` | 同上（転写エクスポート・reducer・プラグイン） |
+| TS infrastructure | `src/infrastructure/**/*.test.ts` | invoke ラッパ（editor / audio device） |
 | アーキテクチャ検証 | `scripts/*.test.ts` | レイヤルールの fixture テスト |
 | Rust ユニット | 各 crate の `#[cfg(test)] mod tests` | モジュール内 |
-| Rust 統合 | `src-tauri/crates/*/tests/*.rs` | crate 外統合テスト |
+| Rust 統合 | `src-tauri/crates/*/tests/*.rs`、`src-tauri/tests/*.rs` | crate 外統合テスト（device selection 性能・observability 含む） |
 
 `src/**/*.test.*` は `tsconfig.json` の `exclude` に入れ、型チェック対象外とする（本番ビルドに含めない）。
 
@@ -81,7 +82,9 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 | 種別 | 確認内容 | 記録先 |
 |------|----------|--------|
 | E2E | 実機キャプチャ、権限ダイアログ、ウィンドウ閉鎖後のマイク解放 | `docs/specs/audio-capture/e2e-checklist.md` |
+| E2E（デバイス選択） | 既定表示・選択変更・empty state・`action_ja` | `App.device-selection.e2e.test.tsx`（モック IPC） |
 | 性能 | 30 分連続キャプチャ、CPU / メモリ / バッファドロップ | `docs/specs/audio-capture/performance-results.md` |
+| 性能（デバイス選択） | 選択変更 → capturing 復帰 < 2 s | `src-tauri/tests/device_selection_performance.rs` |
 | 並走 | Zoom / Teams との同時実行 | `docs/specs/audio-capture/manual-concurrency-checklist.md` |
 
 **数値捏造禁止**。実測できない環境ではチェックリストを未完了のまま残す。
@@ -113,5 +116,5 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 - 品質ゲート一覧: `docs/steering/tech.md`
 
 ---
-_updated_at: 2026-09-06（Sync: bun run test を src/ 配下に拡大）_
+_updated_at: 2026-09-07（Sync: audio-device-selection・release-logging テスト配置を反映）_
 _Focus on patterns and decisions. Tool-specific config lives in package.json / Cargo.toml._

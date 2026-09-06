@@ -27,10 +27,10 @@
 **Layers**（dependency-cruiser で強制）:
 - `src/domain/` — ドメインモデル（外レイヤに依存しない）。転写は `domain/transcript/`（型・Markdown/JSONL エクスポート）
 - `src/application/` — ユースケース（domain のみ）。転写は `application/transcript/`（blockReducer、Slate プラグイン、saveOrchestrator）
-- `src/infrastructure/` — 外部アダプタ（domain のみ）。`infrastructure/tauri/editorCommands.ts` が保存／設定 invoke をラップ
-- `src/presentation/` — UI・composition root（`App.tsx`、hooks、`components/` の二重エディタと chrome）
+- `src/infrastructure/` — 外部アダプタ（domain のみ）。`infrastructure/tauri/editorCommands.ts` が保存／設定 invoke をラップ。`infrastructure/tauri/audioDeviceCommands.ts` がデバイス一覧・選択 invoke をラップ
+- `src/presentation/` — UI・composition root（`App.tsx`、hooks、`components/` の二重エディタ・`DeviceSelectorPanel` と chrome）
 
-**Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_phase` / `get_transcribe_status` / `get_editor_settings` で同期。テスト時は `listenFn` / `invokeFn` を注入。エディタ契約の command ミラーは hooks ではなく `infrastructure/tauri/editorCommands.ts`。
+**Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_phase` / `get_transcribe_status` / `get_editor_settings` / `get_device_selection` で同期。テスト時は `listenFn` / `invokeFn` を注入。command ミラーは hooks ではなく `infrastructure/tauri/{editorCommands,audioDeviceCommands}.ts`。
 
 ### Rust Backend
 **Location**: `src-tauri/crates/`  
@@ -39,14 +39,16 @@
 
 | Crate | 依存可能 | 主なモジュール |
 |-------|----------|----------------|
-| `gijirec-domain` | なし（最内層） | `audio/`、`transcribe/`、`editor/`（EditorSettings, Save リクエスト, EditorError） |
-| `gijirec-application` | domain | `capture/`、`transcribe/`、`editor/`（SettingsService, SaveService — ファイル I/O はここ。infrastructure には editor アダプタを置かない） |
-| `gijirec-infrastructure` | domain | `audio/`、`transcribe/`（Whisper / モデル取得。editor なし） |
-| `gijirec-presentation` | domain, application, infrastructure | `tauri/`（capture）、`transcribe/`、`editor/`（command 実装・observability） |
+| `gijirec-domain` | なし（最内層） | `audio/`（`device.rs` 含む）、`transcribe/`、`editor/`（EditorSettings, Save リクエスト, EditorError） |
+| `gijirec-application` | domain | `capture/`、`device_selection/`（DeviceSelectionStore, DeviceSelectionService）、`transcribe/`、`editor/`（SettingsService, SaveService — ファイル I/O はここ。infrastructure には editor アダプタを置かない） |
+| `gijirec-infrastructure` | domain | `audio/`（`device_enumerator`、マイク／ループバックのデバイス ID 指定。editor なし）、`transcribe/`（Whisper / モデル取得） |
+| `gijirec-presentation` | domain, application, infrastructure | `tauri/`（capture、`device_selection`）、`transcribe/`、`editor/`（command 実装・observability） |
 
-**Presentation パターン**: `gijirec-presentation` が composition root。`tauri/` / `transcribe/` / `editor/` が各ドメインの Tauri 境界。`src-tauri/src/compose.rs` と `commands.rs` がホスト側で結線。契約イベント（`audio-capture://…`、`whisper-transcribe://…`）と editor command（`save_transcript_session` 等）でフロントと同期。
+**Presentation パターン**: `gijirec-presentation` が composition root。`tauri/`（capture / device_selection）/ `transcribe/` / `editor/` が各ドメインの Tauri 境界。`src-tauri/src/compose.rs` と `commands.rs` がホスト側で結線。契約イベント（`audio-capture://…`、`whisper-transcribe://…`、`audio-device-selection://…`）と editor / device command でフロントと同期。
 
-**IPC 同期パターン**: モデル取得など長時間処理中に orchestrator ロックを避けるため、`TranscribeStatusCache` がフェーズ／進捗スナップショットを保持し、`get_transcribe_phase` / `get_transcribe_status` でマウント時同期する。エディタ設定は `get_editor_settings` / `set_editor_settings`（`app_data_dir/editor-settings.json`）。保存は command 往復（イベントではない）。
+**ホスト横断**: `src-tauri/src/logging/` がリリース診断ログ（`--log`、ADR-0007）。レイヤ crate 外の composition 専用。
+
+**IPC 同期パターン**: モデル取得など長時間処理中に orchestrator ロックを避けるため、`TranscribeStatusCache` がフェーズ／進捗スナップショットを保持し、`get_transcribe_phase` / `get_transcribe_status` でマウント時同期する。エディタ設定は `get_editor_settings` / `set_editor_settings`（`app_data_dir/editor-settings.json`）。デバイス選択は `get_device_selection` / `list_audio_devices`（セッション内のみ永続化なし）。保存は command 往復（イベントではない）。
 
 ## Naming Conventions
 
@@ -97,5 +99,5 @@ Rust は crate 間の `path` 依存のみ。presentation が composition root。
 | Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-06（Sync: transcript-editor の TS/Rust モジュールと IPC を反映）_
+_updated_at: 2026-09-07（Sync: audio-device-selection・release-logging ホスト logging を反映）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_
