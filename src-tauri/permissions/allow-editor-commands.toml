@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-editor-commands"
+description = "Allows transcript editor save and settings IPC."
+commands.allow = [
+  "save_transcript_session",
+  "get_editor_settings",
+  "set_editor_settings",
+  "pick_save_directory",
+]

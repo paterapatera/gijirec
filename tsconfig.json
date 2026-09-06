@@ -1,5 +1,8 @@
 {
   "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/presentation/*"]
+    },
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
@@ -23,6 +26,6 @@
     "scripts/**/*.test.ts",
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
-    "src/presentation/test-setup.ts"
+    "src/test-setup.ts"
   ]
 }

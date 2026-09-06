@@ -1,0 +1,50 @@
+@import "./editor-theme.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+  }
+
+  html,
+  body,
+  #root {
+    width: 100%;
+  }
+
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 37%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 37%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 37%;
+    --primary: 178 42% 30%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 87%;
+    --secondary-foreground: 0 0% 37%;
+    --muted: 178 38% 83%;
+    --muted-foreground: 0 0% 37%;
+    --accent: 218 100% 91%;
+    --accent-foreground: 0 0% 37%;
+    --destructive: 25 100% 30%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 87%;
+    --input: 0 0% 87%;
+    --ring: 178 42% 30%;
+    --radius: 0.5rem;
+    --chart-1: 178 42% 30%;
+    --chart-2: 218 100% 91%;
+    --chart-3: 178 38% 83%;
+    --chart-4: 25 100% 30%;
+    --chart-5: 0 0% 37%;
+  }
+}
