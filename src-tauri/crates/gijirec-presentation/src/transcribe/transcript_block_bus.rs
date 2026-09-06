@@ -62,13 +62,17 @@ impl<R: Runtime> TauriTranscriptBlockEventEmitter<R> {
 impl<R: Runtime> TranscriptBlockEventEmitter for TauriTranscriptBlockEventEmitter<R> {
     fn emit_block_appended(&self, payload: TranscriptBlockAppendedPayload) -> Result<(), String> {
         self.app
-            .emit(BLOCK_APPENDED_EVENT, payload)
+            .emit_to("main", BLOCK_APPENDED_EVENT, payload.clone())
+            .or_else(|_| self.app.emit(BLOCK_APPENDED_EVENT, payload))
             .map_err(|e| e.to_string())
     }
 }
 
 /// Metrics hook for recording block buffer drops.
 pub type BlockDropCallback = Arc<dyn Fn(u64) + Send + Sync>;
+
+/// Hook invoked after each block is published (e.g. stall watchdog progress reset).
+pub type BlockPublishCallback = Arc<dyn Fn() + Send + Sync>;
 
 /// Clock source for capture-referenced event timestamp.
 pub type TimestampClock = Arc<dyn Fn() -> u64 + Send + Sync>;
@@ -80,6 +84,7 @@ pub struct TranscriptBlockBus {
     drops_total: AtomicU64,
     emitter: Mutex<Option<Arc<dyn TranscriptBlockEventEmitter>>>,
     on_drop: Mutex<Option<BlockDropCallback>>,
+    on_publish: Mutex<Option<BlockPublishCallback>>,
     clock: Mutex<Option<TimestampClock>>,
 }
 
@@ -92,6 +97,7 @@ impl TranscriptBlockBus {
             drops_total: AtomicU64::new(0),
             emitter: Mutex::new(None),
             on_drop: Mutex::new(None),
+            on_publish: Mutex::new(None),
             clock: Mutex::new(None),
         }
     }
@@ -104,6 +110,7 @@ impl TranscriptBlockBus {
             drops_total: AtomicU64::new(0),
             emitter: Mutex::new(Some(emitter)),
             on_drop: Mutex::new(None),
+            on_publish: Mutex::new(None),
             clock: Mutex::new(None),
         }
     }
@@ -119,6 +126,13 @@ impl TranscriptBlockBus {
     pub fn set_clock(&self, clock: TimestampClock) {
         if let Ok(mut lock) = self.clock.lock() {
             *lock = Some(clock);
+        }
+    }
+
+    /// Sets a callback invoked whenever a block is published.
+    pub fn set_publish_callback(&self, callback: BlockPublishCallback) {
+        if let Ok(mut lock) = self.on_publish.lock() {
+            *lock = Some(callback);
         }
     }
 
@@ -152,7 +166,9 @@ impl TranscriptBlockBus {
                 block: TranscriptBlockPayload::from(&block),
                 timestamp_ms,
             };
-            let _ = emitter.emit_block_appended(payload);
+            if let Err(err) = emitter.emit_block_appended(payload) {
+                eprintln!("failed to emit {BLOCK_APPENDED_EVENT}: {err}");
+            }
         }
 
         // 2. Queue in memory buffer (ring buffer of MAX_QUEUED_BLOCKS)
@@ -163,6 +179,12 @@ impl TranscriptBlockBus {
 
         // 3. Deliver to downstream consumer if registered
         self.flush_queue();
+
+        if let Ok(guard) = self.on_publish.lock()
+            && let Some(ref cb) = *guard
+        {
+            cb();
+        }
     }
 
     fn push_with_drop_handling(&self, queue: &mut Vec<TranscriptBlock>, block: TranscriptBlock) {

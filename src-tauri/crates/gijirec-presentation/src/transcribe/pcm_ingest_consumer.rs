@@ -8,6 +8,9 @@ use gijirec_domain::audio::pcm_chunk::{PcmChunk, PcmChunkConsumer, PcmConsumerEr
 /// Metrics hook for recording sequence gaps.
 pub type SequenceGapCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
+/// Hook invoked with chunk RMS after PCM normalization (e.g. stall watchdog input detection).
+pub type PcmChunkRmsCallback = Arc<dyn Fn(f32) + Send + Sync>;
+
 /// Ingests [`PcmChunk`]s from `PcmChunkBus` directly into an `rtrb::Producer<f32>`
 /// with non-blocking conversion to `f32` in `[-1.0, 1.0]`.
 pub struct PcmIngestConsumer {
@@ -16,6 +19,7 @@ pub struct PcmIngestConsumer {
     has_seen_first_chunk: AtomicBool,
     sequence_gaps_total: AtomicU64,
     on_sequence_gap: Option<SequenceGapCallback>,
+    on_pcm_rms: Option<PcmChunkRmsCallback>,
 }
 
 impl PcmIngestConsumer {
@@ -27,7 +31,13 @@ impl PcmIngestConsumer {
             has_seen_first_chunk: AtomicBool::new(false),
             sequence_gaps_total: AtomicU64::new(0),
             on_sequence_gap: None,
+            on_pcm_rms: None,
         }
+    }
+
+    /// Sets an optional callback invoked with RMS for each ingested chunk.
+    pub fn set_pcm_rms_callback(&mut self, callback: PcmChunkRmsCallback) {
+        self.on_pcm_rms = Some(callback);
     }
 
     /// Sets an optional callback invoked when sequence gaps are detected.
@@ -76,13 +86,21 @@ impl PcmChunkConsumer for PcmIngestConsumer {
             .map_err(|e| PcmConsumerError::Internal(format!("poisoned producer lock: {e}")))?;
 
         let samples = chunk.samples();
+        let mut sum_sq = 0.0f32;
         for &sample in samples {
             // Normalize i16 (-32768..=32767) to f32 (-1.0..=1.0)
             let normalized = (sample as f32) / 32768.0;
+            sum_sq += normalized * normalized;
             if let Err(rtrb::PushError::Full(_)) = producer.push(normalized) {
                 // When rtrb is full, return error so bus knows chunks were dropped or backpressured
                 return Err(PcmConsumerError::Internal("rtrb buffer full".to_string()));
             }
+        }
+
+        if let Some(ref cb) = self.on_pcm_rms
+            && !samples.is_empty()
+        {
+            cb((sum_sq / samples.len() as f32).sqrt());
         }
 
         Ok(())

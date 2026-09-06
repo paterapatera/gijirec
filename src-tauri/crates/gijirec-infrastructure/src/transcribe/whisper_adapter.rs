@@ -1,15 +1,12 @@
-//! whisper-cpp-plus wrapper for local STT inference (ADR-0003).
+//! whisper.cpp wrapper for local STT inference (ADR-0003).
 
-use std::io::Cursor;
 use std::path::Path;
+use std::sync::Arc;
 
 use gijirec_domain::transcribe::TranscribeError;
-use whisper_cpp_plus::{
-    FullParams, PcmFormat, PcmReader, PcmReaderConfig, SamplingStrategy, Segment, WhisperContext,
-    WhisperStreamPcm, WhisperStreamPcmConfig,
-};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-/// Inference segment returned by whisper-cpp-plus.
+/// Inference segment returned by whisper.cpp.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WhisperSegment {
     pub text: String,
@@ -17,9 +14,15 @@ pub struct WhisperSegment {
     pub end_ms: i64,
 }
 
-/// Local whisper.cpp adapter wrapping [`WhisperContext`] and [`WhisperStreamPcm`].
+struct LoadedWhisper {
+    context: WhisperContext,
+    state: whisper_rs::WhisperState,
+}
+
+/// Local whisper.cpp adapter backed by `whisper-rs`.
 pub struct WhisperCppAdapter {
-    context: Option<WhisperContext>,
+    model: Option<LoadedWhisper>,
+    on_progress: Option<Arc<dyn Fn(i32) + Send + Sync>>,
 }
 
 impl Default for WhisperCppAdapter {
@@ -30,117 +33,155 @@ impl Default for WhisperCppAdapter {
 
 impl WhisperCppAdapter {
     pub fn new() -> Self {
-        Self { context: None }
+        Self {
+            model: None,
+            on_progress: None,
+        }
+    }
+
+    pub fn set_progress_hook(&mut self, hook: Arc<dyn Fn(i32) + Send + Sync>) {
+        self.on_progress = Some(hook);
     }
 
     pub fn is_loaded(&self) -> bool {
-        self.context.is_some()
+        self.model.is_some()
     }
 
     /// Vocabulary size of the loaded model; zero when unloaded.
     pub fn context_vocab_size(&self) -> i32 {
-        self.context
+        self.model
             .as_ref()
-            .map(WhisperContext::n_vocab)
+            .map(|model| model.context.n_vocab())
             .unwrap_or(0)
     }
 
     /// Audio context length of the loaded model; zero when unloaded.
     pub fn context_audio_ctx(&self) -> i32 {
-        self.context
+        self.model
             .as_ref()
-            .map(WhisperContext::n_audio_ctx)
+            .map(|model| model.context.n_audio_ctx())
             .unwrap_or(0)
     }
 
-    /// VAD-driven streaming config per design (`length_ms=5000`, `use_vad=true`).
-    pub fn stream_pcm_config() -> WhisperStreamPcmConfig {
-        WhisperStreamPcmConfig {
-            length_ms: 5000,
-            use_vad: true,
-            ..Default::default()
+    fn cpu_context_params() -> WhisperContextParameters<'static> {
+        let mut params = WhisperContextParameters::default();
+        #[cfg(not(target_os = "macos"))]
+        {
+            params.use_gpu = false;
+            params.flash_attn = false;
         }
+        params
     }
 
     /// Loads a whisper model from `path`. Failures map to [`TranscribeError::ModelCorrupt`].
     pub fn load_model(&mut self, path: &Path) -> Result<(), TranscribeError> {
         let path_display = path.display().to_string();
-        match WhisperContext::new(&path_display) {
-            Ok(ctx) => {
-                self.context = Some(ctx);
-                Ok(())
-            }
-            Err(err) => Err(TranscribeError::ModelCorrupt {
-                detail: format!("failed to load whisper model at {path_display}: {err}"),
-            }),
-        }
+        let context = WhisperContext::new_with_params(
+            path.to_str().ok_or_else(|| TranscribeError::ModelCorrupt {
+                detail: format!("invalid model path: {path_display}"),
+            })?,
+            Self::cpu_context_params(),
+        )
+        .map_err(|err| TranscribeError::ModelCorrupt {
+            detail: format!("failed to load whisper model at {path_display}: {err}"),
+        })?;
+
+        let state = context
+            .create_state()
+            .map_err(|err| TranscribeError::InferenceFailed {
+                detail: format!("failed to initialize whisper state: {err}"),
+            })?;
+
+        self.model = Some(LoadedWhisper { context, state });
+        Ok(())
     }
 
-    /// Runs VAD-driven streaming inference over 16 kHz mono f32 PCM.
-    pub fn transcribe_pcm(&self, pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
+    /// Runs inference over 16 kHz mono f32 PCM, reusing a single whisper state.
+    pub fn transcribe_pcm(&mut self, pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
         if pcm.is_empty() {
             return Ok(Vec::new());
         }
 
-        let ctx = self
-            .context
-            .as_ref()
+        let model = self
+            .model
+            .as_mut()
             .ok_or_else(|| TranscribeError::Internal {
                 detail: "whisper context not loaded".to_string(),
             })?;
 
-        let reader = pcm_reader_from_samples(pcm);
-        run_stream_pcm(ctx, reader)
-    }
-}
-
-fn map_segment(seg: &Segment) -> WhisperSegment {
-    WhisperSegment {
-        text: seg.text.clone(),
-        start_ms: seg.start_ms,
-        end_ms: seg.end_ms,
-    }
-}
-
-fn pcm_reader_from_samples(samples: &[f32]) -> PcmReader {
-    let bytes: Vec<u8> = samples
-        .iter()
-        .flat_map(|sample| sample.to_le_bytes())
-        .collect();
-    let config = PcmReaderConfig {
-        sample_rate: 16_000,
-        format: PcmFormat::F32,
-        ..Default::default()
-    };
-    PcmReader::new(Box::new(Cursor::new(bytes)), config)
-}
-
-fn run_stream_pcm(
-    ctx: &WhisperContext,
-    reader: PcmReader,
-) -> Result<Vec<WhisperSegment>, TranscribeError> {
-    let params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    let config = WhisperCppAdapter::stream_pcm_config();
-    let mut stream = WhisperStreamPcm::new(ctx, params, config, reader).map_err(|err| {
-        TranscribeError::InferenceFailed {
-            detail: err.to_string(),
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        params.set_language(Some("ja"));
+        params.set_n_threads(inference_thread_count());
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        params.set_no_context(true);
+        // Timestamp tokens give the decoder natural stopping points and split a long
+        // window into segments. whisper.cpp treats `single_segment` and `no_timestamps`
+        // alike, and either one invites repetition loops on Japanese speech.
+        params.set_no_timestamps(false);
+        params.set_single_segment(false);
+        params.set_temperature_inc(0.0);
+        params.set_suppress_blank(true);
+        // Hard cap per segment: if the decoder still loops, bound the damage and latency.
+        params.set_max_tokens(MAX_TOKENS_PER_SEGMENT);
+        params.set_audio_ctx(audio_ctx_for_pcm(pcm.len()));
+        if let Some(hook) = self.on_progress.clone() {
+            params.set_progress_callback_safe(move |percent: i32| hook(percent));
         }
-    })?;
 
-    // `WhisperStreamPcm::run` blocks until the reader hits EOF and drains the ring buffer;
-    // no additional sleep is required before or during the loop.
-    let mut segments = Vec::new();
-    stream
-        .run(|segs, _start_ms, _end_ms| {
-            for seg in segs {
-                segments.push(map_segment(seg));
-            }
-        })
-        .map_err(|err| TranscribeError::InferenceFailed {
-            detail: err.to_string(),
-        })?;
+        model
+            .state
+            .full(params, pcm)
+            .map_err(|err| TranscribeError::InferenceFailed {
+                detail: err.to_string(),
+            })?;
 
-    Ok(segments)
+        let mut segments = Vec::new();
+        for segment in model.state.as_iter() {
+            let text = segment
+                .to_str_lossy()
+                .map_err(|err| TranscribeError::InferenceFailed {
+                    detail: err.to_string(),
+                })?;
+            segments.push(WhisperSegment {
+                text: text.into_owned(),
+                start_ms: segment.start_timestamp().saturating_mul(10),
+                end_ms: segment.end_timestamp().saturating_mul(10),
+            });
+        }
+
+        Ok(segments)
+    }
+}
+
+/// Upper bound for ggml threads. kotoba-whisper carries a large-v3 encoder; a short
+/// window at `audio_ctx=512` needs ~8 threads to stay ahead of real time on CPU. The
+/// remaining cores are left to capture, UI, and the OS.
+const MAX_INFERENCE_THREADS: usize = 8;
+
+/// Per-segment token cap. A 10 s Japanese utterance is roughly 40-60 tokens, so this
+/// never truncates real speech but stops a repetition loop within one segment.
+const MAX_TOKENS_PER_SEGMENT: i32 = 128;
+
+fn inference_thread_count() -> i32 {
+    std::thread::available_parallelism()
+        .map(|count| count.get().clamp(2, MAX_INFERENCE_THREADS) as i32)
+        .unwrap_or(2)
+}
+
+/// Lower bound for `audio_ctx`. whisper.cpp documents 512 as the smallest encoder
+/// context that keeps acceptable quality; below that the model hallucinates short
+/// nonsense words on Japanese speech.
+const MIN_AUDIO_CTX_FRAMES: i32 = 512;
+
+/// Encoder frames for the given PCM length. whisper.cpp defaults to 1500 frames (30 s)
+/// even for a short streaming window, so streaming must shrink `audio_ctx`.
+fn audio_ctx_for_pcm(sample_count: usize) -> i32 {
+    let frames = (sample_count as u64).saturating_mul(50) / 16_000;
+    i32::try_from(frames)
+        .unwrap_or(1500)
+        .clamp(MIN_AUDIO_CTX_FRAMES, 1500)
 }
 
 /// Generates synthetic PCM with an energy burst to exercise VAD-driven streaming.
@@ -205,15 +246,8 @@ mod tests {
     }
 
     #[test]
-    fn stream_pcm_config_uses_vad_and_length_ms() {
-        let config = WhisperCppAdapter::stream_pcm_config();
-        assert!(config.use_vad);
-        assert_eq!(config.length_ms, 5000);
-    }
-
-    #[test]
     fn transcribe_empty_pcm_returns_empty_segments_without_inference() {
-        let adapter = WhisperCppAdapter::new();
+        let mut adapter = WhisperCppAdapter::new();
         let segments = adapter
             .transcribe_pcm(&[])
             .expect("empty pcm should succeed without loaded context");
@@ -222,11 +256,79 @@ mod tests {
 
     #[test]
     fn transcribe_without_loaded_context_returns_internal() {
-        let adapter = WhisperCppAdapter::new();
+        let mut adapter = WhisperCppAdapter::new();
         let err = adapter
             .transcribe_pcm(&[0.0_f32; 16_000])
             .expect_err("unloaded context should fail");
         assert!(matches!(err, TranscribeError::Internal { .. }));
+    }
+
+    #[test]
+    fn full_params_keep_timestamps_and_cap_segment_tokens() {
+        let source = include_str!("whisper_adapter.rs");
+        let production = source
+            .split("mod tests")
+            .next()
+            .expect("whisper_adapter.rs must define tests module");
+        assert!(
+            production.contains("set_no_timestamps(false)")
+                && production.contains("set_single_segment(false)"),
+            "streaming inference must keep timestamp tokens so segments split naturally"
+        );
+        assert!(
+            production.contains("set_max_tokens(MAX_TOKENS_PER_SEGMENT)"),
+            "streaming inference must cap tokens per segment to bound repetition loops"
+        );
+        assert!(
+            !production.contains("set_no_timestamps(true)")
+                && !production.contains("set_single_segment(true)"),
+            "single-segment / no-timestamp decoding invites repetition loops"
+        );
+    }
+
+    #[test]
+    fn audio_ctx_matches_pcm_duration_not_full_30s_encoder() {
+        // Short windows sit below the quality floor, so clamp up to 512.
+        assert_eq!(audio_ctx_for_pcm(48_000), 512);
+        assert_eq!(audio_ctx_for_pcm(16_000), 512);
+        // 10 s max window: proportional (500 frames) still clamps to 512.
+        assert_eq!(audio_ctx_for_pcm(160_000), 512);
+        // 15 s of PCM: proportional (750 frames), still below the 30 s default.
+        assert_eq!(audio_ctx_for_pcm(240_000), 750);
+        assert_eq!(audio_ctx_for_pcm(480_000), 1500);
+        assert_eq!(audio_ctx_for_pcm(960_000), 1500);
+    }
+
+    #[test]
+    #[ignore = "requires GIJIREC_WHISPER_TEST_MODEL pointing to a valid ggml whisper model"]
+    fn smoke_transcribe_one_second_silence() {
+        let model_path = std::env::var("GIJIREC_WHISPER_TEST_MODEL")
+            .expect("set GIJIREC_WHISPER_TEST_MODEL to a valid ggml whisper model path");
+
+        let mut adapter = WhisperCppAdapter::new();
+        adapter
+            .load_model(Path::new(&model_path))
+            .expect("load local whisper model");
+
+        adapter
+            .transcribe_pcm(&vec![0.0_f32; 16_000])
+            .expect("transcribe one second of silence");
+    }
+
+    #[test]
+    #[ignore = "requires GIJIREC_WHISPER_TEST_MODEL pointing to a valid ggml whisper model"]
+    fn smoke_transcribe_five_second_silence() {
+        let model_path = std::env::var("GIJIREC_WHISPER_TEST_MODEL")
+            .expect("set GIJIREC_WHISPER_TEST_MODEL to a valid ggml whisper model path");
+
+        let mut adapter = WhisperCppAdapter::new();
+        adapter
+            .load_model(Path::new(&model_path))
+            .expect("load local whisper model");
+
+        adapter
+            .transcribe_pcm(&vec![0.0_f32; 80_000])
+            .expect("transcribe five seconds of silence");
     }
 
     #[test]
