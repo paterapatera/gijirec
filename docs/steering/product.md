@@ -36,6 +36,8 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 
 製品ビジョン全体に対し、実装は roadmap の spec 順に段階投入する。
 
+表の「状態」列は `docs/steering/roadmap.md` と同期し、根拠は各 spec の `tasks.md` の `[x]` とする（`spec.json` の phase だけで未完了と判断しない）。
+
 | Spec | 状態 | 備考 |
 |------|------|------|
 | audio-capture | 完了 | 二重キャプチャ・PCM ミックス・ライフサイクル・状態 UI |
@@ -49,5 +51,5 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 **現 UI の範囲**: キャプチャ／文字起こしフェーズ、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、マイク／スピーカー選択パネル、手書き＋AI 転写の二重エディタ、保存ツールバー・結果トースト。起動時ウィンドウは 1000×800。
 
 ---
-_updated_at: 2026-09-07（Sync: default-window-size 完了を反映）_
+_updated_at: 2026-09-07（完了状態ルールを追記）_
 _Focus on patterns and purpose, not exhaustive feature lists_

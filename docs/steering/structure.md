@@ -87,6 +87,28 @@ Rust は crate 間の `path` 依存のみ。presentation が composition root。
 4. **契約の正本** — API / イベント形状は `docs/contracts/` に永続化（feature 内は下書き可）
 5. **境界変更は ADR** — レイヤ依存や技術選択の変更は `docs/architecture/adr/` に記録
 
+## Feature 完了クローズ
+
+spec の `tasks.md` が全 `[x]` になったら、次を **同一作業単位** で行う（途中で steering だけ止めない）。
+
+1. `bun run verify`
+2. ドキュメント同期（下記スコープを一括照合）
+3. `roadmap.md` / `product.md` の状態更新
+4. コミット（Conventional Commits・説明は日本語）
+5. 必要なら main 向けスカッシュ
+
+### ドキュメント同期スコープ
+
+| 領域 | 正本 | 同期時に見るもの |
+|------|------|------------------|
+| 横断メモリ | `docs/steering/` | product / roadmap / structure / contracts 等 |
+| 境界・ADR | `docs/architecture/` | `boundaries.md`、関連 ADR |
+| 契約テンプレ | `docs/settings/templates/` | 新パターンの反映 |
+| 利用者向け | ルート `README.md` | できること・構成・verify 説明 |
+| IPC 契約 | `docs/contracts/` | 新 command / イベント追加時 |
+
+**完了判定**: `docs/specs/<feature>/tasks.md` 全 `[x]`、または該当コードの存在確認。**`spec.json` の `phase` だけで未完了と書かない**。Direct Implementation は設定ファイル（例: `tauri.conf.json`）を grep してから `[x]` にする。
+
 ## Quality Scripts Mapping
 
 | 対象 | コマンド | 検証内容 |
@@ -99,5 +121,5 @@ Rust は crate 間の `path` 依存のみ。presentation が composition root。
 | Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-07（Sync: audio-device-selection・release-logging ホスト logging を反映）_
+_updated_at: 2026-09-07（Feature 完了クローズ・doc 同期スコープを追記）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_

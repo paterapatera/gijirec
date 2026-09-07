@@ -32,6 +32,14 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 | 診断ログ | `src-tauri/src/logging/`（`--log`） | リリースビルドのファイル永続化（ADR-0007）。`app_data_dir/logs/` |
 | アーキテクチャ検証 | cargo bylaw、dependency-cruiser | レイヤ依存の自動チェック |
 
+### Whisper 推論パラメータ（調整時）
+
+- デフォルトモデル: `kotoba-whisper-v2.2-ggml-q5_0.bin`（ADR-0004）
+- 窓長・スレッド・VAD は **1 軸ずつ** 変更し、`bun run verify` + 実機で確認してから次へ
+- 繰り返し発話・区切り不良は、窓長変更と `single_segment` / `entropy_thold` を同時に変えない
+- スレッド数: CPU コア数に応じた動的設定、**上限 4**
+- 大きく戻す前に revert 条件をメモする（調整セッションで全 revert が起きやすい）
+
 ## Development Standards
 
 ### Type Safety
@@ -108,5 +116,5 @@ bun run rust:typecheck
 永続的な技術判断は `docs/architecture/adr/` に ADR として記録する。
 
 ---
-_updated_at: 2026-09-07（Sync: fix-release-transcribe 完了・ADR-0008 を反映）_
+_updated_at: 2026-09-07（Whisper 推論パラメータ調整原則を追記）_
 _Document standards and patterns, not every dependency_

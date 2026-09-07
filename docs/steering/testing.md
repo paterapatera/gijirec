@@ -86,6 +86,18 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 | 性能 | 30 分連続キャプチャ、CPU / メモリ / バッファドロップ | `docs/specs/audio-capture/performance-results.md` |
 | 性能（デバイス選択） | 選択変更 → capturing 復帰 < 2 s | `src-tauri/tests/device_selection_performance.rs` |
 | 並走 | Zoom / Teams との同時実行 | `docs/specs/audio-capture/manual-concurrency-checklist.md` |
+| リリーススモーク | release ビルドでキャプチャ→文字起こし→ブロック表示 | 下記チェックリスト |
+
+### リリース vs dev パリティ（手動・CI 外）
+
+release で文字起こししないとき、**コード変更前に**次を確認する:
+
+- [ ] ModelStore が `app_data_dir`（ADR-0008）を参照しているか
+- [ ] `compose` 起動順序・`block-appended` ACL・`TranscribeStallWatchdog` が有効か
+- [ ] dev と同じ whisper 窓長・スレッド・`single_segment` / `entropy_thold` か
+- [ ] `--log` 有無で挙動が変わるか（診断ログは `docs/specs/release-logging/operations.md`）
+
+`bun run verify` は自動ゲート。**上記は release 実機確認**であり、verify 合格だけでは代替しない。
 
 **数値捏造禁止**。実測できない環境ではチェックリストを未完了のまま残す。
 
@@ -116,5 +128,5 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 - 品質ゲート一覧: `docs/steering/tech.md`
 
 ---
-_updated_at: 2026-09-07（Sync: audio-device-selection・release-logging テスト配置を反映）_
+_updated_at: 2026-09-07（リリース vs dev パリティチェックリストを追記）_
 _Focus on patterns and decisions. Tool-specific config lives in package.json / Cargo.toml._

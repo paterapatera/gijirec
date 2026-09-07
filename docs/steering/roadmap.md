@@ -20,3 +20,14 @@
 
 ## Direct Implementation Candidates
 - [x] default-window-size -- `src-tauri/tauri.conf.json` で main ウィンドウ 1000×800（実装済み）
+
+## 完了状態のルール
+
+- **完了**: `docs/specs/<feature>/tasks.md` が全 `[x]`
+- **`spec.json` の `phase: tasks-approved` は完了と矛盾しない**（phase クローズは別メタデータ）
+- steering の `[ ]` / product の「未着手」は、tasks.md またはコード確認後にのみ更新する
+- Direct Implementation は設定ファイル（例: `tauri.conf.json`）を grep してから `[x]` にする
+- 新規 spec を roadmap に足すのは **未実装 feature のみ**（既存完了 spec の追記は不要）
+
+---
+_updated_at: 2026-09-07（完了状態ルールを追記）_

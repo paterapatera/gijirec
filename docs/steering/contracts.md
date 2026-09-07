@@ -47,6 +47,17 @@
 - `docs/architecture/boundaries.md` に契約詳細をコピペ
 - 契約ファイル追加だけして index を更新しない
 
+### 契約追加・変更時の同期先
+
+新 command / イベントを `docs/contracts/` に足したら、同一 PR / 同一セッションで次も確認する:
+
+- `docs/contracts/README.md` の Entries
+- `docs/architecture/boundaries.md` の IPC 行
+- `docs/steering/contracts.md`（本ファイル）の索引
+- ルート `README.md`（利用者向けに影響する場合のみ）
+
+steering だけ更新して boundaries / README を残さない。
+
 ## Code Mirroring
 
 ### Rust（正本に近い）
@@ -118,5 +129,5 @@ export const PHASE_CHANGED_EVENT = "audio-capture://phase-changed" as const;
 | `docs/specs/{feature}/design.md` | feature 内の設計・シーケンス |
 
 ---
-_updated_at: 2026-09-07（Sync: audio-device-selection・release-logging-persistence 契約を反映）_
+_updated_at: 2026-09-07（契約変更時の同期先を追記）_
 _Document contract lifecycle and mirroring, not every field of every contract._
