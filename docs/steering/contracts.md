@@ -126,8 +126,9 @@ export const PHASE_CHANGED_EVENT = "audio-capture://phase-changed" as const;
 | `docs/architecture/boundaries.md` | 誰が何を Own するか（契約詳細なし） |
 | `docs/steering/structure.md` | レイヤとディレクトリパターン |
 | `docs/steering/error-handling.md` | エラー契約の UI / ログ規約 |
-| `docs/specs/{feature}/design.md` | feature 内の設計・シーケンス |
+| `docs/specs/{feature}/design.md` | feature 内の設計・シーケンス（完了後アーカイブ可） |
+| `docs/manual/` | 手動検証チェックリスト・運用手順（spec 削除後も維持） |
 
 ---
-_updated_at: 2026-09-07（契約変更時の同期先を追記）_
+_updated_at: 2026-09-07（docs/manual 参照を追記）_
 _Document contract lifecycle and mirroring, not every field of every contract._

@@ -29,8 +29,10 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 
 ## Related Docs
 
-- 機能ロードマップと spec 依存順: `docs/steering/roadmap.md`
-- 各機能の詳細: `docs/specs/{feature}/`
+- 機能ロードマップ: `docs/steering/roadmap.md`
+- 手動検証・運用: `docs/manual/`
+- 横断メモリ: `docs/steering/`、IPC 契約: `docs/contracts/`、境界・ADR: `docs/architecture/`
+- 新規 feature は `/sdd-discovery` 経由で `docs/specs/{feature}/` を再作成
 
 ## Implementation Phasing
 
@@ -51,5 +53,5 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 **現 UI の範囲**: キャプチャ／文字起こしフェーズ、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、マイク／スピーカー選択パネル、手書き＋AI 転写の二重エディタ、保存ツールバー・結果トースト。起動時ウィンドウは 1000×800。
 
 ---
-_updated_at: 2026-09-07（完了状態ルールを追記）_
+_updated_at: 2026-09-07（docs/manual・spec アーカイブ運用を追記）_
 _Focus on patterns and purpose, not exhaustive feature lists_

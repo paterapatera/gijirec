@@ -86,4 +86,4 @@ release ログは開発コンソールと同一の observability イベントを
 ## Notes
 
 - マスキング実装の正本は `gijirec-presentation` の observability モジュール。本契約は永続化時の禁止事項を要求レベルで固定する。
-- 運用者向け収集手順: `docs/specs/release-logging/operations.md`
+- 運用者向け収集手順: `docs/manual/release-logging/operations.md`

@@ -81,12 +81,14 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 
 | 種別 | 確認内容 | 記録先 |
 |------|----------|--------|
-| E2E | 実機キャプチャ、権限ダイアログ、ウィンドウ閉鎖後のマイク解放 | `docs/specs/audio-capture/e2e-checklist.md` |
+| E2E | 実機キャプチャ、権限ダイアログ、ウィンドウ閉鎖後のマイク解放 | `docs/manual/audio-capture/e2e-checklist.md` |
 | E2E（デバイス選択） | 既定表示・選択変更・empty state・`action_ja` | `App.device-selection.e2e.test.tsx`（モック IPC） |
-| 性能 | 30 分連続キャプチャ、CPU / メモリ / バッファドロップ | `docs/specs/audio-capture/performance-results.md` |
-| 性能（デバイス選択） | 選択変更 → capturing 復帰 < 2 s | `src-tauri/tests/device_selection_performance.rs` |
-| 並走 | Zoom / Teams との同時実行 | `docs/specs/audio-capture/manual-concurrency-checklist.md` |
-| リリーススモーク | release ビルドでキャプチャ→文字起こし→ブロック表示 | 下記チェックリスト |
+| 性能 | 30 分連続キャプチャ、CPU / メモリ / バッファドロップ | `docs/manual/audio-capture/performance-results.md` |
+| 性能（デバイス選択） | 選択変更 → capturing 復帰 < 2 s | `docs/manual/audio-device-selection/performance-results.md`（自動: `src-tauri/tests/device_selection_performance.rs`） |
+| 性能（転写） | 10 分転写 latency・3 s→5 s E2E | `docs/manual/whisper-transcribe/performance-results.md` |
+| 性能（エディタ） | 500 ブロック追記 p95、保存 100 KB、ログ本文除外 | `docs/manual/transcript-editor/validation-checklist.md` |
+| 並走 | Zoom / Teams との同時実行 | `docs/manual/audio-capture/manual-concurrency-checklist.md` |
+| リリース smoke | release EXE でキャプチャ→文字起こし→ブロック表示 | `docs/manual/fix-release-transcribe/smoke-checklist.md` |
 
 ### リリース vs dev パリティ（手動・CI 外）
 
@@ -95,7 +97,7 @@ release で文字起こししないとき、**コード変更前に**次を確�
 - [ ] ModelStore が `app_data_dir`（ADR-0008）を参照しているか
 - [ ] `compose` 起動順序・`block-appended` ACL・`TranscribeStallWatchdog` が有効か
 - [ ] dev と同じ whisper 窓長・スレッド・`single_segment` / `entropy_thold` か
-- [ ] `--log` 有無で挙動が変わるか（診断ログは `docs/specs/release-logging/operations.md`）
+- [ ] `--log` 有無で挙動が変わるか（診断ログは `docs/manual/release-logging/operations.md`）
 
 `bun run verify` は自動ゲート。**上記は release 実機確認**であり、verify 合格だけでは代替しない。
 
@@ -119,7 +121,7 @@ release で文字起こししないとき、**コード変更前に**次を確�
 
 - 各 spec の **Validation** フェーズでテストを追加。tasks.md の Testing Strategy 番号とコメントで要件を紐づける
 - 新契約追加時は domain マッピングテスト + presentation hook テスト + 必要なら統合テストの 3 点セットを検討
-- 詳細手順は spec 配下のチェックリスト、本 steering は横断パターンのみ
+- 詳細手順は `docs/manual/` のチェックリスト、本 steering は横断パターンのみ
 
 ## Related
 
@@ -128,5 +130,5 @@ release で文字起こししないとき、**コード変更前に**次を確�
 - 品質ゲート一覧: `docs/steering/tech.md`
 
 ---
-_updated_at: 2026-09-07（リリース vs dev パリティチェックリストを追記）_
+_updated_at: 2026-09-07（release smoke 記録先・docs/manual 整合）_
 _Focus on patterns and decisions. Tool-specific config lives in package.json / Cargo.toml._

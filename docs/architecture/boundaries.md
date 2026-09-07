@@ -18,7 +18,7 @@
 
 ## audio-capture ドメイン境界
 
-`docs/specs/audio-capture/` の設計に基づく。契約の正本は `docs/contracts/` を参照。
+`docs/contracts/audio-capture-*.md` および ADR-0001 に基づく。契約の正本は `docs/contracts/` を参照。手動検証は `docs/manual/audio-capture/`。
 
 ### Owns（この Spec が所有）
 
@@ -65,7 +65,7 @@
 
 ## audio-device-selection ドメイン境界
 
-`docs/specs/audio-device-selection/` の設計に基づく。`audio-capture` の拡張（Path D）。契約の正本は `docs/contracts/` を参照。
+`docs/contracts/audio-device-selection.md` および ADR-0009 に基づく。`audio-capture` の拡張（Path D）。手動性能記録は `docs/manual/audio-device-selection/performance-results.md`。
 
 ### Owns（この Spec が所有）
 
@@ -111,7 +111,7 @@
 
 ## whisper-transcribe ドメイン境界
 
-`docs/specs/whisper-transcribe/` の設計に基づく。契約の正本は `docs/contracts/` を参照。
+`docs/contracts/whisper-transcribe-*.md` および ADR-0003 / ADR-0004 に基づく。手動性能記録は `docs/manual/whisper-transcribe/performance-results.md`。
 
 ### Owns（この Spec が所有）
 
@@ -158,7 +158,7 @@
 
 ## transcript-editor ドメイン境界
 
-`docs/specs/transcript-editor/` の設計に基づく。契約の正本は `docs/contracts/` を参照。
+`docs/contracts/transcript-editor-*.md` および ADR-0005 / ADR-0006 に基づく。手動検証は `docs/manual/transcript-editor/validation-checklist.md`。
 
 ### Owns（この Spec が所有）
 
@@ -210,7 +210,7 @@
 
 ## release-logging ドメイン境界
 
-`docs/specs/release-logging/` の設計に基づく。契約の正本は `docs/contracts/release-logging-persistence.md` を参照。
+ADR-0007 および `docs/contracts/release-logging-persistence.md` に基づく。運用手順は `docs/manual/release-logging/operations.md`。
 
 ### Owns（この Spec が所有）
 
@@ -218,7 +218,7 @@
 |------|-------------------------|
 | リリースビルド診断ログのファイル永続化 | ホスト crate `logging/` モジュール、`init_tracing()` の Registry 構成、**`--log` CLI opt-in** |
 | ログ保存場所・セッション識別 | `{app_data_dir}/logs/sessions/{run_session_id}/`、 `latest-session.txt` |
-| 運用者向け収集手順 | `docs/specs/release-logging/operations.md` |
+| 運用者向け収集手順 | `docs/manual/release-logging/operations.md` |
 | 永続化失敗時の degrade | 非ブロッキング継続 + diagnostic surface |
 
 ### Out of Boundary（境界外）
@@ -249,7 +249,7 @@
 
 ## fix-release-transcribe ドメイン境界
 
-`docs/specs/fix-release-transcribe/` の設計に基づく。公開契約形状は変更せず、リリースビルドでの動作等価性を回復する。
+ADR-0008 およびホスト composition のリリースパリティ修正に基づく。公開契約形状は変更せず、リリースビルドでの動作等価性を回復する。手動 smoke は `docs/manual/fix-release-transcribe/smoke-checklist.md`。
 
 ### Owns（この Spec が所有）
 
@@ -259,7 +259,7 @@
 | モデル保存パス正本化 | ADR-0008、`ModelStore` 初期化タイミング |
 | Tauri イベント ACL 整合 | `permissions/allow-listen-transcribe-events.toml`（`block-appended` 含む） |
 | 転写停滞検知 | `TranscribeStallWatchdog`（presentation または lifecycle 拡張） |
-| リリース向け検証 | `event_permissions.rs` 拡張、release smoke テスト手順 |
+| リリース向け検証 | `event_permissions.rs` 拡張、`docs/manual/fix-release-transcribe/smoke-checklist.md` |
 
 ### Out of Boundary（境界外）
 
@@ -286,4 +286,4 @@
 - PCM チャンク形状変更は `whisper-transcribe` の再検証トリガー
 - `TranscriptBlock` 形状変更は `transcript-editor` の再検証トリガー
 - observability イベント形状または禁止フィールド方針の変更は `release-logging` の再検証トリガー
-- `fix-release-transcribe` は実装完了（tasks 全 [x]）。境界定義はリリースパリティ修正の参照用として維持
+- v1 feature spec（`docs/specs/`）は 2026-09-07 に全件アーカイブ済み。境界・契約・手動検証は本ファイル / `docs/contracts/` / `docs/manual/` を正本とする

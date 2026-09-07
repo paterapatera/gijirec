@@ -31,6 +31,7 @@ gijirec Audio Capture が下流（whisper-transcribe 等）へ供給する正規
 | エンディアン | リトルエンディアン |
 | バイト列サイズ | `frame_count * 2` |
 | 停止時 | 部分チャンクは破棄。停止後に新規チャンクを発行しない |
+| デバイス再選択 | `ChunkEmitter` を再生成せず `discard_partial_buffer` のみ行い `sequence` を継続する |
 
 ### 消費側インターフェース（Rust 内部）
 
@@ -59,7 +60,7 @@ pub trait PcmChunkConsumer: Send + Sync {
 
 | Date | Change | ADR / rationale |
 |------|--------|-----------------|
-| 2026-09-05 | 初版 — 16 kHz モノラル Int16、100 ms チャンク | ADR-0001 |
+| 2026-09-07 | デバイス再選択時の `sequence` 継続（`discard_partial_buffer`）を供給規約に追記 | audio-device-selection 完了昇格 |
 
 ## Notes
 

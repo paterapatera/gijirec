@@ -80,7 +80,7 @@ cargo tauri build
 # 生成された実行ファイルを --log 付きで起動（OS ごとのパスは build 出力を参照）
 ```
 
-詳細な保存場所・収集手順は [release-logging 運用手順](docs/specs/release-logging/operations.md) を参照。
+詳細な保存場所・収集手順は [release-logging 運用手順](docs/manual/release-logging/operations.md) を参照。
 
 ## 品質チェック
 
@@ -118,7 +118,7 @@ bun run rust:test
 
 ## 性能テスト（手動）
 
-設計 [Performance/Load](docs/specs/audio-capture/design.md) 項目 1–3 および要件 4.2 の合格基準。30 分連続キャプチャの実測は **CI では実行しない**（ハードウェア・長時間計測が必要）。計測記録は [performance-results.md](docs/specs/audio-capture/performance-results.md) に残す。
+設計 Performance/Load 項目 1–3 および要件 4.2 の合格基準。30 分連続キャプチャの実測は **CI では実行しない**（ハードウェア・長時間計測が必要）。計測記録は [performance-results.md](docs/manual/audio-capture/performance-results.md) に残す。
 
 ### 合格基準（参照マシン: 4 コア / 16 GB）
 
@@ -133,7 +133,7 @@ bun run rust:test
 1. リリースまたは `--release` ビルドで Tauri アプリを起動する（デバッグビルドは CPU 比較の参考にならない）。
 2. マイク・システム音声の権限を許可し、UI が `capturing` になることを確認する。
 3. 30 分間、通常どおり Web 会議またはテスト用の音声再生を継続する。
-4. 終了時に上記基準を記録し、[performance-results.md](docs/specs/audio-capture/performance-results.md) のテンプレート行を更新する。
+4. 終了時に上記基準を記録し、[performance-results.md](docs/manual/audio-capture/performance-results.md) のテンプレート行を更新する。
 
 ログでドロップを監視する例:
 
@@ -175,7 +175,7 @@ RUST_LOG=gijirec_capture=info cargo tauri dev --manifest-path src-tauri/Cargo.to
 
 ## 手動検証（会議アプリ並走・マイク解放）
 
-要件 **3.2** / **4.1**（設計 E2E/UI 3、Performance/Load 4）。Zoom / Teams との並行実行中の相手音声途切れ、およびウィンドウ閉鎖後のマイクインジケータ消灯は **CI では実施しない**。手順・実行記録は [manual-concurrency-checklist.md](docs/specs/audio-capture/manual-concurrency-checklist.md) を参照（E2E 項目 1–2 は [e2e-checklist.md](docs/specs/audio-capture/e2e-checklist.md)）。
+要件 **3.2** / **4.1**。Zoom / Teams との並行実行中の相手音声途切れ、およびウィンドウ閉鎖後のマイクインジケータ消灯は **CI では実施しない**。手順・実行記録は [manual-concurrency-checklist.md](docs/manual/audio-capture/manual-concurrency-checklist.md) を参照（E2E 項目 1–2 は [e2e-checklist.md](docs/manual/audio-capture/e2e-checklist.md)）。
 
 ## プロジェクト構成
 
@@ -197,7 +197,7 @@ RUST_LOG=gijirec_capture=info cargo tauri dev --manifest-path src-tauri/Cargo.to
 └── package.json          # Bun スクリプト定義
 ```
 
-機能仕様は `docs/specs/`（audio-capture / whisper-transcribe / transcript-editor / audio-device-selection / release-logging / fix-release-transcribe 等）、横断メモリは `docs/steering/`、IPC 契約は `docs/contracts/`、境界と ADR は `docs/architecture/` です。
+機能仕様（v1 完了分）は `docs/steering/product.md` と `docs/architecture/boundaries.md`、手動検証・運用は `docs/manual/`、横断メモリは `docs/steering/`、IPC 契約は `docs/contracts/` です。新規 feature は `docs/specs/` に spec を作成する。
 
 フロントエンドは `dependency-cruiser`、Rust は `cargo bylaw` でレイヤ依存を CI 検証します。`src/` から `src-tauri/` への直接 import は禁止です。
 

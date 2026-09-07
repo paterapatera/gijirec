@@ -101,6 +101,18 @@ bun run typecheck
 bun run rust:typecheck
 ```
 
+### Toolchain & build gotchas
+
+実装で繰り返し遭遇するビルド・品質ゲートの注意点:
+
+- **Windows `tauri-build`**: `bundle.icon` が空でも `icons/icon.ico` を要求する（1×1 プレースホルダで `cargo check` 通過）
+- **knip entry**: Vite エントリ（`src/main.ts`）に合わせる。フロント品質ゲートは `bun run check`
+- **cargo-bylaw 0.1.0**: rustc **1.95+** が必要。Tauri ホスト（`generate_context!`）は bylaw 解析対象外。`-p gijirec-domain -p gijirec-application -p gijirec-infrastructure -p gijirec-presentation` でレイヤ crate のみ検証
+- **Windows テスト**: `bun test` 一括が depcruise fixture と干渉しうるため、arch fixture は **`bun run test:arch`** を品質ゲートに使う
+- **Vite + React プラグイン**: `@vitejs/plugin-react` **6** は Vite **8** 専用（`vite/internal`）。Vite 7 では 5.x、Vite 8 では 6.x を組にする
+- **tailwindcss**: shadcn の `tailwind.config.ts` 互換のため **v3.4.19** にピン留め（`bun add` が v4 を解決しうる）
+- **Rust typecheck / test**: Cursor の一時 `CARGO_TARGET_DIR` だと whisper-cpp-plus-sys の cmake が失敗する。`src-tauri/.cargo/config.toml` で `target` を固定し、ルートから `--manifest-path src-tauri/Cargo.toml` で実行。**`CARGO_TARGET_DIR=src-tauri/target` は `src-tauri/src-tauri/target` を誤生成するので不可**
+
 ## Key Technical Decisions
 
 | 判断 | 理由 |
@@ -116,5 +128,5 @@ bun run rust:typecheck
 永続的な技術判断は `docs/architecture/adr/` に ADR として記録する。
 
 ---
-_updated_at: 2026-09-07（Whisper 推論パラメータ調整原則を追記）_
+_updated_at: 2026-09-07（Toolchain & build gotchas を追記）_
 _Document standards and patterns, not every dependency_

@@ -7,7 +7,7 @@
 ## Directory Patterns
 
 ### Feature Specs
-**Location**: `docs/specs/{feature}/`  
+**Location**: `docs/specs/{feature}/`（新規 feature 用。v1 完了分は 2026-09-07 にアーカイブ削除済み）  
 **Purpose**: 機能単位の要求・設計・タスク（audio-capture, whisper-transcribe, transcript-editor 等）  
 **Naming**: kebab-case の機能名
 
@@ -49,6 +49,12 @@
 **ホスト横断**: `src-tauri/src/logging/` がリリース診断ログ（`--log`、ADR-0007）。レイヤ crate 外の composition 専用。
 
 **IPC 同期パターン**: モデル取得など長時間処理中に orchestrator ロックを避けるため、`TranscribeStatusCache` がフェーズ／進捗スナップショットを保持し、`get_transcribe_phase` / `get_transcribe_status` でマウント時同期する。エディタ設定は `get_editor_settings` / `set_editor_settings`（`app_data_dir/editor-settings.json`）。デバイス選択は `get_device_selection` / `list_audio_devices`（セッション内のみ永続化なし）。保存は command 往復（イベントではない）。
+
+**キャプチャパイプライン（composition）**: `CapturePipelineState`（mixer / `ChunkEmitter` / `PcmChunkBus`）を Tauri state に保持。アダプタの rtrb consumer はポート内にあり、処理スレッド結線は `CaptureProcessingHook`（start 後起動）。リサンプラは入力レートが open 後まで不明なため processing スレッド起動時に構築。macOS SCK は 48 kHz 固定。可観測性は presentation の `CaptureObservability` トレイト経由（host が tracing 実装）。`capture_rt_callback_max_us` は処理スレッド drain レイテンシの代理。Linux 非対応は `on_app_setup` でダイアログ。`RunEvent::Exit` 停止は `handle_capture_run_event` を `app.run` から呼ぶ。
+
+**デバイス再選択**: 再キャプチャ時は `ChunkEmitter` を再生成せず `discard_partial_buffer` のみ行い `sequence` を継続する（`audio-capture-pcm` の単調増加・欠番なし）。
+
+**転写エディタ（上流同期）**: AI 転写ブロックの上流同期は `editor.applyUpstream(op)` 必須。直接 `Editor.apply` では locked 範囲保護されない（`withLockedRanges`）。末尾判定は `Editor.end` ベース（`withStableSelection`）。
 
 ## Naming Conventions
 
@@ -105,9 +111,22 @@ spec の `tasks.md` が全 `[x]` になったら、次を **同一作業単位**
 | 境界・ADR | `docs/architecture/` | `boundaries.md`、関連 ADR |
 | 契約テンプレ | `docs/settings/templates/` | 新パターンの反映 |
 | 利用者向け | ルート `README.md` | できること・構成・verify 説明 |
+| 手動検証・運用 | `docs/manual/` | E2E・性能実測・リリースログ収集手順 |
 | IPC 契約 | `docs/contracts/` | 新 command / イベント追加時 |
 
 **完了判定**: `docs/specs/<feature>/tasks.md` 全 `[x]`、または該当コードの存在確認。**`spec.json` の `phase` だけで未完了と書かない**。Direct Implementation は設定ファイル（例: `tauri.conf.json`）を grep してから `[x]` にする。
+
+### Spec ライフサイクル（完了 feature の整理）
+
+feature 完了後、spec ディレクトリを削除する前に次を行う（削除は **人間が週次** で実施可）:
+
+1. **Implementation Notes 昇格** — 恒久パターンを `docs/steering/` / `docs/contracts/` / `docs/architecture/` / `README.md` に移す
+2. **手動ドキュメント移設** — チェックリスト・運用手順を `docs/manual/` に移し、参照を更新（spec 配下に残さない）
+3. **steering 同期** — 人間が `/sdd-steering` で横断照合（週次運用可。自動 dispatch は不要）
+4. **`bun run verify`**
+5. **spec 削除** — 人間が `docs/specs/<feature>/` を削除し、`product.md` / `README.md` の spec 参照を整理
+
+長時間性能・E2E・並走検証の記録先は [docs/manual/README.md](../manual/README.md)。
 
 ## Quality Scripts Mapping
 
@@ -121,5 +140,5 @@ spec の `tasks.md` が全 `[x]` になったら、次を **同一作業単位**
 | Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-07（Feature 完了クローズ・doc 同期スコープを追記）_
+_updated_at: 2026-09-07（キャプチャ・エディタパターン、Spec ライフサイクル、docs/manual を追記）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_
