@@ -413,6 +413,12 @@ fn is_permission_denied(err: &cpal::BackendSpecificError) -> bool {
         || message.contains("not authorized")
 }
 
+// cpal 0.16 の CoreAudio `Stream` は property listener 用 `Box<dyn FnMut()>` を
+// 保持しており Rust 上 `Send` にならない。オーケストレータ Mutex 配下でのみ
+// open/close し、サンプル配信は lock-free rtrb と `Send + Sync` な runtime hook のみ。
+#[cfg(target_os = "macos")]
+unsafe impl Send for MicCaptureAdapter {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

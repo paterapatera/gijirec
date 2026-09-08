@@ -15,7 +15,7 @@ whisper-rs = "0.16"
 dirs = "6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-screencapturekit = "0.3"
+screencapturekit = "10"
 whisper-rs = { version = "0.16", features = ["metal"] }
 
 [lints]

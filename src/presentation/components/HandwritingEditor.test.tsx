@@ -29,6 +29,20 @@ function typeIntoEditor(ref: HandwritingEditorRef | null, text: string): void {
   });
 }
 
+function typeMultilineIntoEditor(ref: HandwritingEditorRef | null, lines: string[]): void {
+  act(() => {
+    const editor = getHandwritingEditorForTest(ref);
+    ReactEditor.focus(editor);
+    Transforms.select(editor, Editor.start(editor, [0]));
+    for (const [index, line] of lines.entries()) {
+      if (index > 0) {
+        editor.insertBreak();
+      }
+      Transforms.insertText(editor, line);
+    }
+  });
+}
+
 describe("HandwritingEditor", () => {
   test("renders with data-testid and hawkes-blue background", () => {
     const { getByTestId } = render(<HandwritingEditor />);
@@ -54,6 +68,15 @@ describe("HandwritingEditor", () => {
     typeIntoEditor(ref.current, "会議の要点");
 
     expect(ref.current?.getPlainText()).toBe("会議の要点");
+  });
+
+  test("getPlainText preserves line breaks between paragraphs", () => {
+    const ref = createRef<HandwritingEditorRef>();
+    render(<HandwritingEditor ref={ref} />);
+
+    typeMultilineIntoEditor(ref.current, ["議題", "決定事項"]);
+
+    expect(ref.current?.getPlainText()).toBe("議題\n決定事項");
   });
 
   test("does not import editorCommands (no automatic disk write)", () => {

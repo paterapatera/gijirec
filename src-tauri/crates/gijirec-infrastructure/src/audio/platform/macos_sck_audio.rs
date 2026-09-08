@@ -4,12 +4,13 @@
 mod imp {
     use gijirec_domain::audio::CaptureError;
     use rtrb::RingBuffer;
+    use screencapturekit::error::SCStreamErrorCode;
     use screencapturekit::prelude::*;
-    use screencapturekit::stream::output::SCStreamOutputTrait;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use crate::audio::mic_capture::{DEFAULT_RING_CAPACITY, StreamRuntimeErrorCallback};
+    use crate::audio::mic_capture::StreamRuntimeErrorCallback;
+
     pub struct MacScreenCaptureKitAdapter {
         stream: SCStream,
         running: Arc<AtomicBool>,
@@ -51,8 +52,6 @@ mod imp {
 
     struct AudioOutputHandler {
         producer: Mutex<rtrb::Producer<f32>>,
-        permission_denied: Arc<AtomicBool>,
-        on_stream_error: Option<StreamRuntimeErrorCallback>,
     }
 
     impl SCStreamOutputTrait for AudioOutputHandler {
@@ -61,10 +60,10 @@ mod imp {
                 return;
             }
 
-            let Some(audio_buffer) = sample
-                .audio_buffer_list()
-                .and_then(|list| list.buffers().first().cloned())
-            else {
+            let Some(list) = sample.audio_buffer_list() else {
+                return;
+            };
+            let Some(audio_buffer) = list.get(0) else {
                 return;
             };
 
@@ -87,9 +86,16 @@ mod imp {
                 push_mono_f32_rt(samples, channels, &mut producer);
             }
         }
+    }
 
-        fn stream_did_stop_with_error(&self, error: Option<SCStreamError>) {
-            if is_permission_denied_error(error.as_ref()) {
+    struct StreamLifecycleDelegate {
+        permission_denied: Arc<AtomicBool>,
+        on_stream_error: Option<StreamRuntimeErrorCallback>,
+    }
+
+    impl SCStreamDelegateTrait for StreamLifecycleDelegate {
+        fn did_stop_with_error(&self, error: SCError) {
+            if is_permission_denied_error(Some(&error)) {
                 self.permission_denied.store(true, Ordering::SeqCst);
             }
             if let Some(callback) = &self.on_stream_error {
@@ -124,22 +130,29 @@ mod imp {
             let config = SCStreamConfiguration::new()
                 .with_width(2)
                 .with_height(2)
-                .with_minimum_frame_interval(std::time::Duration::from_secs(1))
+                .with_minimum_frame_interval(&CMTime::new(1, 1))
                 .with_captures_audio(true)
                 .with_excludes_current_process_audio(true);
 
             let (producer, consumer) = RingBuffer::<f32>::new(ring_capacity);
             let permission_denied = Arc::new(AtomicBool::new(false));
-            let handler = AudioOutputHandler {
-                producer: Mutex::new(producer),
+            let delegate = StreamLifecycleDelegate {
                 permission_denied: Arc::clone(&permission_denied),
                 on_stream_error,
             };
+            let handler = AudioOutputHandler {
+                producer: Mutex::new(producer),
+            };
 
-            let mut stream = SCStream::new(&filter, &config);
-            stream
+            let mut stream = SCStream::new_with_delegate(&filter, &config, delegate);
+            if stream
                 .add_output_handler(handler, SCStreamOutputType::Audio)
-                .map_err(map_stream_error)?;
+                .is_none()
+            {
+                return Err(CaptureError::Internal {
+                    detail: "failed to register ScreenCaptureKit audio output handler".into(),
+                });
+            }
 
             stream.start_capture().map_err(|err| {
                 if is_permission_denied_error(Some(&err)) {
@@ -190,10 +203,19 @@ mod imp {
         }
     }
 
-    fn is_permission_denied_error(error: Option<&SCStreamError>) -> bool {
+    fn is_permission_denied_error(error: Option<&SCError>) -> bool {
         let Some(error) = error else {
             return false;
         };
+        if matches!(error, SCError::PermissionDenied(_)) {
+            return true;
+        }
+        if let Some(code) = error.stream_error_code() {
+            return matches!(
+                code,
+                SCStreamErrorCode::UserDeclined | SCStreamErrorCode::MissingEntitlements
+            );
+        }
         let message = error.to_string().to_ascii_lowercase();
         message.contains("permission")
             || message.contains("not authorized")
@@ -201,26 +223,15 @@ mod imp {
             || message.contains("declined")
     }
 
-    fn map_shareable_content_error(err: SCShareableContentError) -> CaptureError {
-        let message = err.to_string().to_ascii_lowercase();
-        if message.contains("permission") || message.contains("not authorized") {
+    fn map_shareable_content_error(err: SCError) -> CaptureError {
+        if is_permission_denied_error(Some(&err)) {
             CaptureError::SystemAudioPermissionDenied
         } else {
             CaptureError::SystemAudioUnavailable
         }
     }
 
-    fn map_stream_error(err: SCStreamError) -> CaptureError {
-        if is_permission_denied_error(Some(&err)) {
-            CaptureError::SystemAudioPermissionDenied
-        } else {
-            CaptureError::Internal {
-                detail: err.to_string(),
-            }
-        }
-    }
-
-    fn map_stream_start_error(err: SCStreamError) -> CaptureError {
+    fn map_stream_start_error(err: SCError) -> CaptureError {
         if is_permission_denied_error(Some(&err)) {
             CaptureError::SystemAudioPermissionDenied
         } else {

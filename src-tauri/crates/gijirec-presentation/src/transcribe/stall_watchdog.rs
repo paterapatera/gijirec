@@ -1,4 +1,8 @@
-//! Stall detection while capture is active and transcription produces no blocks.
+//! Stall detection while capture is active and the transcribe worker stops making progress.
+//!
+//! Fires `INFERENCE_FAILED` only when the whisper engine fails to load within
+//! [`ENGINE_LOAD_TIMEOUT`] or an in-flight inference exceeds [`INFERENCE_TIMEOUT`].
+//! Ambient PCM above the VAD threshold does not affect stall detection.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,8 +18,8 @@ use super::observability;
 /// VAD near-silence RMS threshold (matches `transcribe_worker::SILENCE_RMS_THRESHOLD`).
 pub const SILENCE_RMS_THRESHOLD: f32 = 0.008;
 
-/// Stall threshold: 10 s max inference window + 5 s latency target + 3 s margin.
-/// Continuous speech legitimately produces no block until the max window is cut.
+/// Legacy latency budget retained for docs/tests (10 s max window + 5 s target + 3 s margin).
+/// Stall firing now relies on [`ENGINE_LOAD_TIMEOUT`] and [`INFERENCE_TIMEOUT`] only.
 pub const STALL_THRESHOLD: Duration = Duration::from_secs(18);
 
 /// Whisper context load happens on the worker after `transcribing` begins.
@@ -178,7 +182,6 @@ pub struct TranscribeStallWatchdog<O, E> {
     emitter: Arc<E>,
     clock: StallClock,
     last_progress_ms: Mutex<u64>,
-    last_input_present_ms: Mutex<Option<u64>>,
     armed_at_ms: Mutex<u64>,
     armed: AtomicBool,
     fired: AtomicBool,
@@ -194,7 +197,6 @@ impl<O: TranscribeStallOrchestrator, E: TranscribeEventEmitter> TranscribeStallW
             emitter,
             clock,
             last_progress_ms: Mutex::new(now),
-            last_input_present_ms: Mutex::new(None),
             armed_at_ms: Mutex::new(now),
             armed: AtomicBool::new(false),
             fired: AtomicBool::new(false),
@@ -207,7 +209,6 @@ impl<O: TranscribeStallOrchestrator, E: TranscribeEventEmitter> TranscribeStallW
     pub fn arm(&self) {
         let now = (self.clock)();
         *self.last_progress_ms.lock().expect("lock progress") = now;
-        *self.last_input_present_ms.lock().expect("lock input") = None;
         *self.armed_at_ms.lock().expect("lock armed_at") = now;
         self.engine_ready.store(false, Ordering::SeqCst);
         self.inference_in_flight.store(false, Ordering::SeqCst);
@@ -239,26 +240,22 @@ impl<O: TranscribeStallOrchestrator, E: TranscribeEventEmitter> TranscribeStallW
         observability::log_engine_ready();
     }
 
-    /// Resets progress and marks input present on successful worker inference.
+    /// Resets progress when worker inference completes (including empty windows).
     pub fn on_inference_success(&self) {
         if !self.armed.load(Ordering::SeqCst) {
             return;
         }
         self.inference_in_flight.store(false, Ordering::SeqCst);
-        let now = (self.clock)();
-        *self.last_progress_ms.lock().expect("lock progress") = now;
-        *self.last_input_present_ms.lock().expect("lock input") = Some(now);
+        *self.last_progress_ms.lock().expect("lock progress") = (self.clock)();
     }
 
-    /// Marks whisper.cpp as busy so CPU inference is not treated as a stall.
+    /// Marks whisper.cpp as busy so CPU inference is not treated as a no-block stall.
     pub fn on_inference_attempted(&self) {
         if !self.armed.load(Ordering::SeqCst) {
             return;
         }
         self.inference_in_flight.store(true, Ordering::SeqCst);
-        let now = (self.clock)();
-        *self.last_progress_ms.lock().expect("lock progress") = now;
-        *self.last_input_present_ms.lock().expect("lock input") = Some(now);
+        *self.last_progress_ms.lock().expect("lock progress") = (self.clock)();
         observability::log_inference_started();
     }
 
@@ -268,16 +265,6 @@ impl<O: TranscribeStallOrchestrator, E: TranscribeEventEmitter> TranscribeStallW
             return;
         }
         *self.last_progress_ms.lock().expect("lock progress") = (self.clock)();
-    }
-
-    /// Updates input-present tracking from a PCM chunk RMS sample.
-    pub fn on_pcm_rms(&self, rms: f32) {
-        if !self.armed.load(Ordering::SeqCst) {
-            return;
-        }
-        if rms > SILENCE_RMS_THRESHOLD {
-            *self.last_input_present_ms.lock().expect("lock input") = Some((self.clock)());
-        }
     }
 
     /// Polls stall conditions and fires once when the threshold is exceeded.
@@ -313,16 +300,7 @@ impl<O: TranscribeStallOrchestrator, E: TranscribeEventEmitter> TranscribeStallW
             return false;
         }
 
-        if elapsed_ms < STALL_THRESHOLD.as_millis() as u64 {
-            return false;
-        }
-
-        if !self.input_present_since_last_progress() {
-            return false;
-        }
-
-        self.fire();
-        true
+        false
     }
 
     pub fn has_fired(&self) -> bool {
@@ -331,14 +309,6 @@ impl<O: TranscribeStallOrchestrator, E: TranscribeEventEmitter> TranscribeStallW
 
     pub fn is_armed(&self) -> bool {
         self.armed.load(Ordering::SeqCst)
-    }
-
-    fn input_present_since_last_progress(&self) -> bool {
-        let last_progress = *self.last_progress_ms.lock().expect("lock progress");
-        self.last_input_present_ms
-            .lock()
-            .expect("lock input")
-            .is_some_and(|input_ms| input_ms >= last_progress)
     }
 
     fn fire(&self) {
@@ -373,12 +343,9 @@ pub fn chunk_rms(samples: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transcribe::observability::{
-        RecordingTranscribeObservability, with_isolated_transcribe_observability,
-        with_test_transcribe_observability,
-    };
+    use crate::transcribe::observability::with_isolated_transcribe_observability;
     use gijirec_application::transcribe::ModelDownloadProgress;
-    use gijirec_domain::transcribe::{TranscribeErrorCode, UserFacingTranscribeError};
+    use gijirec_domain::transcribe::UserFacingTranscribeError;
     use std::sync::atomic::AtomicU64;
 
     struct MockOrchestrator {
@@ -452,50 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn fires_inference_failed_after_stall_with_audible_input() {
-        let recorder = RecordingTranscribeObservability::new();
-        let (clock, time) = test_clock();
-        let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
-        let emitter = Arc::new(MockEmitter::default());
-        let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
-
-        with_test_transcribe_observability(&recorder, || {
-            watchdog.arm();
-            watchdog.on_engine_ready();
-            watchdog.on_block_appended();
-            watchdog.on_pcm_rms(0.05);
-
-            time.store(18_100, Ordering::SeqCst);
-            assert!(
-                watchdog.poll(),
-                "stall threshold exceeded with audible input"
-            );
-        });
-
-        let errors = emitter.errors.lock().expect("lock errors").clone();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].code, TranscribeErrorCode::InferenceFailed);
-        assert!(errors[0].action_ja_is_present());
-        assert!(errors[0].action_ja.contains("アプリを再起動してください"));
-
-        let phases = emitter.phases.lock().expect("lock phases").clone();
-        assert_eq!(phases, vec![TranscribePhase::Error]);
-
-        let orch_guard = orch.lock().expect("lock orchestrator");
-        assert_eq!(orch_guard.fail_count, 1);
-        assert_eq!(orch_guard.phase, TranscribePhase::Error);
-        assert!(watchdog.has_fired());
-
-        assert_eq!(recorder.stall_detected_count.load(Ordering::SeqCst), 1);
-        assert_eq!(recorder.errors.lock().expect("lock errors").len(), 1);
-        assert_eq!(
-            *recorder.phases.lock().expect("lock phases"),
-            vec![TranscribePhase::Error]
-        );
-    }
-
-    #[test]
-    fn does_not_fire_during_pure_silence_without_inference() {
+    fn does_not_fire_during_noise_without_inference() {
         with_isolated_transcribe_observability(|| {
             let (clock, time) = test_clock();
             let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
@@ -503,13 +427,13 @@ mod tests {
             let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
 
             watchdog.arm();
+            watchdog.on_engine_ready();
             watchdog.on_block_appended();
-            watchdog.on_pcm_rms(0.001);
 
-            time.store(8_100, Ordering::SeqCst);
+            time.store(25_100, Ordering::SeqCst);
             assert!(
                 !watchdog.poll(),
-                "pure silence must not trigger stall detection"
+                "ambient PCM without a worker inference attempt must not trigger stall detection"
             );
 
             assert!(emitter.errors.lock().expect("lock errors").is_empty());
@@ -520,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn engine_ready_resets_stall_timer_without_marking_input() {
+    fn engine_ready_resets_stall_timer_without_pending_inference() {
         with_isolated_transcribe_observability(|| {
             let (clock, time) = test_clock();
             let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
@@ -530,7 +454,6 @@ mod tests {
             watchdog.arm();
             time.store(7_000, Ordering::SeqCst);
             watchdog.on_engine_ready();
-            watchdog.on_pcm_rms(0.05);
             time.store(14_500, Ordering::SeqCst);
             assert!(
                 !watchdog.poll(),
@@ -539,8 +462,8 @@ mod tests {
 
             time.store(25_100, Ordering::SeqCst);
             assert!(
-                watchdog.poll(),
-                "stall must still fire 18s after engine ready with audible input and no blocks"
+                !watchdog.poll(),
+                "idle capture after engine ready must not surface a stall without inference"
             );
         });
     }
@@ -554,7 +477,6 @@ mod tests {
             let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
 
             watchdog.arm();
-            watchdog.on_pcm_rms(0.05);
             time.store(8_100, Ordering::SeqCst);
             assert!(
                 !watchdog.poll(),
@@ -595,8 +517,7 @@ mod tests {
 
             watchdog.arm();
             watchdog.on_engine_ready();
-            watchdog.on_block_appended();
-            watchdog.on_pcm_rms(0.05);
+            watchdog.on_inference_attempted();
 
             time.store(7_000, Ordering::SeqCst);
             assert!(!watchdog.poll());

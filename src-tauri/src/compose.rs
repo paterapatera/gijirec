@@ -201,7 +201,6 @@ fn stall_watchdog_clock() -> StallClock {
 }
 
 type StallProgressSlot = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
-type StallInputSlot = Arc<Mutex<Option<Arc<dyn Fn(f32) + Send + Sync>>>>;
 type InferencePercentSlot = Arc<Mutex<Option<Arc<dyn Fn(i32) + Send + Sync>>>>;
 type WorkerFatalSlot = Arc<Mutex<Option<Arc<dyn Fn(TranscribeError) + Send + Sync>>>>;
 
@@ -209,7 +208,6 @@ fn wire_stall_watchdog_inputs(
     lifecycle: &TranscribeLifecycleHook,
     block_progress: &StallProgressSlot,
     inference_progress: &StallProgressSlot,
-    pcm_input: &StallInputSlot,
 ) {
     let Some(watchdog) = lifecycle.stall_watchdog() else {
         return;
@@ -222,11 +220,6 @@ fn wire_stall_watchdog_inputs(
     let inference_watchdog = Arc::clone(&watchdog);
     *inference_progress.lock().expect("lock inference progress") =
         Some(Arc::new(move || inference_watchdog.on_inference_success()));
-
-    let pcm_watchdog = Arc::clone(&watchdog);
-    *pcm_input.lock().expect("lock pcm input") = Some(Arc::new(move |rms| {
-        pcm_watchdog.on_pcm_rms(rms);
-    }));
 }
 
 /// Builds the production capture and transcribe stack with platform and whisper adapters.
@@ -324,7 +317,6 @@ where
 
     let block_progress_slot: StallProgressSlot = Arc::new(Mutex::new(None));
     let inference_progress_slot: StallProgressSlot = Arc::new(Mutex::new(None));
-    let pcm_input_slot: StallInputSlot = Arc::new(Mutex::new(None));
 
     // 1. Set up PCM buffer between IngestConsumer and TranscribeWorker (30 s @ 16 kHz = 480k)
     let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(480_000);
@@ -332,14 +324,6 @@ where
     pcm_ingest.set_sequence_gap_callback(Arc::new(|from, to| {
         gijirec_presentation::transcribe::observability::log_pcm_sequence_gaps(from, to);
     }));
-    pcm_ingest.set_pcm_rms_callback({
-        let slot = Arc::clone(&pcm_input_slot);
-        Arc::new(move |rms| {
-            if let Some(notify) = slot.lock().expect("lock pcm input").as_ref() {
-                notify(rms);
-            }
-        })
-    });
     let pcm_ingest = Arc::new(pcm_ingest);
     pipeline.pcm_bus.register(pcm_ingest);
 
@@ -458,7 +442,6 @@ where
         transcribe_lifecycle.as_ref(),
         &block_progress_slot,
         &inference_progress_slot,
-        &pcm_input_slot,
     );
     if let Some(watchdog) = transcribe_lifecycle.stall_watchdog() {
         *engine_ready_slot.lock().expect("lock engine ready slot") =

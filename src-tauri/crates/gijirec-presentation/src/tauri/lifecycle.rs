@@ -330,6 +330,9 @@ pub(crate) fn handle_window_close_requested<R: Runtime>(app: &AppHandle<R>) {
 ///
 /// Tauri allows only one `.setup()` callback; call this from the composition root's
 /// unified setup instead of registering a second handler.
+///
+/// Capture startup failures (e.g. missing screen-recording permission) are emitted to
+/// the frontend as `error` phase events; they must not abort Tauri setup.
 pub fn run_capture_app_setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), LifecycleError> {
     let managed = app.state::<Arc<CaptureLifecycleState>>();
     managed.init_emitter(Arc::new(
@@ -339,13 +342,15 @@ pub fn run_capture_app_setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Lifec
         .emitter()
         .expect("emitter must be initialized in setup");
     let mut orch = managed.orchestrator.lock().expect("lock");
-    on_app_setup(
+    if let Err(LifecycleError::Orchestrator(_)) = on_app_setup(
         managed.platform.as_ref(),
         &mut *orch,
         managed.device_selection.as_ref(),
         emitter.as_ref(),
         managed.notifier.as_ref(),
-    )?;
+    ) {
+        // User-facing error already emitted; keep the app window open for recovery.
+    }
 
     if orch.phase() == CapturePhase::Capturing
         && let Some(processing) = managed.processing.lock().expect("lock").as_ref()

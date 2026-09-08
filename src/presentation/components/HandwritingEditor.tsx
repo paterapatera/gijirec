@@ -29,6 +29,11 @@ function createInitialValue(): Descendant[] {
   ];
 }
 
+/** Slate `Editor.string(editor, [])` joins block text without `\n`; preserve paragraph breaks for save. */
+function serializeHandwritingPlainText(editor: Editor): string {
+  return editor.children.map((_, index) => Editor.string(editor, [index])).join("\n");
+}
+
 export const HandwritingEditor = forwardRef<HandwritingEditorRef>(
   function HandwritingEditor(_props, ref) {
     const editor = useMemo(() => withReact(createEditor()), []);
@@ -36,7 +41,7 @@ export const HandwritingEditor = forwardRef<HandwritingEditorRef>(
 
     useImperativeHandle(ref, () => {
       const handle: HandwritingEditorRef = {
-        getPlainText: () => Editor.string(editor, []),
+        getPlainText: () => serializeHandwritingPlainText(editor),
       };
       editorByRef.set(handle, editor);
       return handle;

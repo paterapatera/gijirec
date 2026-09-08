@@ -327,8 +327,7 @@ pub fn run() {
             ),
         ));
 
-        run_capture_app_setup(&handle)
-            .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
+        run_capture_app_setup(&handle)?;
 
         let hook_for_capture = Arc::clone(&transcribe_lifecycle);
         let _ = handle.listen("audio-capture://phase-changed", move |event| {
@@ -404,6 +403,16 @@ mod setup_tests {
         assert!(
             inject_pos < load_pos,
             "inject_model_stack must run before start_model_load_thread"
+        );
+    }
+
+    #[test]
+    fn setup_does_not_abort_on_capture_startup_failure() {
+        let source = read_lib_source();
+        let setup = setup_block(&source);
+        assert!(
+            !setup.contains("run_capture_app_setup(&handle)\n            .map_err"),
+            "capture startup failure must not fail Tauri setup (run_capture_app_setup swallows orchestrator errors)"
         );
     }
 

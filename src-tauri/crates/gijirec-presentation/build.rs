@@ -1,9 +1,6 @@
-fn main() {
-    emit_swift_concurrency_rpath();
-    tauri_build::build();
-}
+//! macOS: link Swift Concurrency rpath for test binaries that pull ScreenCaptureKit.
 
-fn emit_swift_concurrency_rpath() {
+fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
     }
