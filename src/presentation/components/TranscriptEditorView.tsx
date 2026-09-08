@@ -1,13 +1,13 @@
 import { listen } from "@tauri-apps/api/event";
-import { type Ref, useEffect, useRef } from "react";
+import { type Ref, useCallback, useEffect, useRef } from "react";
 import { Separator } from "@/components/ui/separator";
 import type { SaveTranscriptSessionResult } from "../../infrastructure/tauri/editorCommands";
 import type { EditorSettings } from "../hooks/editor-settings";
 import type { TranscribeEventListenFn } from "../hooks/transcribe-status";
 import { TRANSCRIBE_ERROR_EVENT } from "../hooks/transcribe-status";
 import type { TranscriptBlockEventListenFn } from "../hooks/transcript-blocks";
-import { useTranscriptBlocks } from "../hooks/useTranscriptBlocks";
-import { AiTranscriptEditor, type AiTranscriptEditorRef } from "./AiTranscriptEditor";
+import type { AiTranscriptEditorRef } from "./AiTranscriptEditor";
+import { AiTranscriptPanel } from "./AiTranscriptPanel";
 import { EditorToolbar } from "./EditorToolbar";
 import { HandwritingEditor, type HandwritingEditorRef } from "./HandwritingEditor";
 
@@ -23,24 +23,9 @@ export interface TranscriptEditorViewProps {
   readonly aiTranscriptEditorRef?: Ref<AiTranscriptEditorRef>;
 }
 
-function mergeRefs<T>(...refs: Array<Ref<T> | undefined>): (value: T | null) => void {
-  return (value) => {
-    for (const ref of refs) {
-      if (ref === undefined || ref === null) {
-        continue;
-      }
-      if (typeof ref === "function") {
-        ref(value);
-      } else {
-        ref.current = value;
-      }
-    }
-  };
-}
-
 /**
  * Root layout for dual transcript editors (handwriting + AI) with toolbar.
- * Subscribes to upstream block-appended events and retains editor content on transcribe errors.
+ * Block subscription is localized in AiTranscriptPanel; retains editor content on transcribe errors.
  */
 export function TranscriptEditorView({
   onSave,
@@ -54,9 +39,23 @@ export function TranscriptEditorView({
   aiTranscriptEditorRef,
 }: TranscriptEditorViewProps) {
   const resolvedListenFn = listenFn ?? listen;
-  const session = useTranscriptBlocks({ listenFn: resolvedListenFn });
 
   const internalHandwritingRef = useRef<HandwritingEditorRef>(null);
+  const externalHandwritingRef = useRef(handwritingEditorRef);
+  externalHandwritingRef.current = handwritingEditorRef;
+
+  const mergedHandwritingRef = useCallback((value: HandwritingEditorRef | null) => {
+    internalHandwritingRef.current = value;
+    const external = externalHandwritingRef.current;
+    if (external === undefined || external === null) {
+      return;
+    }
+    if (typeof external === "function") {
+      external(value);
+    } else {
+      external.current = value;
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,9 +90,12 @@ export function TranscriptEditorView({
         pickSaveDirectory={pickSaveDirectory}
         setExportJsonlEnabled={setExportJsonlEnabled}
       />
-      <HandwritingEditor ref={mergeRefs(internalHandwritingRef, handwritingEditorRef)} />
+      <HandwritingEditor ref={mergedHandwritingRef} />
       <Separator data-testid="transcript-editor-separator" />
-      <AiTranscriptEditor ref={aiTranscriptEditorRef} blocks={session.blocks} />
+      <AiTranscriptPanel
+        listenFn={resolvedListenFn}
+        {...(aiTranscriptEditorRef !== undefined ? { aiTranscriptEditorRef } : {})}
+      />
     </div>
   );
 }

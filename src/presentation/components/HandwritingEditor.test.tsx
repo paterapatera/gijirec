@@ -84,6 +84,26 @@ describe("HandwritingEditor", () => {
     expect(source).not.toContain("editorCommands");
   });
 
+  test("preserves Slate content through composition start and end events", () => {
+    const ref = createRef<HandwritingEditorRef>();
+    const { getByTestId } = render(<HandwritingEditor ref={ref} />);
+    const editable = getByTestId("handwriting-editor") as HTMLElement;
+
+    typeIntoEditor(ref.current, "変換中テキスト");
+
+    act(() => {
+      editable.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    });
+
+    expect(ref.current?.getPlainText()).toBe("変換中テキスト");
+
+    act(() => {
+      editable.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    });
+
+    expect(ref.current?.getPlainText()).toBe("変換中テキスト");
+  });
+
   test("uses independent Slate instances per editor", () => {
     const refA = createRef<HandwritingEditorRef>();
     const refB = createRef<HandwritingEditorRef>();

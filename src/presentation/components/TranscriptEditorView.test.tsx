@@ -6,11 +6,16 @@ import { setupTestDom } from "../../test-setup";
 import { DEFAULT_EDITOR_SETTINGS } from "../hooks/editor-settings";
 import type { TranscribeUserError } from "../hooks/transcribe-status";
 import { TRANSCRIBE_ERROR_EVENT } from "../hooks/transcribe-status";
-import type { TranscriptBlockAppended } from "../hooks/transcript-blocks";
 import { BLOCK_APPENDED_EVENT } from "../hooks/transcript-blocks";
 import type { AiTranscriptEditorRef } from "./AiTranscriptEditor";
 import { getHandwritingEditorForTest, type HandwritingEditorRef } from "./HandwritingEditor";
 import { TranscriptEditorView } from "./TranscriptEditorView";
+import {
+  createMockListen,
+  emitBlockAppendedAndGetHandwritingDomText,
+  getHandwritingEditorDomText,
+  makeBlockAppended,
+} from "./transcriptEditorTestHelpers";
 
 beforeAll(() => {
   setupTestDom();
@@ -19,49 +24,6 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
 });
-
-type EventHandler = (event: { payload: unknown }) => void;
-
-function createMockListen() {
-  const listeners = new Map<string, EventHandler[]>();
-
-  const listenFn = async (event: string, handler: EventHandler) => {
-    const handlers = listeners.get(event) ?? [];
-    handlers.push(handler);
-    listeners.set(event, handlers);
-    return () => {
-      const list = listeners.get(event) ?? [];
-      const index = list.indexOf(handler);
-      if (index >= 0) {
-        list.splice(index, 1);
-      }
-    };
-  };
-
-  const emit = (event: string, payload: unknown) => {
-    for (const handler of listeners.get(event) ?? []) {
-      handler({ payload });
-    }
-  };
-
-  return { listenFn, emit, listeners };
-}
-
-function makeBlockAppended(
-  overrides: Partial<TranscriptBlockAppended["block"]> &
-    Pick<TranscriptBlockAppended["block"], "block_id">,
-): TranscriptBlockAppended {
-  return {
-    block: {
-      sequence: 1,
-      text: "転写テキスト",
-      start_timestamp_ms: 500,
-      language: "ja",
-      ...overrides,
-    },
-    timestamp_ms: 1_000,
-  };
-}
 
 function typeIntoHandwriting(ref: HandwritingEditorRef | null, text: string): void {
   act(() => {
@@ -229,5 +191,68 @@ describe("TranscriptEditorView", () => {
 
     expect(getByTestId("editor-toolbar")).toBeTruthy();
     expect(container.querySelector("[data-transcript-block]")?.textContent).toBe("転写保持");
+  });
+
+  test("preserves handwriting text when multiple block-appended events fire", async () => {
+    const { listenFn, emit, listeners } = createMockListen();
+    const handwritingRef = createRef<HandwritingEditorRef>();
+    const aiRef = createRef<AiTranscriptEditorRef>();
+    const { container } = render(
+      <TranscriptEditorView
+        onSave={noopSave}
+        isSaving={false}
+        {...defaultSettingsProps}
+        listenFn={listenFn}
+        handwritingEditorRef={handwritingRef}
+        aiTranscriptEditorRef={aiRef}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(listeners.has(BLOCK_APPENDED_EVENT)).toBe(true);
+    });
+
+    typeIntoHandwriting(handwritingRef.current, "会議メモ");
+
+    const { before, after } = emitBlockAppendedAndGetHandwritingDomText(emit, container, [
+      makeBlockAppended({ block_id: "b1", sequence: 1, text: "第一段" }),
+      makeBlockAppended({ block_id: "b2", sequence: 2, text: "第二段" }),
+      makeBlockAppended({ block_id: "b3", sequence: 3, text: "第三段" }),
+    ]);
+    expect(after).toBe(before);
+
+    await waitFor(() => {
+      expect(aiRef.current?.getBlocks()).toHaveLength(3);
+    });
+
+    expect(handwritingRef.current?.getPlainText()).toBe("会議メモ");
+    expect(getHandwritingEditorDomText(container)).toBe("会議メモ");
+  });
+
+  test("save flow getPlainText returns handwriting content after block updates", async () => {
+    const { listenFn, emit, listeners } = createMockListen();
+    const handwritingRef = createRef<HandwritingEditorRef>();
+    const { container } = render(
+      <TranscriptEditorView
+        onSave={noopSave}
+        isSaving={false}
+        {...defaultSettingsProps}
+        listenFn={listenFn}
+        handwritingEditorRef={handwritingRef}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(listeners.has(BLOCK_APPENDED_EVENT)).toBe(true);
+    });
+
+    typeIntoHandwriting(handwritingRef.current, "保存対象テキスト");
+
+    const { before, after } = emitBlockAppendedAndGetHandwritingDomText(emit, container, [
+      makeBlockAppended({ block_id: "save-b1", text: "転写A" }),
+    ]);
+    expect(after).toBe(before);
+
+    expect(handwritingRef.current?.getPlainText()).toBe("保存対象テキスト");
   });
 });

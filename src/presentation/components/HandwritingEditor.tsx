@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useMemo } from "react";
+import { forwardRef, memo, useImperativeHandle, useMemo, useRef } from "react";
 import { createEditor, type Descendant, Editor } from "slate";
 import { Editable, type ReactEditor, Slate, withReact } from "slate-react";
 
@@ -34,10 +34,11 @@ function serializeHandwritingPlainText(editor: Editor): string {
   return editor.children.map((_, index) => Editor.string(editor, [index])).join("\n");
 }
 
-export const HandwritingEditor = forwardRef<HandwritingEditorRef>(
+const HandwritingEditorInner = forwardRef<HandwritingEditorRef>(
   function HandwritingEditor(_props, ref) {
     const editor = useMemo(() => withReact(createEditor()), []);
     const initialValue = useMemo(() => createInitialValue(), []);
+    const isComposingRef = useRef(false);
 
     useImperativeHandle(ref, () => {
       const handle: HandwritingEditorRef = {
@@ -47,12 +48,27 @@ export const HandwritingEditor = forwardRef<HandwritingEditorRef>(
       return handle;
     }, [editor]);
 
+    const handleCompositionStart = () => {
+      isComposingRef.current = true;
+    };
+
+    const handleCompositionEnd = () => {
+      isComposingRef.current = false;
+    };
+
     return (
       <div className="handwriting-editor-panel" style={{ backgroundColor: "var(--hawkes-blue)" }}>
         <Slate editor={editor} initialValue={initialValue}>
-          <Editable data-testid="handwriting-editor" spellCheck={false} />
+          <Editable
+            data-testid="handwriting-editor"
+            spellCheck={false}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
+          />
         </Slate>
       </div>
     );
   },
 );
+
+export const HandwritingEditor = memo(HandwritingEditorInner);
