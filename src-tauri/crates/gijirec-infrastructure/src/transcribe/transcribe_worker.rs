@@ -24,8 +24,8 @@ pub const MAX_PCM_BUFFER_SAMPLES: usize = MAX_INFERENCE_WINDOW_SAMPLES * 2;
 /// Speech required before a short trailing pause closes the utterance (1 s @ 16 kHz).
 const MIN_SPEECH_SAMPLES: usize = 16_000;
 
-/// Trailing near-silence that closes an utterance once enough speech accumulated (500 ms).
-const TRAILING_SILENCE_FRAMES: usize = 5;
+/// Trailing near-silence that closes an utterance once enough speech accumulated (300 ms).
+const TRAILING_SILENCE_FRAMES: usize = 3;
 
 /// Longer near-silence that closes an utterance regardless of its length (1.2 s).
 const LONG_SILENCE_FRAMES: usize = 12;
@@ -708,7 +708,7 @@ mod tests {
         );
         assert_eq!(
             state.samples.len(),
-            1_600,
+            9_600 - TRAILING_SILENCE_FRAMES * FRAME_SAMPLES,
             "extra silence stays for the next window"
         );
         assert_eq!(state.samples_before_buffer, pcm.len() as u64);

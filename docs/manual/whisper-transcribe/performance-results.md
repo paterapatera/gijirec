@@ -60,4 +60,58 @@
 備考: （逸脱時は原因と対策）
 ```
 
+---
+
+## transcribe-segment-timing ベースライン（調整前）
+
+| 項目 | 値 |
+|------|-----|
+| **記録日** | 2026-09-08 |
+| **実行者** | SDD 実装エージェント |
+| **spec** | `transcribe-segment-timing` |
+| **TRAILING_SILENCE_FRAMES** | 5（500 ms @ 100 ms/frame） |
+| **LONG_SILENCE_FRAMES** | 12（1.2 s @ 100 ms/frame） |
+| **MIN_SPEECH_SAMPLES** | 16_000（1 s @ 16 kHz） |
+| **FRAME_SAMPLES** | 1_600（100 ms @ 16 kHz） |
+
+### 区切り待ち時間ベースライン（実機計測）
+
+| 試行 | 発話区切り → block-appended（ms） |
+|------|-----------------------------------|
+| 1 | **未計測** |
+| 2 | **未計測** |
+| 3 | **未計測** |
+| **中央値** | **未計測** |
+
+> 実機計測は CI / エージェント環境では音声ハードウェアが利用不可のため未実施。開発者が 3 秒連続日本語発話で 3 回計測し中央値を追記する。
+
+---
+
+## transcribe-segment-timing 第一軸調整後（2026-09-08）
+
+| 項目 | 旧値 | 新値 |
+|------|------|------|
+| **TRAILING_SILENCE_FRAMES** | 5（500 ms） | **3（300 ms）** |
+| **LONG_SILENCE_FRAMES** | 12（1.2 s） | 12（変更なし） |
+| **調整軸** | — | 第一軸のみ（`TRAILING_SILENCE_FRAMES`） |
+
+### 自動検証結果
+
+| 検証 | 結果 |
+|------|------|
+| `bun run verify` | **pass**（exit 0） |
+| `cargo test -p gijirec-infrastructure transcribe` | **pass**（45 passed, 3 ignored） |
+| trailing silence cut テスト | **pass**（期待値を定数参照に更新） |
+| long-pause short speech テスト | **pass**（定数参照のため自動適合） |
+
+### 実機品質確認（未実施 — 開発者追記待ち）
+
+| 基準 | 判定 | 備考 |
+|------|------|------|
+| 3 秒連続日本語発話で過剰分割なし | **未確認** | タスク 3.1 |
+| 区切り待ち 50% 以上短縮 | **未確認** | ベースライン中央値との比較が必要 |
+| 同一フレーズ 3 回連続出現なし | **未確認** | タスク 3.1 |
+| `LONG_SILENCE_FRAMES` 第二軸調整 | **未実施** | 3.1 で 50% 未達の場合のみ（タスク 3.2） |
+| whisper-transcribe-blocks 契約手動確認 | **未確認** | 空ブロックなし・追記のみ・5 秒遅延目標 |
+
 関連: [docs/steering/testing.md](../../steering/testing.md)（リリース vs dev パリティ）、[docs/manual/README.md](../README.md)
