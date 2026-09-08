@@ -24,11 +24,11 @@ pub const MAX_PCM_BUFFER_SAMPLES: usize = MAX_INFERENCE_WINDOW_SAMPLES * 2;
 /// Speech required before a short trailing pause closes the utterance (1 s @ 16 kHz).
 const MIN_SPEECH_SAMPLES: usize = 16_000;
 
-/// Trailing near-silence that closes an utterance once enough speech accumulated (300 ms).
-const TRAILING_SILENCE_FRAMES: usize = 3;
+/// Trailing near-silence that closes an utterance once enough speech accumulated (1.2 s).
+const TRAILING_SILENCE_FRAMES: usize = 12;
 
-/// Longer near-silence that closes an utterance regardless of its length (1.2 s).
-const LONG_SILENCE_FRAMES: usize = 12;
+/// Longer near-silence that closes an utterance regardless of its length (4.8 s).
+const LONG_SILENCE_FRAMES: usize = 48;
 
 /// When forced to cut at the max window, search the last 2 s for the quietest frame.
 const FORCED_CUT_SEARCH_SAMPLES: usize = 32_000;
@@ -662,6 +662,8 @@ mod tests {
     const UTTERANCE_SPEECH_SAMPLES: usize = MIN_SPEECH_SAMPLES;
     const UTTERANCE_SILENCE_SAMPLES: usize = FRAME_SAMPLES * (TRAILING_SILENCE_FRAMES + 1);
     const UTTERANCE_SAMPLES: usize = UTTERANCE_SPEECH_SAMPLES + UTTERANCE_SILENCE_SAMPLES;
+    /// Twice the trailing threshold so endpointing tests leave excess silence in the buffer.
+    const TEST_PAUSE_PADDING_SAMPLES: usize = TRAILING_SILENCE_FRAMES * FRAME_SAMPLES * 2;
 
     fn push_samples(prod: &mut rtrb::Producer<f32>, value: f32, count: usize) {
         for _ in 0..count {
@@ -696,7 +698,7 @@ mod tests {
 
     #[test]
     fn cuts_utterance_at_trailing_silence() {
-        let mut state = state_with(&concat(&[tone(0.2, 32_000), silence(9_600)]));
+        let mut state = state_with(&concat(&[tone(0.2, 32_000), silence(TEST_PAUSE_PADDING_SAMPLES)]));
 
         let (pcm, base) = take_window_from_state(&mut state, false).expect("window");
 
@@ -708,7 +710,7 @@ mod tests {
         );
         assert_eq!(
             state.samples.len(),
-            9_600 - TRAILING_SILENCE_FRAMES * FRAME_SAMPLES,
+            TEST_PAUSE_PADDING_SAMPLES - TRAILING_SILENCE_FRAMES * FRAME_SAMPLES,
             "extra silence stays for the next window"
         );
         assert_eq!(state.samples_before_buffer, pcm.len() as u64);
@@ -719,7 +721,7 @@ mod tests {
         let mut state = state_with(&concat(&[
             silence(16_000),
             tone(0.2, 32_000),
-            silence(9_600),
+            silence(TEST_PAUSE_PADDING_SAMPLES),
         ]));
 
         let (pcm, base) = take_window_from_state(&mut state, false).expect("window");
@@ -734,7 +736,7 @@ mod tests {
 
     #[test]
     fn short_speech_waits_for_a_long_pause() {
-        let mut state = state_with(&concat(&[tone(0.2, 8_000), silence(9_600)]));
+        let mut state = state_with(&concat(&[tone(0.2, 8_000), silence(TEST_PAUSE_PADDING_SAMPLES)]));
         assert!(
             take_window_from_state(&mut state, false).is_none(),
             "a brief pause after short speech must not close the utterance"
@@ -742,7 +744,7 @@ mod tests {
 
         state
             .samples
-            .extend(silence(LONG_SILENCE_FRAMES * FRAME_SAMPLES - 9_600));
+            .extend(silence(LONG_SILENCE_FRAMES * FRAME_SAMPLES - TEST_PAUSE_PADDING_SAMPLES));
         let (pcm, base) = take_window_from_state(&mut state, false).expect("window");
         assert_eq!(base, 0);
         assert_eq!(pcm.len(), 8_000 + LONG_SILENCE_FRAMES * FRAME_SAMPLES);

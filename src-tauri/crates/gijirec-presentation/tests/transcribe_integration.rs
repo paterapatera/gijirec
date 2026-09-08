@@ -164,11 +164,11 @@ fn integration_1_synthetic_pcm_to_block_emission() {
 
     worker.spawn().expect("worker spawn");
 
-    // Feed a 2 s utterance followed by 0.6 s of silence so endpointing closes the window
+    // Feed a 2 s utterance followed by trailing-silence padding so endpointing closes the window
     for _ in 0..32_000 {
         let _ = prod.push(0.25);
     }
-    for _ in 0..9_600 {
+    for _ in 0..(13 * CHUNK_FRAME_COUNT as usize) {
         let _ = prod.push(0.0);
     }
 
@@ -644,9 +644,9 @@ fn build_deferred_transcribe_pipeline(segments: Vec<WhisperSegment>) -> WiredTra
     }
 }
 
-/// 30 speech chunks (3 s) followed by 8 silent chunks (0.8 s) so endpointing closes the utterance.
+/// 30 speech chunks (3 s) followed by 13 silent chunks (1.3 s) so endpointing closes the utterance.
 fn publish_utterance_pcm(pcm_bus: &PcmChunkBus) {
-    for seq in 0..38 {
+    for seq in 0..43 {
         let value = if seq < 30 { 16384_i16 } else { 0_i16 };
         let samples = vec![value; CHUNK_FRAME_COUNT as usize];
         let chunk = PcmChunk::new(seq, samples, seq * 100).expect("chunk");
