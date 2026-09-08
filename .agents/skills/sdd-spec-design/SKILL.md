@@ -3,6 +3,7 @@ name: sdd-spec-design
 description: Create comprehensive technical design for a specification. Runs inline brownfield gap analysis before discovery.
 metadata:
   shared-rules: "design-principles.md, design-discovery-full.md, design-discovery-light.md, design-discovery-minimal.md, design-synthesis.md, design-review-gate.md, gap-analysis.md"
+disable-model-invocation: true
 ---
 
 

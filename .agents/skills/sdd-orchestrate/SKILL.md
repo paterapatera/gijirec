@@ -3,6 +3,7 @@ name: sdd-orchestrate
 description: AI-DLC orchestrator (調整者). Routes spec-driven development flows, enforces phase gates and rollbacks, dispatches role skills without doing their work. Use for end-to-end feature development, spec/requirements/design updates, implementation-only runs, or when the user invokes the AI-DLC workflow. Target spec is the required first argument.
 metadata:
   shared-rules: "rules/routing.md, rules/flows.md, rules/gates.md, rules/rollback.md, rules/complexity-tier.md, rules/greenfield.md"
+disable-model-invocation: true
 ---
 
 # AI-DLC Orchestrator (調整者)

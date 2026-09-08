@@ -1,6 +1,7 @@
 ---
 name: sdd-impl
 description: Implement approved tasks using TDD with subagent dispatch. Runs all pending tasks autonomously or selected tasks manually. Target spec is the required first argument.
+disable-model-invocation: true
 ---
 
 
