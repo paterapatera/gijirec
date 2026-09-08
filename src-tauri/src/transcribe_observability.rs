@@ -96,4 +96,42 @@ impl TranscribeObservability for TracingTranscribeObservability {
             "transcribe inference progress"
         );
     }
+
+    fn log_batch_cycle_started(
+        &self,
+        cycle_id: u64,
+        samples_count: usize,
+        pcm_backlog_seconds: f64,
+        rtrb_overflow_count: u64,
+    ) {
+        tracing::info!(
+            target: TRANSCRIBE_LOG_TARGET,
+            batch_cycle_started = true,
+            cycle_id = cycle_id,
+            samples_count = samples_count,
+            transcribe_pcm_backlog_seconds = pcm_backlog_seconds,
+            transcribe_rtrb_overflow_count = rtrb_overflow_count,
+            session_id = session_id(),
+            "transcribe batch cycle started"
+        );
+    }
+
+    fn log_batch_cycle_completed(
+        &self,
+        cycle_id: u64,
+        duration_ms: u64,
+        samples_count: usize,
+        segments_count: usize,
+    ) {
+        tracing::info!(
+            target: TRANSCRIBE_LOG_TARGET,
+            batch_cycle_completed = true,
+            cycle_id = cycle_id,
+            transcribe_batch_duration_ms = duration_ms,
+            samples_count = samples_count,
+            segments_count = segments_count,
+            session_id = session_id(),
+            "transcribe batch cycle completed"
+        );
+    }
 }

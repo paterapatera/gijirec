@@ -1,6 +1,6 @@
 # ADR-0003: whisper-cpp-plus によるローカルストリーミング STT
 
-- **Status**: Accepted
+- **Status**: Superseded by ADR-0012
 - **Date**: 2026-09-05
 - **Feature**: whisper-transcribe
 - **Owners / Domains**: whisper-transcribe

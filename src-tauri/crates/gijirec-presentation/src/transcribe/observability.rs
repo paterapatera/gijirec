@@ -14,6 +14,22 @@ pub trait TranscribeObservability: Send + Sync {
     fn log_engine_ready(&self) {}
     fn log_inference_started(&self) {}
     fn log_inference_progress(&self, _percent: i32) {}
+    fn log_batch_cycle_started(
+        &self,
+        _cycle_id: u64,
+        _samples_count: usize,
+        _pcm_backlog_seconds: f64,
+        _rtrb_overflow_count: u64,
+    ) {
+    }
+    fn log_batch_cycle_completed(
+        &self,
+        _cycle_id: u64,
+        _duration_ms: u64,
+        _samples_count: usize,
+        _segments_count: usize,
+    ) {
+    }
 }
 
 struct NoopTranscribeObservability;
@@ -121,6 +137,37 @@ pub fn log_inference_progress(percent: i32) {
         .log_inference_progress(percent);
 }
 
+/// Logs the start of a fixed-interval batch inference cycle.
+pub fn log_batch_cycle_started(
+    cycle_id: u64,
+    samples_count: usize,
+    pcm_backlog_seconds: f64,
+    rtrb_overflow_count: u64,
+) {
+    transcribe_observability()
+        .read()
+        .expect("lock")
+        .log_batch_cycle_started(
+            cycle_id,
+            samples_count,
+            pcm_backlog_seconds,
+            rtrb_overflow_count,
+        );
+}
+
+/// Logs completion of a fixed-interval batch inference cycle.
+pub fn log_batch_cycle_completed(
+    cycle_id: u64,
+    duration_ms: u64,
+    samples_count: usize,
+    segments_count: usize,
+) {
+    transcribe_observability()
+        .read()
+        .expect("lock")
+        .log_batch_cycle_completed(cycle_id, duration_ms, samples_count, segments_count);
+}
+
 /// Restores the noop backend between tests that replace the global observability hook.
 #[cfg(test)]
 pub fn reset_transcribe_observability_for_tests() {
@@ -159,6 +206,24 @@ impl TranscribeObservability for RecordingTranscribeObservability {
     fn log_stall_detected(&self) {
         self.stall_detected_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn log_batch_cycle_started(
+        &self,
+        _cycle_id: u64,
+        _samples_count: usize,
+        _pcm_backlog_seconds: f64,
+        _rtrb_overflow_count: u64,
+    ) {
+    }
+
+    fn log_batch_cycle_completed(
+        &self,
+        _cycle_id: u64,
+        _duration_ms: u64,
+        _samples_count: usize,
+        _segments_count: usize,
+    ) {
     }
 }
 

@@ -18,9 +18,13 @@ use super::observability;
 /// VAD near-silence RMS threshold (matches `transcribe_worker::SILENCE_RMS_THRESHOLD`).
 pub const SILENCE_RMS_THRESHOLD: f32 = 0.008;
 
-/// Legacy latency budget retained for docs/tests (10 s max window + 5 s target + 3 s margin).
-/// Stall firing now relies on [`ENGINE_LOAD_TIMEOUT`] and [`INFERENCE_TIMEOUT`] only.
-pub const STALL_THRESHOLD: Duration = Duration::from_secs(18);
+/// Fixed batch inference interval (matches `transcribe_worker::BATCH_INTERVAL` in production).
+pub const BATCH_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Latency budget retained for docs/tests (30 s batch window + 5 s margin + 3 s poll slack).
+/// Stall firing relies on [`ENGINE_LOAD_TIMEOUT`] and [`INFERENCE_TIMEOUT`] only; idle gaps
+/// between batch cycles must stay below this budget so tests document the 30 s window.
+pub const STALL_THRESHOLD: Duration = Duration::from_secs(38);
 
 /// Whisper context load happens on the worker after `transcribing` begins.
 /// Do not treat that interval as a no-block stall.
@@ -416,6 +420,36 @@ mod tests {
             Arc::new(move || time.load(Ordering::SeqCst))
         };
         (clock, time)
+    }
+
+    #[test]
+    fn stall_threshold_covers_batch_interval() {
+        assert!(
+            STALL_THRESHOLD >= BATCH_INTERVAL,
+            "stall docs/tests must tolerate full 30 s batch idle gaps"
+        );
+        assert_eq!(STALL_THRESHOLD, Duration::from_secs(38));
+    }
+
+    #[test]
+    fn does_not_fire_during_batch_interval_idle_without_inference() {
+        with_isolated_transcribe_observability(|| {
+            let (clock, time) = test_clock();
+            let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
+            let emitter = Arc::new(MockEmitter::default());
+            let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
+
+            watchdog.arm();
+            watchdog.on_engine_ready();
+            watchdog.on_inference_success();
+
+            time.store(BATCH_INTERVAL.as_millis() as u64 + 5_000, Ordering::SeqCst);
+            assert!(
+                !watchdog.poll(),
+                "30 s batch idle between cycles must not surface a stall"
+            );
+            assert!(emitter.errors.lock().expect("lock errors").is_empty());
+        });
     }
 
     #[test]

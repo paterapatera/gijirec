@@ -11,12 +11,20 @@ use crate::tauri::lifecycle::CaptureProcessingHook;
 use crate::transcribe::event_emitter::TranscribeEventEmitter;
 use crate::transcribe::observability;
 use crate::transcribe::stall_watchdog::{
-    OrchestratorStallAdapter, SharedTranscribeEmitter, StallClock, StallWatchdogRuntime,
-    TranscribeStallWatchdog,
+    BATCH_INTERVAL, OrchestratorStallAdapter, SharedTranscribeEmitter, StallClock,
+    StallWatchdogRuntime, TranscribeStallWatchdog,
 };
 
+/// Headroom for one 30 s batch window encode during worker stop+flush join.
+pub const TRANSCRIBE_STOP_INFERENCE_MARGIN: Duration = Duration::from_secs(30);
+
 /// Default join timeout when stopping transcribe worker on lifecycle events.
-pub const DEFAULT_TRANSCRIBE_STOP_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// Must cover [`transcribe_worker::stop_and_join`] stop-flush (remaining PCM as final batch).
+/// Aligns with task 2.3 worker shutdown path used by both capture pause and app exit.
+/// Equals [`BATCH_INTERVAL`] + [`TRANSCRIBE_STOP_INFERENCE_MARGIN`] (60 s).
+pub const DEFAULT_TRANSCRIBE_STOP_TIMEOUT: Duration =
+    Duration::from_secs(BATCH_INTERVAL.as_secs() + TRANSCRIBE_STOP_INFERENCE_MARGIN.as_secs());
 
 type StallWatchdogHandle =
     TranscribeStallWatchdog<OrchestratorStallAdapter, SharedTranscribeEmitter>;
@@ -176,23 +184,28 @@ impl TranscribeLifecycleHook {
         }
     }
 
-    fn pause_transcribing_for_capture_stop(&self) {
-        self.stop_stall_watchdog();
-        let emitter = self.emitter();
-        let mut orch = self.orchestrator.lock().expect("lock orchestrator");
-        orch.pause_capture();
-        self.emit_phase(emitter.as_ref(), orch.phase());
-    }
-
-    fn stop_transcribing_worker(&self) {
+    /// Stops the worker with PCM flush via orchestrator (same path as batch worker `stop_and_join`).
+    fn stop_transcribing_with_flush(&self, flush_via_stop: bool) {
         self.stop_stall_watchdog();
         let emitter = self.emitter();
         let mut orch = self.orchestrator.lock().expect("lock orchestrator");
         orch.set_upstream_capturing(false);
         if orch.phase() == TranscribePhase::Transcribing {
-            let _ = orch.stop();
+            if flush_via_stop {
+                let _ = orch.stop();
+            } else {
+                orch.pause_capture();
+            }
             self.emit_phase(emitter.as_ref(), orch.phase());
         }
+    }
+
+    fn pause_transcribing_for_capture_stop(&self) {
+        self.stop_transcribing_with_flush(false);
+    }
+
+    fn stop_transcribing_worker(&self) {
+        self.stop_transcribing_with_flush(true);
     }
 
     /// Handles capture phase change notification (`audio-capture://phase-changed`).
@@ -208,10 +221,7 @@ impl TranscribeLifecycleHook {
                 self.emit_phase(emitter.as_ref(), orch.phase());
             }
             CapturePhase::Stopping | CapturePhase::Idle => {
-                self.stop_stall_watchdog();
-                let mut orch = self.orchestrator.lock().expect("lock orchestrator");
-                orch.pause_capture();
-                self.emit_phase(emitter.as_ref(), orch.phase());
+                self.stop_transcribing_with_flush(false);
             }
             _ => {}
         }
@@ -382,6 +392,38 @@ mod tests {
     }
 
     #[test]
+    fn default_stop_timeout_accommodates_batch_flush() {
+        assert_eq!(DEFAULT_TRANSCRIBE_STOP_TIMEOUT, Duration::from_secs(60));
+        assert!(
+            DEFAULT_TRANSCRIBE_STOP_TIMEOUT >= BATCH_INTERVAL,
+            "lifecycle stop join must cover at least one 30 s batch flush window"
+        );
+        assert_eq!(
+            DEFAULT_TRANSCRIBE_STOP_TIMEOUT.as_secs(),
+            TRANSCRIBE_STOP_INFERENCE_MARGIN.as_secs() + BATCH_INTERVAL.as_secs()
+        );
+    }
+
+    #[test]
+    fn capture_stop_triggers_worker_stop_for_pcm_flush() {
+        with_isolated_transcribe_observability(|| {
+            let mut o = MockOrchestrator::new(TranscribePhase::Ready);
+            o.set_upstream_capturing(true);
+            o.start().unwrap();
+
+            let orch = Arc::new(Mutex::new(o));
+            let emitter = Arc::new(MockEmitter::default());
+            let hook = TranscribeLifecycleHook::new(orch.clone(), emitter.clone());
+
+            hook.on_capture_stopping();
+
+            assert_eq!(orch.lock().unwrap().stop_count, 1, "capture stop must stop worker for PCM flush");
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
+            assert!(!orch.lock().unwrap().upstream_capturing);
+        });
+    }
+
+    #[test]
     fn on_capture_started_sets_upstream_and_starts_orchestrator_when_ready() {
         with_isolated_transcribe_observability(|| {
             let orch = Arc::new(Mutex::new(MockOrchestrator::new(TranscribePhase::Ready)));
@@ -530,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn on_app_exit_stops_transcribing_worker() {
+    fn on_app_exit_stops_transcribing_worker_and_loading_model() {
         with_isolated_transcribe_observability(|| {
             let mut o = MockOrchestrator::new(TranscribePhase::Ready);
             o.set_upstream_capturing(true);
@@ -544,6 +586,18 @@ mod tests {
 
             assert_eq!(orch.lock().unwrap().stop_count, 1);
             assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Idle);
+            assert!(!orch.lock().unwrap().upstream_capturing);
+
+            let mut loading = MockOrchestrator::new(TranscribePhase::LoadingModel);
+            loading.set_upstream_capturing(true);
+            let orch_loading = Arc::new(Mutex::new(loading));
+            let hook_loading =
+                TranscribeLifecycleHook::new(orch_loading.clone(), Arc::new(MockEmitter::default()));
+
+            hook_loading.on_app_exit();
+
+            assert_eq!(orch_loading.lock().unwrap().stop_count, 1);
+            assert_eq!(orch_loading.lock().unwrap().phase(), TranscribePhase::Idle);
         });
     }
 

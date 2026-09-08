@@ -44,7 +44,8 @@ Architecture Decision Records。重要な設計判断を永続化する。contra
 |-----------|------------------|------------------|--------|
 | `ADR-0001-platform-audio-capture.md` | WASAPI ループバック + macOS ScreenCaptureKit による二重キャプチャ | audio-capture | Accepted |
 | `ADR-0002-bun-frontend-toolchain.md` | Tauri ホストの Bun 採用（npm 非必須） | cross-cutting | Accepted |
-| `ADR-0003-whisper-cpp-plus-streaming.md` | whisper-cpp-plus によるローカルストリーミング STT | whisper-transcribe | Accepted |
+| `ADR-0003-whisper-cpp-plus-streaming.md` | whisper-cpp-plus によるローカルストリーミング STT | whisper-transcribe | Superseded by ADR-0012 |
+| `ADR-0012-batch-inference-schedule.md` | 30 秒固定バッチ推論スケジュール（VAD ストリーミングから移行） | transcribe-batch-interval | Accepted |
 | `ADR-0004-whisper-model-kotoba.md` | デフォルト GGML モデルを kotoba-whisper-v2.2（Q5_0）に採用 | whisper-transcribe | Superseded by ADR-0010 |
 | `ADR-0010-whisper-model-kotoba-q8.md` | デフォルト GGML モデルを kotoba-whisper-v2.2（Q8_0）に昇格 | whisper-transcribe | Superseded by ADR-0011 |
 | `ADR-0011-whisper-model-kotoba-fp16.md` | デフォルト GGML モデルを kotoba-whisper-v2.2（FP16）に昇格 | whisper-transcribe | Accepted |

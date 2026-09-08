@@ -165,6 +165,23 @@ mod tests {
     }
 
     #[test]
+    fn start_timestamp_ms_reflects_batch_window_base_plus_segment_offset() {
+        let (consumer, blocks) = RecordingConsumer::new();
+        let emitter = BlockEmitter::new(Arc::new(consumer));
+
+        // 160_000 samples @ 16 kHz = 10_000 ms batch window front + 250 ms segment offset.
+        let window_base_ms = 10_000u64;
+        let segment_offset_ms = 250u64;
+        emitter
+            .on_segment("batch aligned", window_base_ms + segment_offset_ms, "ja")
+            .expect("segment should emit");
+
+        let block = &blocks.lock().expect("lock")[0];
+        assert_eq!(block.start_timestamp_ms, 10_250);
+        assert_eq!(block.sequence, 1);
+    }
+
+    #[test]
     fn block_id_is_uuid_v4() {
         let (consumer, blocks) = RecordingConsumer::new();
         let emitter = BlockEmitter::new(Arc::new(consumer));
@@ -221,6 +238,25 @@ mod tests {
                 detail: "boom".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn batch_cycle_segments_emit_monotonic_sequences_without_gaps() {
+        let (consumer, blocks) = RecordingConsumer::new();
+        let emitter = BlockEmitter::new(Arc::new(consumer));
+
+        // Simulates three batch cycles routed through run_inference_window → on_segment.
+        emitter.on_segment("one", 0, "ja").expect("first batch");
+        emitter.on_segment("   ", 100, "ja").expect("empty segment skipped");
+        emitter.on_segment("two", 30_000, "ja").expect("second batch");
+        emitter.on_segment("three", 60_000, "ja").expect("third batch");
+
+        let blocks = blocks.lock().expect("lock");
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].sequence, 1);
+        assert_eq!(blocks[1].sequence, 2);
+        assert_eq!(blocks[2].sequence, 3);
+        assert_eq!(emitter.next_sequence(), 3);
     }
 
     #[test]

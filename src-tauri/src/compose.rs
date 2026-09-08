@@ -286,6 +286,22 @@ where
     compose_with_ports_and_model_orchestrator(mic, system, streams, model_orchestrator)
 }
 
+/// 16 kHz PCM sample rate for the transcribe pipeline.
+const PCM_SAMPLE_RATE_HZ: u32 = 16_000;
+
+/// One 30 s inference window at [`PCM_SAMPLE_RATE_HZ`].
+const PCM_INFERENCE_WINDOW_SAMPLES: usize =
+    30 * PCM_SAMPLE_RATE_HZ as usize;
+
+/// rtrb capacity between [`PcmIngestConsumer`] and the transcribe PCM drain thread.
+///
+/// Worst-case headroom: slow 30 s window inference while capture continues at 16 kHz,
+/// plus brief drain-thread stalls on the downstream `VecDeque` mutex during window
+/// extraction. Must materially exceed [`PCM_INFERENCE_WINDOW_SAMPLES`] so ingest never
+/// fails with `Internal("rtrb buffer full")` (Req 2.1/2.2). Long-term backlog retreat
+/// lives in task 2.1; compose only sizes this burst buffer (10 windows ≈ 5 min @ 16 kHz).
+pub(crate) const PCM_RTRB_CAPACITY_SAMPLES: usize = PCM_INFERENCE_WINDOW_SAMPLES * 10;
+
 fn compose_with_ports_and_model_orchestrator<M, S>(
     mic: M,
     system: S,
@@ -318,12 +334,13 @@ where
     let block_progress_slot: StallProgressSlot = Arc::new(Mutex::new(None));
     let inference_progress_slot: StallProgressSlot = Arc::new(Mutex::new(None));
 
-    // 1. Set up PCM buffer between IngestConsumer and TranscribeWorker (30 s @ 16 kHz = 480k)
-    let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(480_000);
+    // 1. Set up PCM buffer between IngestConsumer and TranscribeWorker drain thread.
+    let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(PCM_RTRB_CAPACITY_SAMPLES);
     let mut pcm_ingest = PcmIngestConsumer::new(pcm_prod);
     pcm_ingest.set_sequence_gap_callback(Arc::new(|from, to| {
         gijirec_presentation::transcribe::observability::log_pcm_sequence_gaps(from, to);
     }));
+    let rtrb_overflow_counter = pcm_ingest.rtrb_overflow_counter();
     let pcm_ingest = Arc::new(pcm_ingest);
     pipeline.pcm_bus.register(pcm_ingest);
 
@@ -349,6 +366,23 @@ where
     let mut worker =
         TranscribeWorker::new(Arc::clone(&block_emitter) as Arc<dyn TranscriptSegmentSink>);
     worker.attach_pcm_consumer(pcm_cons);
+    worker.set_rtrb_overflow_counter(rtrb_overflow_counter);
+    worker.set_batch_cycle_started_callback(Arc::new(|event| {
+        gijirec_presentation::transcribe::observability::log_batch_cycle_started(
+            event.cycle_id,
+            event.samples_count,
+            event.pcm_backlog_seconds,
+            event.rtrb_overflow_count,
+        );
+    }));
+    worker.set_batch_cycle_completed_callback(Arc::new(|event| {
+        gijirec_presentation::transcribe::observability::log_batch_cycle_completed(
+            event.cycle_id,
+            event.duration_ms,
+            event.samples_count,
+            event.segments_count,
+        );
+    }));
     worker.set_inference_latency_callback({
         let slot = Arc::clone(&inference_progress_slot);
         Arc::new(move |ms| {
@@ -621,6 +655,19 @@ mod tests {
     }
 
     #[test]
+    fn pcm_rtrb_capacity_exceeds_inference_window_with_backlog_headroom() {
+        assert!(
+            PCM_RTRB_CAPACITY_SAMPLES > PCM_INFERENCE_WINDOW_SAMPLES,
+            "rtrb must exceed one 30 s window so ingest survives slow inference"
+        );
+        assert!(
+            PCM_RTRB_CAPACITY_SAMPLES >= 2 * PCM_INFERENCE_WINDOW_SAMPLES,
+            "rtrb should hold at least two windows for inference overlap plus capture"
+        );
+        let (_prod, _cons) = rtrb::RingBuffer::<f32>::new(PCM_RTRB_CAPACITY_SAMPLES);
+    }
+
+    #[test]
     fn build_capture_stack_wires_stall_watchdog() {
         let composed = build_capture_stack();
         assert!(
@@ -655,6 +702,150 @@ mod tests {
             production_source.contains("on_inference_progress"),
             "compose must extend stall timing from whisper.cpp progress callbacks"
         );
+    }
+
+    #[test]
+    fn compose_wires_batch_observability_and_shared_rtrb_overflow_counter() {
+        let compose_source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/compose.rs"),
+        )
+        .expect("compose.rs must exist");
+        let production_source = compose_source
+            .split("mod tests")
+            .next()
+            .expect("compose.rs must define tests module");
+        assert!(
+            production_source.contains("set_batch_cycle_started_callback"),
+            "compose must wire batch cycle started observability"
+        );
+        assert!(
+            production_source.contains("set_batch_cycle_completed_callback"),
+            "compose must wire batch cycle completed observability"
+        );
+        assert!(
+            production_source.contains("set_rtrb_overflow_counter"),
+            "compose must share rtrb overflow counter between ingest and worker"
+        );
+        assert!(
+            production_source.contains("log_batch_cycle_started"),
+            "compose must dispatch batch cycle started tracing"
+        );
+    }
+
+    #[derive(Default)]
+    struct RecordingBlockConsumer {
+        blocks: Arc<Mutex<Vec<gijirec_presentation::domain::transcribe::TranscriptBlock>>>,
+    }
+
+    impl gijirec_presentation::domain::transcribe::TranscriptBlockConsumer
+        for RecordingBlockConsumer
+    {
+        fn on_block_appended(
+            &self,
+            block: gijirec_presentation::domain::transcribe::TranscriptBlock,
+        ) -> Result<(), gijirec_presentation::domain::transcribe::TranscriptConsumerError>
+        {
+            self.blocks.lock().expect("lock").push(block);
+            Ok(())
+        }
+    }
+
+    struct ComposeBatchMockEngine {
+        segments: Vec<gijirec_presentation::infrastructure::transcribe::WhisperSegment>,
+    }
+
+    impl gijirec_presentation::infrastructure::transcribe::SegmentEngine for ComposeBatchMockEngine {
+        fn transcribe_pcm(
+            &mut self,
+            _pcm: &[f32],
+        ) -> Result<
+            Vec<gijirec_presentation::infrastructure::transcribe::WhisperSegment>,
+            TranscribeError,
+        > {
+            Ok(self.segments.clone())
+        }
+
+        fn is_loaded(&self) -> bool {
+            true
+        }
+    }
+
+    impl gijirec_presentation::infrastructure::transcribe::ModelPathLoadable
+        for ComposeBatchMockEngine
+    {
+        fn load_from_path_if_needed(
+            &mut self,
+            _path: &std::path::Path,
+        ) -> Result<(), TranscribeError> {
+            Ok(())
+        }
+    }
+
+    /// Mirrors compose wiring: pcm_bus → ingest → expanded rtrb → batch worker → mock adapter → blocks.
+    #[test]
+    fn compose_batch_pipeline_end_to_end_synthetic_pcm_to_blocks() {
+        use gijirec_presentation::domain::audio::pcm_chunk::{CHUNK_FRAME_COUNT, PcmChunk};
+        use gijirec_presentation::tauri::pcm_bus::MAX_QUEUED_CHUNKS;
+        use std::thread;
+        use std::time::Duration;
+
+        assert!(
+            PCM_RTRB_CAPACITY_SAMPLES >= PCM_INFERENCE_WINDOW_SAMPLES * 2,
+            "compose rtrb must exceed batch window for ingest headroom"
+        );
+        assert_eq!(MAX_QUEUED_CHUNKS, 3000);
+
+        let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(PCM_RTRB_CAPACITY_SAMPLES);
+        let mut pcm_ingest = PcmIngestConsumer::new(pcm_prod);
+        let rtrb_overflow_counter = pcm_ingest.rtrb_overflow_counter();
+        let pcm_ingest = Arc::new(pcm_ingest);
+        let pcm_bus = Arc::new(gijirec_presentation::tauri::pcm_bus::PcmChunkBus::new());
+        pcm_bus.register(pcm_ingest);
+
+        let block_consumer = Arc::new(RecordingBlockConsumer::default());
+        let recorded_blocks = Arc::clone(&block_consumer.blocks);
+        let block_bus = Arc::new(TranscriptBlockBus::new());
+        block_bus.register(block_consumer);
+
+        let emitter = Arc::new(BlockEmitter::new(Arc::clone(&block_bus)));
+        let engine = ComposeBatchMockEngine {
+            segments: vec![gijirec_presentation::infrastructure::transcribe::WhisperSegment {
+                text: "batch compose".to_string(),
+                start_ms: 500,
+                end_ms: 1500,
+            }],
+        };
+        let mut worker = TranscribeWorker::with_engine(
+            Arc::clone(&emitter) as Arc<dyn TranscriptSegmentSink>,
+            engine,
+        );
+        worker.attach_pcm_consumer(pcm_cons);
+        worker.set_rtrb_overflow_counter(rtrb_overflow_counter);
+        worker.spawn().expect("spawn batch worker");
+
+        let chunks_for_30s = PCM_INFERENCE_WINDOW_SAMPLES / CHUNK_FRAME_COUNT as usize;
+        for seq in 0..chunks_for_30s {
+            let samples = vec![16384_i16; CHUNK_FRAME_COUNT as usize];
+            let chunk = PcmChunk::new(seq as u64, samples, seq as u64 * 100).expect("chunk");
+            pcm_bus.publish(chunk);
+        }
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while recorded_blocks.lock().expect("lock").is_empty()
+            && std::time::Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        worker
+            .stop_and_join(Duration::from_secs(2))
+            .expect("stop batch worker");
+
+        let blocks = recorded_blocks.lock().expect("lock");
+        assert_eq!(blocks.len(), 1, "mock adapter must emit one block through compose wiring");
+        assert_eq!(blocks[0].text, "batch compose");
+        assert_eq!(blocks[0].sequence, 1);
+        assert_eq!(blocks[0].start_timestamp_ms, 500);
     }
 
     /// Hardware integration test for Windows WASAPI loopback + mic (ignored on CI).

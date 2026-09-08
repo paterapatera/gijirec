@@ -24,15 +24,17 @@ pub use gijirec_domain::transcribe::{TranscribeError, TranscriptSegmentSink};
 pub use gijirec_infrastructure::transcribe::{
     ModelDownloader, ModelStore, TranscribeWorker, WhisperCppAdapter,
 };
-pub use lifecycle_hook::{DEFAULT_TRANSCRIBE_STOP_TIMEOUT, TranscribeLifecycleHook};
+pub use lifecycle_hook::{
+    DEFAULT_TRANSCRIBE_STOP_TIMEOUT, TRANSCRIBE_STOP_INFERENCE_MARGIN, TranscribeLifecycleHook,
+};
 pub use observability::{
     TRANSCRIBE_LOG_TARGET, TranscribeObservability, set_transcribe_observability,
 };
 pub use pcm_ingest_consumer::{PcmIngestConsumer, SequenceGapCallback};
 pub use stall_watchdog::{
-    OrchestratorStallAdapter, SILENCE_RMS_THRESHOLD, STALL_POLL_INTERVAL, STALL_THRESHOLD,
-    SharedTranscribeEmitter, StallClock, StallWatchdogRuntime, TranscribeStallOrchestrator,
-    TranscribeStallWatchdog, chunk_rms,
+    BATCH_INTERVAL, OrchestratorStallAdapter, SILENCE_RMS_THRESHOLD, STALL_POLL_INTERVAL,
+    STALL_THRESHOLD, SharedTranscribeEmitter, StallClock, StallWatchdogRuntime,
+    TranscribeStallOrchestrator, TranscribeStallWatchdog, chunk_rms,
 };
 pub use status_cache::{TranscribeStatusCache, TranscribeStatusSnapshot};
 pub use transcript_block_bus::{

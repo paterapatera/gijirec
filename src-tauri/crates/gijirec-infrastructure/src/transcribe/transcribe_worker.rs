@@ -1,9 +1,9 @@
-//! Dedicated-thread PCM consumer and VAD-driven whisper inference worker.
+//! Dedicated-thread PCM consumer and fixed-interval batch whisper inference worker.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -14,12 +14,12 @@ use super::whisper_adapter::{WhisperCppAdapter, WhisperSegment};
 /// Samples per endpointing frame (100 ms @ 16 kHz, same length as an upstream PCM chunk).
 const FRAME_SAMPLES: usize = 1_600;
 
-/// Longest PCM handed to whisper.cpp in one inference (10 s @ 16 kHz).
-const MAX_INFERENCE_WINDOW_SAMPLES: usize = 160_000;
+/// Longest PCM handed to whisper.cpp in one batch inference (30 s @ 16 kHz).
+const MAX_INFERENCE_WINDOW_SAMPLES: usize = 480_000;
 
-/// Maximum samples retained while waiting for the next inference window (20 s @ 16 kHz).
-/// Two full windows so that a worker that fell behind can skip to the latest window.
-pub const MAX_PCM_BUFFER_SAMPLES: usize = MAX_INFERENCE_WINDOW_SAMPLES * 2;
+/// Maximum samples retained while waiting for the next inference window (10 min @ 16 kHz).
+/// Large enough to hold backlog when inference falls behind without dropping audio.
+pub const MAX_PCM_BUFFER_SAMPLES: usize = 9_600_000;
 
 /// Speech required before a short trailing pause closes the utterance (1 s @ 16 kHz).
 const MIN_SPEECH_SAMPLES: usize = 16_000;
@@ -38,8 +38,37 @@ const MIN_FLUSH_SAMPLES: usize = 8_000;
 
 const SAMPLE_RATE_HZ: u64 = 16_000;
 
+/// Fixed delay between completed batch inference cycles (30 s in production).
+#[cfg(not(test))]
+const BATCH_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Shorter interval for unit/integration tests that exercise batch timing.
+#[cfg(test)]
+const BATCH_INTERVAL: Duration = Duration::from_millis(100);
+
 /// Skip whisper.cpp when the window RMS is below this (near-silence).
 const SILENCE_RMS_THRESHOLD: f32 = 0.008;
+
+/// Structured fields for a batch inference cycle start event.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BatchCycleStarted {
+    pub cycle_id: u64,
+    pub samples_count: usize,
+    pub pcm_backlog_seconds: f64,
+    pub rtrb_overflow_count: u64,
+}
+
+/// Structured fields for a batch inference cycle completion event.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BatchCycleCompleted {
+    pub cycle_id: u64,
+    pub duration_ms: u64,
+    pub samples_count: usize,
+    pub segments_count: usize,
+}
+
+type BatchCycleStartedCallback = Arc<dyn Fn(BatchCycleStarted) + Send + Sync>;
+type BatchCycleCompletedCallback = Arc<dyn Fn(BatchCycleCompleted) + Send + Sync>;
 
 /// Inference engine abstraction (production: [`WhisperCppAdapter`], tests: mocks).
 pub trait SegmentEngine: Send {
@@ -77,7 +106,7 @@ impl SegmentEngine for WhisperCppAdapter {
     }
 }
 
-/// VAD-driven inference worker reading PCM from an rtrb consumer.
+/// Fixed-interval batch inference worker reading PCM from an rtrb consumer.
 pub struct TranscribeWorker<E: SegmentEngine + 'static = WhisperCppAdapter> {
     running: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
@@ -90,6 +119,9 @@ pub struct TranscribeWorker<E: SegmentEngine + 'static = WhisperCppAdapter> {
     on_engine_ready: Option<Arc<dyn Fn() + Send + Sync>>,
     on_inference_attempted: Option<Arc<dyn Fn() + Send + Sync>>,
     on_inference_progress: Option<Arc<dyn Fn(i32) + Send + Sync>>,
+    on_batch_cycle_started: Option<BatchCycleStartedCallback>,
+    on_batch_cycle_completed: Option<BatchCycleCompletedCallback>,
+    rtrb_overflow_count: Option<Arc<AtomicU64>>,
 }
 
 impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
@@ -117,6 +149,9 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
             on_engine_ready: None,
             on_inference_attempted: None,
             on_inference_progress: None,
+            on_batch_cycle_started: None,
+            on_batch_cycle_completed: None,
+            rtrb_overflow_count: None,
         }
     }
 
@@ -165,6 +200,19 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
         self.on_inference_progress = Some(callback);
     }
 
+    pub fn set_batch_cycle_started_callback(&mut self, callback: BatchCycleStartedCallback) {
+        self.on_batch_cycle_started = Some(callback);
+    }
+
+    pub fn set_batch_cycle_completed_callback(&mut self, callback: BatchCycleCompletedCallback) {
+        self.on_batch_cycle_completed = Some(callback);
+    }
+
+    /// Optional shared counter incremented when rtrb ingest hits backpressure.
+    pub fn set_rtrb_overflow_counter(&mut self, counter: Arc<AtomicU64>) {
+        self.rtrb_overflow_count = Some(counter);
+    }
+
     pub fn is_active(&self) -> bool {
         self.handle
             .as_ref()
@@ -204,6 +252,9 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
         let on_fatal = self.on_fatal.clone();
         let on_engine_ready = self.on_engine_ready.clone();
         let on_inference_attempted = self.on_inference_attempted.clone();
+        let on_batch_cycle_started = self.on_batch_cycle_started.clone();
+        let on_batch_cycle_completed = self.on_batch_cycle_completed.clone();
+        let rtrb_overflow_count = self.rtrb_overflow_count.clone();
 
         let params = WorkerParams {
             consumer,
@@ -215,6 +266,9 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
             on_fatal,
             on_engine_ready,
             on_inference_attempted,
+            on_batch_cycle_started,
+            on_batch_cycle_completed,
+            rtrb_overflow_count,
         };
         let handle = thread::Builder::new()
             .name("transcribe-worker".into())
@@ -268,6 +322,9 @@ struct WorkerParams<E> {
     on_fatal: Option<Arc<dyn Fn(TranscribeError) + Send + Sync>>,
     on_engine_ready: Option<Arc<dyn Fn() + Send + Sync>>,
     on_inference_attempted: Option<Arc<dyn Fn() + Send + Sync>>,
+    on_batch_cycle_started: Option<BatchCycleStartedCallback>,
+    on_batch_cycle_completed: Option<BatchCycleCompletedCallback>,
+    rtrb_overflow_count: Option<Arc<AtomicU64>>,
 }
 
 struct PcmBufferState {
@@ -282,6 +339,10 @@ struct InferenceContext<'a, E> {
     on_attempted: Option<&'a Arc<dyn Fn() + Send + Sync>>,
 }
 
+struct InferenceOutcome {
+    segments_count: usize,
+}
+
 fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
     let WorkerParams {
         consumer,
@@ -293,6 +354,9 @@ fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
         on_fatal,
         on_engine_ready,
         on_inference_attempted,
+        on_batch_cycle_started,
+        on_batch_cycle_completed,
+        rtrb_overflow_count,
     } = params;
 
     let pcm_buffer = Arc::new(Mutex::new(PcmBufferState {
@@ -340,17 +404,46 @@ fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
         notify();
     }
 
+    let transcribing_start = Instant::now();
+    let mut last_cycle_complete: Option<Instant> = None;
+    let mut backlog_after_last_cycle = false;
+    let mut cycle_id = 0u64;
+
     while running.load(Ordering::SeqCst) {
-        let window = take_inference_window(&pcm_buffer, false);
-        if let Some((pcm, base_samples)) = window {
-            if engine.is_loaded() {
-                let ctx = InferenceContext {
-                    engine: &mut engine,
-                    sink: &sink,
-                    on_latency: on_latency.as_ref(),
-                    on_attempted: on_inference_attempted.as_ref(),
+        let unprocessed = {
+            let state = pcm_buffer.lock().expect("pcm buffer lock");
+            state.samples.len()
+        };
+
+        let ready = match last_cycle_complete {
+            None => first_cycle_ready(transcribing_start, unprocessed),
+            Some(completed_at) => {
+                next_cycle_ready(completed_at, unprocessed, backlog_after_last_cycle)
+            }
+        };
+
+        if ready {
+            if let Some((pcm, base_samples)) = take_batch_window(&pcm_buffer) {
+                cycle_id = cycle_id.saturating_add(1);
+                run_batch_cycle(
+                    cycle_id,
+                    pcm,
+                    base_samples,
+                    samples_to_seconds(unprocessed),
+                    read_rtrb_overflow_count(&rtrb_overflow_count),
+                    engine.is_loaded(),
+                    &mut engine,
+                    &sink,
+                    on_latency.as_ref(),
+                    on_inference_attempted.as_ref(),
+                    on_batch_cycle_started.as_ref(),
+                    on_batch_cycle_completed.as_ref(),
+                );
+                last_cycle_complete = Some(Instant::now());
+                backlog_after_last_cycle = {
+                    let state = pcm_buffer.lock().expect("pcm buffer lock");
+                    !state.samples.is_empty()
                 };
-                run_inference_window(&pcm, base_samples, ctx);
             }
         } else {
             thread::sleep(Duration::from_millis(5));
@@ -361,16 +454,26 @@ fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
         let _ = handle.join();
     }
 
-    while let Some((pcm, base_samples)) = take_inference_window(&pcm_buffer, true) {
-        if engine.is_loaded() {
-            let ctx = InferenceContext {
-                engine: &mut engine,
-                sink: &sink,
-                on_latency: on_latency.as_ref(),
-                on_attempted: on_inference_attempted.as_ref(),
-            };
-            run_inference_window(&pcm, base_samples, ctx);
-        }
+    while let Some((pcm, base_samples)) = take_batch_window(&pcm_buffer) {
+        cycle_id = cycle_id.saturating_add(1);
+        let flush_backlog_samples = {
+            let state = pcm_buffer.lock().expect("pcm buffer lock");
+            state.samples.len()
+        };
+        run_batch_cycle(
+            cycle_id,
+            pcm,
+            base_samples,
+            samples_to_seconds(flush_backlog_samples),
+            read_rtrb_overflow_count(&rtrb_overflow_count),
+            engine.is_loaded(),
+            &mut engine,
+            &sink,
+            on_latency.as_ref(),
+            on_inference_attempted.as_ref(),
+            on_batch_cycle_started.as_ref(),
+            on_batch_cycle_completed.as_ref(),
+        );
     }
 
     drop(engine);
@@ -395,12 +498,46 @@ fn drain_pcm_loop(
     drain_consumer(&mut consumer, &mut state);
 }
 
+fn take_batch_window(pcm_buffer: &Arc<Mutex<PcmBufferState>>) -> Option<(Vec<f32>, u64)> {
+    let mut state = pcm_buffer.lock().expect("pcm buffer lock");
+    take_batch_window_from_state(&mut state)
+}
+
+/// Returns whether enough PCM has accumulated for a full 30 s inference window.
+fn full_batch_window_ready(unprocessed_samples: usize) -> bool {
+    unprocessed_samples >= MAX_INFERENCE_WINDOW_SAMPLES
+}
+
+/// Returns whether the first batch cycle should start (transcribing just began).
+fn first_cycle_ready(_transcribing_start: Instant, unprocessed_samples: usize) -> bool {
+    full_batch_window_ready(unprocessed_samples)
+}
+
+/// Returns whether a subsequent batch cycle should start after the previous one completed.
+///
+/// Inference requires a full 30 s window. When the previous cycle left another full window
+/// in the backlog (`backlog_after_last_cycle`), the 30 s interval is skipped so catch-up
+/// cycles run back-to-back. Otherwise the worker waits for another full window and the
+/// batch interval since the previous cycle completed.
+fn next_cycle_ready(
+    last_cycle_complete: Instant,
+    unprocessed_samples: usize,
+    backlog_after_last_cycle: bool,
+) -> bool {
+    if !full_batch_window_ready(unprocessed_samples) {
+        return false;
+    }
+    backlog_after_last_cycle || last_cycle_complete.elapsed() >= BATCH_INTERVAL
+}
+
 /// Cuts the next utterance off the buffer, or `None` when more audio is needed.
 ///
 /// Endpointing runs on 100 ms frames: leading near-silence is discarded, the window
 /// ends at the first pause long enough to mark an utterance boundary, and a window
 /// that reaches [`MAX_INFERENCE_WINDOW_SAMPLES`] is cut at the quietest frame of its
 /// last 2 s. With `flush`, a short unfinished tail is returned as well (shutdown).
+/// Legacy VAD window cutting — retained for unit tests; production uses [`take_batch_window`].
+#[allow(dead_code)]
 fn take_inference_window(
     pcm_buffer: &Arc<Mutex<PcmBufferState>>,
     flush: bool,
@@ -411,15 +548,6 @@ fn take_inference_window(
 
 fn take_window_from_state(state: &mut PcmBufferState, flush: bool) -> Option<(Vec<f32>, u64)> {
     trim_leading_silence(state);
-
-    // Live transcription: when a full window has piled up behind the one being cut,
-    // skip ahead so the transcript follows the latest audio.
-    if state.samples.len() >= MAX_INFERENCE_WINDOW_SAMPLES * 2 {
-        let overflow = state.samples.len() - MAX_INFERENCE_WINDOW_SAMPLES;
-        let _ = state.samples.drain(..overflow);
-        state.samples_before_buffer += overflow as u64;
-        trim_leading_silence(state);
-    }
 
     let cut = {
         let buf = state.samples.make_contiguous();
@@ -510,14 +638,23 @@ fn forced_cut_point(buf: &[f32]) -> usize {
 fn drain_consumer(consumer: &mut rtrb::Consumer<f32>, state: &mut PcmBufferState) -> usize {
     let mut popped = 0usize;
     while let Ok(sample) = consumer.pop() {
-        if state.samples.len() >= MAX_PCM_BUFFER_SAMPLES {
-            state.samples.pop_front();
-            state.samples_before_buffer += 1;
-        }
         state.samples.push_back(sample);
         popped += 1;
     }
     popped
+}
+
+/// Cuts the next batch window from the buffer: up to [`MAX_INFERENCE_WINDOW_SAMPLES`]
+/// from the front, with no VAD or leading-silence trimming.
+fn take_batch_window_from_state(state: &mut PcmBufferState) -> Option<(Vec<f32>, u64)> {
+    if state.samples.is_empty() {
+        return None;
+    }
+    let cut = state.samples.len().min(MAX_INFERENCE_WINDOW_SAMPLES);
+    let base_samples = state.samples_before_buffer;
+    let pcm: Vec<f32> = state.samples.drain(..cut).collect();
+    state.samples_before_buffer += cut as u64;
+    Some((pcm, base_samples))
 }
 
 fn window_rms(pcm: &[f32]) -> f32 {
@@ -528,17 +665,64 @@ fn window_rms(pcm: &[f32]) -> f32 {
     (sum_sq / pcm.len() as f32).sqrt()
 }
 
+fn run_batch_cycle<E: SegmentEngine>(
+    cycle_id: u64,
+    pcm: Vec<f32>,
+    base_samples: u64,
+    pcm_backlog_seconds: f64,
+    rtrb_overflow_count: u64,
+    engine_loaded: bool,
+    engine: &mut E,
+    sink: &Arc<dyn TranscriptSegmentSink>,
+    on_latency: Option<&Arc<dyn Fn(u64) + Send + Sync>>,
+    on_inference_attempted: Option<&Arc<dyn Fn() + Send + Sync>>,
+    on_batch_cycle_started: Option<&BatchCycleStartedCallback>,
+    on_batch_cycle_completed: Option<&BatchCycleCompletedCallback>,
+) {
+    let samples_count = pcm.len();
+    if let Some(record) = on_batch_cycle_started {
+        record(BatchCycleStarted {
+            cycle_id,
+            samples_count,
+            pcm_backlog_seconds,
+            rtrb_overflow_count,
+        });
+    }
+
+    let cycle_start = Instant::now();
+    let segments_count = if engine_loaded {
+        let ctx = InferenceContext {
+            engine,
+            sink,
+            on_latency,
+            on_attempted: on_inference_attempted,
+        };
+        run_inference_window(&pcm, base_samples, ctx).segments_count
+    } else {
+        0
+    };
+
+    if let Some(record) = on_batch_cycle_completed {
+        record(BatchCycleCompleted {
+            cycle_id,
+            duration_ms: cycle_start.elapsed().as_millis() as u64,
+            samples_count,
+            segments_count,
+        });
+    }
+}
+
 fn run_inference_window<E: SegmentEngine>(
     pcm: &[f32],
     samples_before_buffer: u64,
     ctx: InferenceContext<'_, E>,
-) {
+) -> InferenceOutcome {
     if pcm.is_empty() {
-        return;
+        return InferenceOutcome { segments_count: 0 };
     }
 
     if window_rms(pcm) < SILENCE_RMS_THRESHOLD {
-        return;
+        return InferenceOutcome { segments_count: 0 };
     }
 
     if let Some(attempted) = ctx.on_attempted {
@@ -550,24 +734,40 @@ fn run_inference_window<E: SegmentEngine>(
 
     match ctx.engine.transcribe_pcm(pcm) {
         Ok(segments) => {
+            let mut segments_count = 0usize;
             for segment in segments {
                 let trimmed = segment.text.trim();
                 if trimmed.is_empty() {
                     continue;
                 }
+                segments_count += 1;
                 let start_ms = base_ms.saturating_add(segment.start_ms.max(0) as u64);
                 let _ = ctx.sink.on_segment(trimmed, start_ms, "auto");
             }
             if let Some(record) = ctx.on_latency {
                 record(inference_start.elapsed().as_millis() as u64);
             }
+            InferenceOutcome { segments_count }
         }
-        Err(_) => {
+        Err(err) => {
+            eprintln!("WARN: batch inference failed, continuing next cycle: {err}");
             if let Some(record) = ctx.on_latency {
                 record(inference_start.elapsed().as_millis() as u64);
             }
+            InferenceOutcome { segments_count: 0 }
         }
     }
+}
+
+fn read_rtrb_overflow_count(counter: &Option<Arc<AtomicU64>>) -> u64 {
+    counter
+        .as_ref()
+        .map(|value| value.load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
+fn samples_to_seconds(samples: usize) -> f64 {
+    samples as f64 / SAMPLE_RATE_HZ as f64
 }
 
 fn samples_to_ms(samples: u64) -> u64 {
@@ -580,7 +780,7 @@ mod tests {
     use gijirec_domain::transcribe::TranscribeErrorCode;
     use rtrb::RingBuffer;
     use std::sync::Mutex;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicU64, AtomicUsize};
 
     struct RecordingSink {
         segments: Arc<Mutex<Vec<(String, u64, String)>>>,
@@ -677,6 +877,19 @@ mod tests {
         push_samples(prod, 0.0, UTTERANCE_SILENCE_SAMPLES);
     }
 
+    /// Pads the producer to a full 30 s batch window (required before normal inference).
+    fn pad_to_full_batch_window(prod: &mut rtrb::Producer<f32>, samples_already_pushed: usize) {
+        let remaining = MAX_INFERENCE_WINDOW_SAMPLES.saturating_sub(samples_already_pushed);
+        if remaining > 0 {
+            push_samples(prod, 0.0, remaining);
+        }
+    }
+
+    fn push_full_batch_utterance(prod: &mut rtrb::Producer<f32>, value: f32) {
+        push_utterance(prod, value);
+        pad_to_full_batch_window(prod, UTTERANCE_SAMPLES);
+    }
+
     fn state_with(samples: &[f32]) -> PcmBufferState {
         PcmBufferState {
             samples: samples.iter().copied().collect(),
@@ -694,6 +907,386 @@ mod tests {
 
     fn concat(parts: &[Vec<f32>]) -> Vec<f32> {
         parts.iter().flatten().copied().collect()
+    }
+
+    #[test]
+    fn first_cycle_not_ready_after_interval_with_partial_buffer() {
+        let start = Instant::now() - BATCH_INTERVAL - Duration::from_millis(1);
+        assert!(
+            !first_cycle_ready(start, 200_000),
+            "partial buffer must not trigger even after batch interval"
+        );
+    }
+
+    #[test]
+    fn first_cycle_ready_at_max_window_before_interval() {
+        let start = Instant::now();
+        assert!(
+            first_cycle_ready(start, MAX_INFERENCE_WINDOW_SAMPLES),
+            "480k samples must trigger first cycle without waiting"
+        );
+    }
+
+    #[test]
+    fn first_cycle_not_ready_with_zero_samples() {
+        let start = Instant::now() - BATCH_INTERVAL - Duration::from_millis(1);
+        assert!(
+            !first_cycle_ready(start, 0),
+            "empty buffer must not start a cycle even after interval"
+        );
+    }
+
+    #[test]
+    fn next_cycle_not_ready_after_interval_with_partial_buffer() {
+        let completed = Instant::now() - BATCH_INTERVAL - Duration::from_millis(1);
+        assert!(
+            !next_cycle_ready(completed, 200_000, false),
+            "partial buffer must not trigger even after batch interval"
+        );
+    }
+
+    #[test]
+    fn next_cycle_ready_immediately_when_full_window_backlog_remains() {
+        let completed = Instant::now();
+        assert!(
+            next_cycle_ready(completed, MAX_INFERENCE_WINDOW_SAMPLES, true),
+            "full-window backlog after previous cycle must skip batch interval"
+        );
+        assert!(
+            !next_cycle_ready(completed, 100_000, true),
+            "partial backlog must wait for another full window"
+        );
+    }
+
+    #[test]
+    fn next_cycle_ready_after_interval_with_full_window() {
+        let completed = Instant::now() - BATCH_INTERVAL - Duration::from_millis(1);
+        assert!(
+            next_cycle_ready(completed, MAX_INFERENCE_WINDOW_SAMPLES, false),
+            "full window after interval must start next cycle"
+        );
+    }
+
+    #[test]
+    fn next_cycle_not_ready_with_zero_samples_after_interval() {
+        let completed = Instant::now() - BATCH_INTERVAL - Duration::from_millis(1);
+        assert!(
+            !next_cycle_ready(completed, 0, false),
+            "empty buffer must not start next cycle"
+        );
+    }
+
+    #[test]
+    fn batch_worker_waits_for_full_window_before_first_inference() {
+        let (sink, segments) = recording_sink();
+        let inference_started = Arc::new(AtomicBool::new(false));
+        let engine = MockEngine {
+            segments: vec![WhisperSegment {
+                text: "batch".to_string(),
+                start_ms: 0,
+                end_ms: 100,
+            }],
+            inference_started: Some(Arc::clone(&inference_started)),
+            ..MockEngine::default()
+        };
+        let mut worker = TranscribeWorker::with_engine(sink, engine);
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES + 10_000);
+        worker.attach_pcm_consumer(cons);
+        worker.spawn().expect("spawn");
+
+        push_samples(&mut prod, 0.2, 50_000);
+        thread::sleep(BATCH_INTERVAL + Duration::from_millis(20));
+        assert!(
+            !inference_started.load(Ordering::SeqCst),
+            "partial buffer must not infer even after batch interval"
+        );
+
+        push_samples(&mut prod, 0.2, MAX_INFERENCE_WINDOW_SAMPLES - 50_000);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !inference_started.load(Ordering::SeqCst) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(inference_started.load(Ordering::SeqCst));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while segments.lock().expect("lock").is_empty() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(segments.lock().expect("lock")[0].0, "batch");
+
+        worker.stop_and_join(Duration::from_secs(1)).expect("stop");
+    }
+
+    #[test]
+    fn batch_worker_waits_interval_between_cycles() {
+        let (sink, segments) = recording_sink();
+        let inference_count = Arc::new(AtomicU64::new(0));
+        let inference_count_capture = Arc::clone(&inference_count);
+
+        struct CountingEngine {
+            inner: MockEngine,
+            count: Arc<AtomicU64>,
+        }
+
+        impl SegmentEngine for CountingEngine {
+            fn transcribe_pcm(
+                &mut self,
+                pcm: &[f32],
+            ) -> Result<Vec<WhisperSegment>, TranscribeError> {
+                if !pcm.is_empty() {
+                    self.count.fetch_add(1, Ordering::SeqCst);
+                }
+                self.inner.transcribe_pcm(pcm)
+            }
+
+            fn is_loaded(&self) -> bool {
+                self.inner.is_loaded()
+            }
+        }
+
+        impl ModelPathLoadable for CountingEngine {
+            fn load_from_path_if_needed(
+                &mut self,
+                path: &std::path::Path,
+            ) -> Result<(), TranscribeError> {
+                self.inner.load_from_path_if_needed(path)
+            }
+        }
+
+        let engine = CountingEngine {
+            inner: MockEngine {
+                segments: vec![WhisperSegment {
+                    text: "cycle".to_string(),
+                    start_ms: 0,
+                    end_ms: 100,
+                }],
+                ..MockEngine::default()
+            },
+            count: inference_count_capture,
+        };
+        let mut worker = TranscribeWorker::with_engine(sink, engine);
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES * 2);
+        worker.attach_pcm_consumer(cons);
+        worker.spawn().expect("spawn");
+
+        push_samples(&mut prod, 0.3, MAX_INFERENCE_WINDOW_SAMPLES);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while inference_count.load(Ordering::SeqCst) < 1 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(inference_count.load(Ordering::SeqCst), 1);
+
+        push_samples(&mut prod, 0.4, MAX_INFERENCE_WINDOW_SAMPLES);
+        thread::sleep(BATCH_INTERVAL / 2);
+        assert_eq!(
+            inference_count.load(Ordering::SeqCst),
+            1,
+            "second cycle must wait for batch interval after first completes"
+        );
+
+        let deadline = Instant::now() + BATCH_INTERVAL * 3;
+        while inference_count.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(inference_count.load(Ordering::SeqCst), 2);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while segments.lock().expect("lock").len() < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(segments.lock().expect("lock").len(), 2);
+
+        worker.stop_and_join(Duration::from_secs(1)).expect("stop");
+    }
+
+    #[test]
+    fn batch_worker_runs_continuous_cycles_on_backlog() {
+        let (sink, segments) = recording_sink();
+        let inference_count = Arc::new(AtomicU64::new(0));
+        let inference_count_capture = Arc::clone(&inference_count);
+
+        struct CountingEngine {
+            inner: MockEngine,
+            count: Arc<AtomicU64>,
+        }
+
+        impl SegmentEngine for CountingEngine {
+            fn transcribe_pcm(
+                &mut self,
+                pcm: &[f32],
+            ) -> Result<Vec<WhisperSegment>, TranscribeError> {
+                if !pcm.is_empty() {
+                    self.count.fetch_add(1, Ordering::SeqCst);
+                }
+                self.inner.transcribe_pcm(pcm)
+            }
+
+            fn is_loaded(&self) -> bool {
+                self.inner.is_loaded()
+            }
+        }
+
+        impl ModelPathLoadable for CountingEngine {
+            fn load_from_path_if_needed(
+                &mut self,
+                path: &std::path::Path,
+            ) -> Result<(), TranscribeError> {
+                self.inner.load_from_path_if_needed(path)
+            }
+        }
+
+        let engine = CountingEngine {
+            inner: MockEngine {
+                segments: vec![WhisperSegment {
+                    text: "backlog".to_string(),
+                    start_ms: 0,
+                    end_ms: 100,
+                }],
+                ..MockEngine::default()
+            },
+            count: inference_count_capture,
+        };
+        let mut worker = TranscribeWorker::with_engine(sink, engine);
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES * 2 + 100_000);
+        worker.attach_pcm_consumer(cons);
+        worker.spawn().expect("spawn");
+
+        push_samples(
+            &mut prod,
+            0.5,
+            MAX_INFERENCE_WINDOW_SAMPLES * 2,
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while inference_count.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            inference_count.load(Ordering::SeqCst),
+            2,
+            "backlog must trigger immediate second cycle without waiting for batch interval"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while segments.lock().expect("lock").len() < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(segments.lock().expect("lock").len(), 2);
+
+        worker.stop_and_join(Duration::from_secs(1)).expect("stop");
+    }
+
+    #[test]
+    fn stop_flush_transcribes_remaining_pcm_as_batch() {
+        let (sink, segments) = recording_sink();
+        let engine = MockEngine {
+            segments: vec![WhisperSegment {
+                text: "flushed".to_string(),
+                start_ms: 0,
+                end_ms: 100,
+            }],
+            ..MockEngine::default()
+        };
+        let mut worker = TranscribeWorker::with_engine(sink, engine);
+        let (mut prod, cons) = ring_pair(100_000);
+        worker.attach_pcm_consumer(cons);
+        worker.spawn().expect("spawn");
+
+        push_samples(&mut prod, 0.2, 50_000);
+
+        thread::sleep(BATCH_INTERVAL / 2);
+        assert!(
+            segments.lock().expect("lock").is_empty(),
+            "partial buffer below interval must not infer before stop"
+        );
+
+        worker.stop_and_join(Duration::from_secs(2)).expect("stop");
+
+        let recorded = segments.lock().expect("lock").clone();
+        assert_eq!(recorded.len(), 1, "stop flush must transcribe remaining PCM");
+        assert_eq!(recorded[0].0, "flushed");
+    }
+
+    #[test]
+    fn inference_failure_continues_next_cycle() {
+        let (sink, segments) = recording_sink();
+        let attempt_count = Arc::new(AtomicU64::new(0));
+        let attempt_count_capture = Arc::clone(&attempt_count);
+
+        struct FailOnceEngine {
+            attempts: Arc<AtomicU64>,
+        }
+
+        impl SegmentEngine for FailOnceEngine {
+            fn transcribe_pcm(
+                &mut self,
+                pcm: &[f32],
+            ) -> Result<Vec<WhisperSegment>, TranscribeError> {
+                if pcm.is_empty() {
+                    return Ok(Vec::new());
+                }
+                let n = self.attempts.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    return Err(TranscribeError::InferenceFailed {
+                        detail: "injected failure".to_string(),
+                    });
+                }
+                Ok(vec![WhisperSegment {
+                    text: "recovered".to_string(),
+                    start_ms: 0,
+                    end_ms: 100,
+                }])
+            }
+
+            fn is_loaded(&self) -> bool {
+                true
+            }
+        }
+
+        impl ModelPathLoadable for FailOnceEngine {
+            fn load_from_path_if_needed(
+                &mut self,
+                _path: &std::path::Path,
+            ) -> Result<(), TranscribeError> {
+                Ok(())
+            }
+        }
+
+        let mut worker = TranscribeWorker::with_engine(
+            sink,
+            FailOnceEngine {
+                attempts: attempt_count_capture,
+            },
+        );
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES * 2 + 100_000);
+        worker.attach_pcm_consumer(cons);
+        worker.spawn().expect("spawn");
+
+        push_samples(
+            &mut prod,
+            0.6,
+            MAX_INFERENCE_WINDOW_SAMPLES * 2,
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while segments.lock().expect("lock").is_empty() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let recorded = segments.lock().expect("lock").clone();
+        assert!(
+            !recorded.is_empty(),
+            "worker must continue after inference failure"
+        );
+        assert_eq!(recorded[0].0, "recovered");
+        assert!(
+            attempt_count.load(Ordering::SeqCst) >= 2,
+            "failed cycle must be followed by a retry on backlog"
+        );
+
+        worker.stop_and_join(Duration::from_secs(2)).expect("stop");
     }
 
     #[test]
@@ -762,8 +1355,8 @@ mod tests {
     #[test]
     fn forced_cut_lands_on_the_quietest_frame_of_the_last_two_seconds() {
         let mut pcm = tone(0.5, MAX_INFERENCE_WINDOW_SAMPLES);
-        // A dip that is audible (above the silence threshold) ending at 9.0 s.
-        let dip_end = 144_000;
+        // A dip that is audible (above the silence threshold) ending at 29.0 s.
+        let dip_end = 464_000;
         for sample in &mut pcm[dip_end - FRAME_SAMPLES..dip_end] {
             *sample = 0.02;
         }
@@ -791,17 +1384,80 @@ mod tests {
     }
 
     #[test]
-    fn skips_to_latest_window_when_two_windows_behind() {
-        let mut state = state_with(&concat(&[
-            tone(0.4, MAX_INFERENCE_WINDOW_SAMPLES),
-            tone(0.8, MAX_INFERENCE_WINDOW_SAMPLES),
-        ]));
+    fn take_batch_window_cuts_first_480k_samples() {
+        let mut state = state_with(&tone(0.5, MAX_INFERENCE_WINDOW_SAMPLES + 100_000));
 
-        let (window, base) = take_window_from_state(&mut state, false).expect("window");
+        let (pcm, base) = take_batch_window_from_state(&mut state).expect("window");
 
-        assert_eq!(base, MAX_INFERENCE_WINDOW_SAMPLES as u64);
-        assert!((window[0] - 0.8).abs() < f32::EPSILON);
-        assert_eq!(window.len(), MAX_INFERENCE_WINDOW_SAMPLES);
+        assert_eq!(base, 0);
+        assert_eq!(pcm.len(), MAX_INFERENCE_WINDOW_SAMPLES);
+        assert_eq!(state.samples.len(), 100_000);
+        assert_eq!(
+            state.samples_before_buffer,
+            MAX_INFERENCE_WINDOW_SAMPLES as u64
+        );
+    }
+
+    #[test]
+    fn take_batch_window_respects_base_offset() {
+        let mut state = PcmBufferState {
+            samples: tone(0.3, 100_000).into_iter().collect(),
+            samples_before_buffer: 1_000_000,
+        };
+
+        let (pcm, base) = take_batch_window_from_state(&mut state).expect("window");
+
+        assert_eq!(base, 1_000_000);
+        assert_eq!(pcm.len(), 100_000);
+        assert_eq!(state.samples_before_buffer, 1_100_000);
+        assert!(state.samples.is_empty());
+    }
+
+    #[test]
+    fn take_batch_window_returns_partial_when_below_max() {
+        let mut state = state_with(&tone(0.2, 200_000));
+
+        let (pcm, base) = take_batch_window_from_state(&mut state).expect("window");
+
+        assert_eq!(base, 0);
+        assert_eq!(pcm.len(), 200_000);
+        assert!(state.samples.is_empty());
+    }
+
+    #[test]
+    fn take_batch_window_returns_none_when_empty() {
+        let mut state = state_with(&[]);
+        assert!(take_batch_window_from_state(&mut state).is_none());
+    }
+
+    #[test]
+    fn drain_consumer_retains_all_samples_past_old_buffer_cap() {
+        let (mut prod, mut cons) = ring_pair(600_000);
+        let mut state = PcmBufferState {
+            samples: VecDeque::new(),
+            samples_before_buffer: 0,
+        };
+        let push_count = 500_000usize;
+        for i in 0..push_count {
+            prod.push(i as f32 * 0.000_1).expect("push pcm");
+        }
+
+        let mut drained = 0usize;
+        while drained < push_count {
+            drained += drain_consumer(&mut cons, &mut state);
+        }
+
+        let retained = state.samples.len() + state.samples_before_buffer as usize;
+        assert_eq!(
+            drained,
+            push_count,
+            "drain must pop every sample from the ring buffer"
+        );
+        assert_eq!(
+            retained,
+            push_count,
+            "no samples may be silently dropped when buffer exceeds old cap"
+        );
     }
 
     #[test]
@@ -955,11 +1611,11 @@ mod tests {
             ..MockEngine::default()
         };
         let mut worker = TranscribeWorker::with_engine(sink, engine);
-        let (mut prod, cons) = ring_pair(UTTERANCE_SAMPLES + 1_024);
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES + 1_024);
         worker.attach_pcm_consumer(cons);
         worker.spawn().expect("spawn");
 
-        push_utterance(&mut prod, 0.1);
+        push_full_batch_utterance(&mut prod, 0.1);
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while segments.lock().expect("lock").is_empty() && Instant::now() < deadline {
@@ -995,11 +1651,11 @@ mod tests {
             ..MockEngine::default()
         };
         let mut worker = TranscribeWorker::with_engine(sink, engine);
-        let (mut prod, cons) = ring_pair(UTTERANCE_SAMPLES + 1_024);
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES + 1_024);
         worker.attach_pcm_consumer(cons);
         worker.spawn().expect("spawn");
 
-        push_utterance(&mut prod, 0.2);
+        push_full_batch_utterance(&mut prod, 0.2);
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while segments.lock().expect("lock").is_empty() && Instant::now() < deadline {
@@ -1022,11 +1678,11 @@ mod tests {
             ..MockEngine::default()
         };
         let mut worker = TranscribeWorker::with_engine(sink, engine);
-        let (mut prod, cons) = ring_pair(UTTERANCE_SAMPLES + 1_024);
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES + 1_024);
         worker.attach_pcm_consumer(cons);
         worker.spawn().expect("spawn");
 
-        push_utterance(&mut prod, 0.3);
+        push_full_batch_utterance(&mut prod, 0.3);
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while !inference_started.load(Ordering::SeqCst) && Instant::now() < deadline {
@@ -1065,11 +1721,11 @@ mod tests {
             called_capture.store(true, Ordering::SeqCst);
             latency_capture.store(ms, Ordering::SeqCst);
         }));
-        let (mut prod, cons) = ring_pair(UTTERANCE_SAMPLES + 1_024);
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES + 1_024);
         worker.attach_pcm_consumer(cons);
         worker.spawn().expect("spawn");
 
-        push_utterance(&mut prod, 0.4);
+        push_full_batch_utterance(&mut prod, 0.4);
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while !called.load(Ordering::SeqCst) && Instant::now() < deadline {
@@ -1078,6 +1734,61 @@ mod tests {
 
         assert!(called.load(Ordering::SeqCst));
         worker.stop_and_join(Duration::from_secs(1)).expect("stop");
+    }
+
+    #[test]
+    fn batch_cycle_observability_callbacks_record_started_and_completed() {
+        let (sink, segments) = recording_sink();
+        let started = Arc::new(Mutex::new(Vec::<BatchCycleStarted>::new()));
+        let completed = Arc::new(Mutex::new(Vec::<BatchCycleCompleted>::new()));
+        let started_capture = Arc::clone(&started);
+        let completed_capture = Arc::clone(&completed);
+        let engine = MockEngine {
+            segments: vec![WhisperSegment {
+                text: "observed".to_string(),
+                start_ms: 0,
+                end_ms: 100,
+            }],
+            ..MockEngine::default()
+        };
+        let mut worker = TranscribeWorker::with_engine(sink, engine);
+        worker.set_batch_cycle_started_callback(Arc::new(move |event| {
+            started_capture.lock().expect("lock").push(event);
+        }));
+        worker.set_batch_cycle_completed_callback(Arc::new(move |event| {
+            completed_capture.lock().expect("lock").push(event);
+        }));
+        let overflow = Arc::new(AtomicU64::new(3));
+        worker.set_rtrb_overflow_counter(Arc::clone(&overflow));
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES + 1_024);
+        worker.attach_pcm_consumer(cons);
+        worker.spawn().expect("spawn");
+
+        push_samples(&mut prod, 0.2, MAX_INFERENCE_WINDOW_SAMPLES);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while segments.lock().expect("lock").is_empty() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        worker.stop_and_join(Duration::from_secs(1)).expect("stop");
+
+        let started_events = started.lock().expect("lock");
+        assert!(
+            !started_events.is_empty(),
+            "batch cycle started callback should fire"
+        );
+        assert_eq!(started_events[0].cycle_id, 1);
+        assert_eq!(started_events[0].rtrb_overflow_count, 3);
+        assert!(started_events[0].pcm_backlog_seconds > 0.0);
+
+        let completed_events = completed.lock().expect("lock");
+        assert!(
+            !completed_events.is_empty(),
+            "batch cycle completed callback should fire"
+        );
+        assert_eq!(completed_events[0].cycle_id, started_events[0].cycle_id);
+        assert_eq!(completed_events[0].segments_count, 1);
     }
 
     #[test]
@@ -1096,13 +1807,14 @@ mod tests {
             ..MockEngine::default()
         };
         let mut worker = TranscribeWorker::with_engine(sink, engine);
-        let (mut prod, cons) = ring_pair(MAX_PCM_BUFFER_SAMPLES * 2 + MAX_INFERENCE_WINDOW_SAMPLES);
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES * 2 + UTTERANCE_SAMPLES);
         worker.attach_pcm_consumer(cons);
         worker.spawn().expect("spawn");
 
         let pump = thread::spawn(move || {
             let mut pushed = 0usize;
-            for _ in 0..MAX_PCM_BUFFER_SAMPLES + MAX_INFERENCE_WINDOW_SAMPLES {
+            let target = MAX_INFERENCE_WINDOW_SAMPLES * 2;
+            for _ in 0..target {
                 prod.push(0.5)
                     .expect("pcm should keep draining during slow inference");
                 pushed += 1;
@@ -1168,24 +1880,29 @@ mod tests {
     }
 
     #[test]
-    fn transcribes_latest_window_when_inference_falls_behind() {
+    fn transcribes_first_window_when_inference_falls_behind() {
         let (sink, segments) = recording_sink();
         let inference_started = Arc::new(AtomicBool::new(false));
         let unblock = Arc::new(AtomicBool::new(false));
-        let last_first_sample = Arc::new(Mutex::new(None::<f32>));
-        let last_first_sample_capture = Arc::clone(&last_first_sample);
+        let window_first_samples = Arc::new(Mutex::new(Vec::<f32>::new()));
+        let window_first_samples_capture = Arc::clone(&window_first_samples);
 
-        struct LatestWindowEngine {
+        struct OrderedWindowEngine {
             inner: MockEngine,
-            last_first_sample: Arc<Mutex<Option<f32>>>,
+            window_first_samples: Arc<Mutex<Vec<f32>>>,
         }
 
-        impl SegmentEngine for LatestWindowEngine {
+        impl SegmentEngine for OrderedWindowEngine {
             fn transcribe_pcm(
                 &mut self,
                 pcm: &[f32],
             ) -> Result<Vec<WhisperSegment>, TranscribeError> {
-                *self.last_first_sample.lock().expect("lock") = pcm.first().copied();
+                if let Some(sample) = pcm.first() {
+                    self.window_first_samples
+                        .lock()
+                        .expect("lock")
+                        .push(*sample);
+                }
                 self.inner.transcribe_pcm(pcm)
             }
 
@@ -1194,7 +1911,7 @@ mod tests {
             }
         }
 
-        impl ModelPathLoadable for LatestWindowEngine {
+        impl ModelPathLoadable for OrderedWindowEngine {
             fn load_from_path_if_needed(
                 &mut self,
                 path: &std::path::Path,
@@ -1203,10 +1920,10 @@ mod tests {
             }
         }
 
-        let engine = LatestWindowEngine {
+        let engine = OrderedWindowEngine {
             inner: MockEngine {
                 segments: vec![WhisperSegment {
-                    text: "latest".to_string(),
+                    text: "first".to_string(),
                     start_ms: 0,
                     end_ms: 100,
                 }],
@@ -1214,14 +1931,14 @@ mod tests {
                 block_until: Some(Arc::clone(&unblock)),
                 ..MockEngine::default()
             },
-            last_first_sample: last_first_sample_capture,
+            window_first_samples: window_first_samples_capture,
         };
         let mut worker = TranscribeWorker::with_engine(sink, engine);
         let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES * 3 + UTTERANCE_SAMPLES);
         worker.attach_pcm_consumer(cons);
         worker.spawn().expect("spawn");
 
-        push_utterance(&mut prod, 0.1);
+        push_full_batch_utterance(&mut prod, 0.1);
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while !inference_started.load(Ordering::SeqCst) && Instant::now() < deadline {
@@ -1229,7 +1946,7 @@ mod tests {
         }
         assert!(inference_started.load(Ordering::SeqCst));
 
-        // Two full windows arrive while inference is blocked: the stale one must be skipped.
+        // Two full windows arrive while inference is blocked: the first utterance must be kept.
         push_samples(&mut prod, 0.4, MAX_INFERENCE_WINDOW_SAMPLES);
         push_samples(&mut prod, 0.8, MAX_INFERENCE_WINDOW_SAMPLES);
 
@@ -1237,20 +1954,29 @@ mod tests {
         unblock.store(true, Ordering::SeqCst);
 
         let deadline = Instant::now() + Duration::from_secs(2);
-        while segments.lock().expect("lock").len() < 2 && Instant::now() < deadline {
+        while segments.lock().expect("lock").is_empty() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(10));
         }
 
         let recorded = segments.lock().expect("lock").clone();
+        assert!(!recorded.is_empty(), "expected inference on buffered audio");
+        let ordered = window_first_samples.lock().expect("lock").clone();
         assert!(
-            recorded.len() >= 2,
-            "expected catch-up inference on latest audio"
+            !ordered.is_empty(),
+            "expected at least one inference window"
         );
-        let first_sample = last_first_sample.lock().expect("lock").unwrap_or(0.0);
         assert!(
-            (first_sample - 0.8).abs() < f32::EPSILON,
-            "behind worker must transcribe the latest window, got first sample {first_sample}"
+            (ordered[0] - 0.1).abs() < f32::EPSILON,
+            "behind worker must transcribe the first window in order, got first sample {}",
+            ordered[0]
         );
+        if ordered.len() >= 2 {
+            assert!(
+                (ordered[1] - 0.4).abs() < f32::EPSILON,
+                "backlog catch-up must preserve FIFO order, got second sample {}",
+                ordered[1]
+            );
+        }
 
         worker.stop_and_join(Duration::from_secs(2)).expect("stop");
     }
@@ -1265,5 +1991,147 @@ mod tests {
         let err = worker.spawn().expect_err("second spawn");
         assert!(matches!(err, TranscribeError::Internal { .. }));
         worker.stop_and_join(Duration::from_secs(1)).expect("stop");
+    }
+
+    #[test]
+    fn run_inference_window_timestamp_uses_batch_window_front_plus_segment_offset() {
+        let (sink, segments) = recording_sink();
+        let sink_trait: Arc<dyn TranscriptSegmentSink> = sink;
+        let mut engine = MockEngine {
+            segments: vec![WhisperSegment {
+                text: "timed".to_string(),
+                start_ms: 500,
+                end_ms: 1_000,
+            }],
+            ..MockEngine::default()
+        };
+        let ctx = InferenceContext {
+            engine: &mut engine,
+            sink: &sink_trait,
+            on_latency: None,
+            on_attempted: None,
+        };
+        let pcm = tone(0.5, 1_600);
+        run_inference_window(&pcm, 160_000, ctx);
+
+        let recorded = segments.lock().expect("lock");
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            recorded[0].1,
+            10_500,
+            "start_ms must be samples_before_buffer (10_000 ms) + segment offset (500 ms)"
+        );
+    }
+
+    #[test]
+    fn batch_worker_emits_start_timestamp_from_batch_window_base() {
+        let (sink, segments) = recording_sink();
+        let engine = MockEngine {
+            segments: vec![WhisperSegment {
+                text: "offset batch".to_string(),
+                start_ms: 500,
+                end_ms: 2_000,
+            }],
+            ..MockEngine::default()
+        };
+        let mut worker = TranscribeWorker::with_engine(sink, engine);
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES * 2);
+        worker.attach_pcm_consumer(cons);
+        worker.spawn().expect("spawn");
+
+        // Advance samples_before_buffer with a silent full window, then infer speech at 30 s offset.
+        push_samples(&mut prod, 0.0, MAX_INFERENCE_WINDOW_SAMPLES);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while segments.lock().expect("lock").is_empty() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            segments.lock().expect("lock").is_empty(),
+            "silent full window must not emit transcript blocks"
+        );
+
+        push_samples(&mut prod, 0.5, MAX_INFERENCE_WINDOW_SAMPLES);
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while segments.lock().expect("lock").is_empty() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let recorded = segments.lock().expect("lock").clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].0, "offset batch");
+        assert_eq!(
+            recorded[0].1,
+            30_500,
+            "timestamp must use batch window front (30_000 ms) + segment offset (500 ms)"
+        );
+
+        worker.stop_and_join(Duration::from_secs(2)).expect("stop");
+    }
+
+    #[test]
+    fn start_timestamp_ms_is_monotonic_across_batch_cycles() {
+        let (sink, segments) = recording_sink();
+        let cycle = Arc::new(AtomicUsize::new(0));
+        let cycle_capture = Arc::clone(&cycle);
+
+        struct MultiCycleEngine {
+            cycle: Arc<AtomicUsize>,
+        }
+
+        impl SegmentEngine for MultiCycleEngine {
+            fn transcribe_pcm(
+                &mut self,
+                _pcm: &[f32],
+            ) -> Result<Vec<WhisperSegment>, TranscribeError> {
+                let index = self.cycle.fetch_add(1, Ordering::SeqCst);
+                let base_ms = index as i64 * 30_000;
+                Ok(vec![WhisperSegment {
+                    text: format!("cycle-{index}"),
+                    start_ms: base_ms + 100,
+                    end_ms: base_ms + 500,
+                }])
+            }
+
+            fn is_loaded(&self) -> bool {
+                true
+            }
+        }
+
+        impl ModelPathLoadable for MultiCycleEngine {
+            fn load_from_path_if_needed(
+                &mut self,
+                _path: &std::path::Path,
+            ) -> Result<(), TranscribeError> {
+                Ok(())
+            }
+        }
+
+        let mut worker = TranscribeWorker::with_engine(
+            sink,
+            MultiCycleEngine {
+                cycle: cycle_capture,
+            },
+        );
+        let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES * 2 + 1_024);
+        worker.attach_pcm_consumer(cons);
+        worker.spawn().expect("spawn");
+
+        push_samples(&mut prod, 0.5, MAX_INFERENCE_WINDOW_SAMPLES * 2);
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while segments.lock().expect("lock").len() < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let recorded = segments.lock().expect("lock").clone();
+        assert_eq!(recorded.len(), 2);
+        assert!(
+            recorded[1].1 > recorded[0].1,
+            "start_timestamp_ms must increase across consecutive batch cycles"
+        );
+
+        worker.stop_and_join(Duration::from_secs(2)).expect("stop");
     }
 }

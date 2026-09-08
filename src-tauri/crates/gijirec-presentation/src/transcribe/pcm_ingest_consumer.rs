@@ -2,8 +2,12 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use gijirec_domain::audio::pcm_chunk::{PcmChunk, PcmChunkConsumer, PcmConsumerError};
+
+/// Max spin wait for rtrb space before signaling backpressure (bus re-queues chunk).
+const RTRB_PUSH_SPIN_BUDGET: Duration = Duration::from_millis(5);
 
 /// Metrics hook for recording sequence gaps.
 pub type SequenceGapCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
@@ -11,13 +15,15 @@ pub type SequenceGapCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
 /// Hook invoked with chunk RMS after PCM normalization (e.g. stall watchdog input detection).
 pub type PcmChunkRmsCallback = Arc<dyn Fn(f32) + Send + Sync>;
 
-/// Ingests [`PcmChunk`]s from `PcmChunkBus` directly into an `rtrb::Producer<f32>`
-/// with non-blocking conversion to `f32` in `[-1.0, 1.0]`.
+/// Ingests [`PcmChunk`]s from `PcmChunkBus` into an `rtrb::Producer<f32>` with normalized
+/// `f32` samples. When the rtrb lacks space, spins briefly then returns
+/// [`PcmConsumerError::Disconnected`] so the bus can re-queue the chunk without sample loss.
 pub struct PcmIngestConsumer {
     producer: Mutex<rtrb::Producer<f32>>,
     last_sequence: AtomicU64,
     has_seen_first_chunk: AtomicBool,
     sequence_gaps_total: AtomicU64,
+    rtrb_overflow_count: Arc<AtomicU64>,
     on_sequence_gap: Option<SequenceGapCallback>,
     on_pcm_rms: Option<PcmChunkRmsCallback>,
 }
@@ -30,6 +36,7 @@ impl PcmIngestConsumer {
             last_sequence: AtomicU64::new(0),
             has_seen_first_chunk: AtomicBool::new(false),
             sequence_gaps_total: AtomicU64::new(0),
+            rtrb_overflow_count: Arc::new(AtomicU64::new(0)),
             on_sequence_gap: None,
             on_pcm_rms: None,
         }
@@ -50,6 +57,16 @@ impl PcmIngestConsumer {
         self.sequence_gaps_total.load(Ordering::Relaxed)
     }
 
+    /// Returns how often rtrb push hit backpressure (spin budget exhausted).
+    pub fn rtrb_overflow_count(&self) -> u64 {
+        self.rtrb_overflow_count.load(Ordering::Relaxed)
+    }
+
+    /// Shared counter for wiring into batch observability on the worker.
+    pub fn rtrb_overflow_counter(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.rtrb_overflow_count)
+    }
+
     /// Resets sequence tracking (e.g., at new capture session boundary).
     pub fn reset_sequence_tracking(&self) {
         self.has_seen_first_chunk.store(false, Ordering::Relaxed);
@@ -63,6 +80,26 @@ impl PcmIngestConsumer {
                 .fetch_add(gap_count, Ordering::Relaxed);
             if let Some(ref cb) = self.on_sequence_gap {
                 cb(last, seq);
+            }
+        }
+    }
+
+    /// Pushes normalized samples atomically; spins briefly for space, then signals backpressure.
+    fn push_normalized_samples(
+        producer: &mut rtrb::Producer<f32>,
+        samples: &[f32],
+    ) -> Result<(), PcmConsumerError> {
+        let deadline = Instant::now() + RTRB_PUSH_SPIN_BUDGET;
+        loop {
+            match producer.push_entire_slice(samples) {
+                Ok(()) => return Ok(()),
+                Err(rtrb::chunks::ChunkError::TooFewSlots(_)) => {
+                    if Instant::now() >= deadline {
+                        // Disconnected lets PcmChunkBus re-queue the chunk without counting a drop.
+                        return Err(PcmConsumerError::Disconnected);
+                    }
+                    std::thread::yield_now();
+                }
             }
         }
     }
@@ -86,16 +123,21 @@ impl PcmChunkConsumer for PcmIngestConsumer {
             .map_err(|e| PcmConsumerError::Internal(format!("poisoned producer lock: {e}")))?;
 
         let samples = chunk.samples();
+        let mut normalized = Vec::with_capacity(samples.len());
         let mut sum_sq = 0.0f32;
         for &sample in samples {
-            // Normalize i16 (-32768..=32767) to f32 (-1.0..=1.0)
-            let normalized = (sample as f32) / 32768.0;
-            sum_sq += normalized * normalized;
-            if let Err(rtrb::PushError::Full(_)) = producer.push(normalized) {
-                // When rtrb is full, return error so bus knows chunks were dropped or backpressured
-                return Err(PcmConsumerError::Internal("rtrb buffer full".to_string()));
-            }
+            let value = (sample as f32) / 32768.0;
+            sum_sq += value * value;
+            normalized.push(value);
         }
+
+        Self::push_normalized_samples(&mut producer, &normalized).map_err(|err| {
+            if matches!(err, PcmConsumerError::Disconnected) {
+                self.rtrb_overflow_count
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            err
+        })?;
 
         if let Some(ref cb) = self.on_pcm_rms
             && !samples.is_empty()
@@ -179,13 +221,45 @@ mod tests {
     }
 
     #[test]
-    fn returns_internal_error_when_rtrb_is_full() {
-        let (prod, _cons) = rtrb::RingBuffer::<f32>::new(100); // smaller than 1600 frame count
+    fn rtrb_full_returns_disconnected_not_internal_without_partial_push() {
+        let (prod, cons) = rtrb::RingBuffer::<f32>::new(100);
         let consumer = PcmIngestConsumer::new(prod);
 
         let res = consumer.on_pcm_chunk(make_test_chunk(1, 0));
-        assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), PcmConsumerError::Internal(_)));
+        assert!(
+            matches!(res, Err(PcmConsumerError::Disconnected)),
+            "full rtrb must signal backpressure, not Internal: {res:?}"
+        );
+        assert_eq!(
+            cons.slots(),
+            0,
+            "chunk must not be partially written when backpressured"
+        );
+        assert_eq!(consumer.rtrb_overflow_count(), 1);
+    }
+
+    #[test]
+    fn ingests_all_samples_after_transient_rtrb_pressure() {
+        let (prod, mut cons) = rtrb::RingBuffer::<f32>::new(2400);
+        let consumer = PcmIngestConsumer::new(prod);
+
+        consumer
+            .on_pcm_chunk(make_test_chunk(1, 100))
+            .expect("first chunk fits");
+        assert!(matches!(
+            consumer.on_pcm_chunk(make_test_chunk(2, 200)),
+            Err(PcmConsumerError::Disconnected)
+        ));
+        assert_eq!(cons.slots(), CHUNK_FRAME_COUNT as usize);
+
+        while cons.pop().is_ok() {}
+
+        consumer
+            .on_pcm_chunk(make_test_chunk(3, 300))
+            .expect("retry after drain");
+        assert_eq!(cons.slots(), CHUNK_FRAME_COUNT as usize);
+        let first = cons.pop().expect("pop");
+        assert!((first - (300.0 / 32768.0)).abs() < 1e-4);
     }
 
     #[test]

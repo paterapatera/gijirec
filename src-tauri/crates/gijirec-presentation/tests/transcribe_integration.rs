@@ -1,7 +1,7 @@
 //! Integration tests (Testing Strategy Integration 1-5) for whisper-transcribe.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -134,6 +134,132 @@ impl ModelPathLoadable for MockSegmentEngine {
     }
 }
 
+/// One 30 s batch window at 16 kHz (matches production worker constant).
+const BATCH_WINDOW_SAMPLES: usize = 480_000;
+
+const CHUNKS_PER_BATCH: usize = BATCH_WINDOW_SAMPLES / CHUNK_FRAME_COUNT as usize;
+
+struct CountingBatchEngine {
+    cycle: Arc<AtomicUsize>,
+}
+
+impl SegmentEngine for CountingBatchEngine {
+    fn transcribe_pcm(&mut self, _pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
+        let cycle = self.cycle.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![WhisperSegment {
+            text: format!("batch-{cycle}"),
+            start_ms: cycle as i64 * 1_000,
+            end_ms: cycle as i64 * 1_000 + 500,
+        }])
+    }
+
+    fn is_loaded(&self) -> bool {
+        true
+    }
+}
+
+impl ModelPathLoadable for CountingBatchEngine {
+    fn load_from_path_if_needed(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
+        Ok(())
+    }
+}
+
+struct FailOnceBatchEngine {
+    attempts: Arc<AtomicU64>,
+}
+
+impl SegmentEngine for FailOnceBatchEngine {
+    fn transcribe_pcm(&mut self, pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
+        if pcm.is_empty() {
+            return Ok(Vec::new());
+        }
+        let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
+        if attempt == 0 {
+            return Err(TranscribeError::InferenceFailed {
+                detail: "injected batch failure".to_string(),
+            });
+        }
+        Ok(vec![WhisperSegment {
+            text: "recovered-batch".to_string(),
+            start_ms: 0,
+            end_ms: 500,
+        }])
+    }
+
+    fn is_loaded(&self) -> bool {
+        true
+    }
+}
+
+impl ModelPathLoadable for FailOnceBatchEngine {
+    fn load_from_path_if_needed(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
+        Ok(())
+    }
+}
+
+struct BatchPipelineFixture<E: SegmentEngine + ModelPathLoadable + 'static> {
+    pcm_bus: PcmChunkBus,
+    recorded_blocks: Arc<Mutex<Vec<TranscriptBlock>>>,
+    worker: TranscribeWorker<E>,
+}
+
+fn setup_batch_pipeline<E: SegmentEngine + ModelPathLoadable + 'static>(
+    engine: E,
+) -> BatchPipelineFixture<E> {
+    let pcm_bus = PcmChunkBus::new();
+    let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(BATCH_WINDOW_SAMPLES * 3);
+    pcm_bus.register(Arc::new(PcmIngestConsumer::new(pcm_prod)));
+
+    let block_consumer = Arc::new(RecordingBlockConsumer::default());
+    let recorded_blocks = Arc::clone(&block_consumer.blocks);
+    let block_bus = Arc::new(TranscriptBlockBus::new());
+    block_bus.register(block_consumer);
+    let emitter = Arc::new(BlockEmitter::new(block_bus));
+
+    let mut worker =
+        TranscribeWorker::with_engine(emitter as Arc<dyn TranscriptSegmentSink>, engine);
+    worker.attach_pcm_consumer(pcm_cons);
+    worker.spawn().expect("spawn batch worker");
+
+    BatchPipelineFixture {
+        pcm_bus,
+        recorded_blocks,
+        worker,
+    }
+}
+
+fn publish_speech_pcm(pcm_bus: &PcmChunkBus, chunk_count: usize, start_seq: u64) {
+    for offset in 0..chunk_count {
+        let seq = start_seq + offset as u64;
+        let samples = vec![16384_i16; CHUNK_FRAME_COUNT as usize];
+        let chunk = PcmChunk::new(seq, samples, seq * 100).expect("chunk");
+        pcm_bus.publish(chunk);
+    }
+}
+
+fn wait_for_block_count(recorded_blocks: &Arc<Mutex<Vec<TranscriptBlock>>>, expected: usize) {
+    for _ in 0..100 {
+        if recorded_blocks.lock().unwrap().len() >= expected {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "expected at least {expected} blocks, got {}",
+        recorded_blocks.lock().unwrap().len()
+    );
+}
+
+fn assert_contiguous_sequences(blocks: &[TranscriptBlock]) {
+    for (index, block) in blocks.iter().enumerate() {
+        assert_eq!(
+            block.sequence,
+            (index + 1) as u64,
+            "sequence must increase by one without gaps"
+        );
+    }
+}
+
 // ==========================================
 // Integration Tests 1 - 5
 // ==========================================
@@ -218,11 +344,11 @@ fn integration_2_pcm_chunk_bus_delivers_to_ingest_consumer_and_worker_consumes()
     worker.attach_pcm_consumer(cons);
     worker.spawn().expect("worker spawn");
 
-    // Publish a 3 s utterance plus 0.8 s of silence through PcmChunkBus so endpointing fires
-    publish_utterance_pcm(&pcm_bus);
+    // Batch worker triggers immediately once 480k speech samples are buffered.
+    publish_speech_pcm(&pcm_bus, CHUNKS_PER_BATCH, 0);
 
     // Wait for worker to consume and invoke engine
-    for _ in 0..50 {
+    for _ in 0..100 {
         if inference_called.load(Ordering::SeqCst) {
             break;
         }
@@ -608,7 +734,7 @@ fn build_deferred_transcribe_pipeline(segments: Vec<WhisperSegment>) -> WiredTra
     let block_bus = Arc::new(TranscriptBlockBus::new());
     block_bus.register(block_consumer);
 
-    let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(480_000);
+    let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(BATCH_WINDOW_SAMPLES * 3);
     let pcm_ingest = Arc::new(PcmIngestConsumer::new(pcm_prod));
     let pcm_bus = PcmChunkBus::new();
     pcm_bus.register(pcm_ingest);
@@ -644,23 +770,8 @@ fn build_deferred_transcribe_pipeline(segments: Vec<WhisperSegment>) -> WiredTra
     }
 }
 
-/// 30 speech chunks (3 s) followed by 13 silent chunks (1.3 s) so endpointing closes the utterance.
-fn publish_utterance_pcm(pcm_bus: &PcmChunkBus) {
-    for seq in 0..43 {
-        let value = if seq < 30 { 16384_i16 } else { 0_i16 };
-        let samples = vec![value; CHUNK_FRAME_COUNT as usize];
-        let chunk = PcmChunk::new(seq, samples, seq * 100).expect("chunk");
-        pcm_bus.publish(chunk);
-    }
-}
-
 fn wait_for_blocks(recorded_blocks: &Arc<Mutex<Vec<TranscriptBlock>>>) {
-    for _ in 0..50 {
-        if !recorded_blocks.lock().unwrap().is_empty() {
-            return;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_for_block_count(recorded_blocks, 1);
 }
 
 fn report_model_load_error(
@@ -718,7 +829,7 @@ fn integration_6_deferred_inject_ready_transcribing_block_delivery() {
         TranscribePhase::Transcribing
     );
 
-    publish_utterance_pcm(&pipeline.pcm_bus);
+    publish_speech_pcm(&pipeline.pcm_bus, CHUNKS_PER_BATCH, 0);
     wait_for_blocks(&pipeline.recorded_blocks);
 
     let blocks = pipeline.recorded_blocks.lock().unwrap();
@@ -830,7 +941,7 @@ fn integration_8_capture_stop_returns_ready_and_preserves_blocks() {
     pipeline
         .lifecycle
         .on_capture_phase_changed(CapturePhase::Capturing);
-    publish_utterance_pcm(&pipeline.pcm_bus);
+    publish_speech_pcm(&pipeline.pcm_bus, CHUNKS_PER_BATCH, 0);
     wait_for_blocks(&pipeline.recorded_blocks);
 
     let blocks_before_stop = pipeline.recorded_blocks.lock().unwrap().clone();
@@ -850,4 +961,91 @@ fn integration_8_capture_stop_returns_ready_and_preserves_blocks() {
     assert_eq!(blocks_after_stop, blocks_before_stop);
 
     let _ = std::fs::remove_file(model_path);
+}
+
+// ==========================================
+// Batch pipeline integration (task 5.1)
+// ==========================================
+
+/// 合成 PCM → PcmChunkBus → バッチ worker → モック adapter で sequence 欠番なし (req 2.4, 3.2)
+#[test]
+fn integration_batch_pipeline_emits_contiguous_sequences() {
+    let mut fixture = setup_batch_pipeline(CountingBatchEngine {
+        cycle: Arc::new(AtomicUsize::new(0)),
+    });
+
+    publish_speech_pcm(&fixture.pcm_bus, CHUNKS_PER_BATCH * 2, 0);
+    wait_for_block_count(&fixture.recorded_blocks, 2);
+
+    fixture
+        .worker
+        .stop_and_join(Duration::from_secs(2))
+        .expect("stop batch worker");
+
+    let blocks = fixture.recorded_blocks.lock().unwrap().clone();
+    assert_eq!(blocks.len(), 2);
+    assert_contiguous_sequences(&blocks);
+    assert_eq!(blocks[0].text, "batch-0");
+    assert_eq!(blocks[1].text, "batch-1");
+}
+
+/// 推論失敗注入後もバックログで次サイクルが実行される (req 2.4)
+#[test]
+fn integration_batch_pipeline_continues_after_inference_failure() {
+    let attempts = Arc::new(AtomicU64::new(0));
+    let mut fixture = setup_batch_pipeline(FailOnceBatchEngine {
+        attempts: Arc::clone(&attempts),
+    });
+
+    publish_speech_pcm(
+        &fixture.pcm_bus,
+        CHUNKS_PER_BATCH * 2 + CHUNKS_PER_BATCH / 2,
+        0,
+    );
+    wait_for_block_count(&fixture.recorded_blocks, 1);
+
+    fixture
+        .worker
+        .stop_and_join(Duration::from_secs(2))
+        .expect("stop batch worker");
+
+    let blocks = fixture.recorded_blocks.lock().unwrap().clone();
+    assert!(!blocks.is_empty(), "recovery cycle must emit at least one block");
+    assert_eq!(blocks[0].text, "recovered-batch");
+    assert_contiguous_sequences(&blocks);
+    assert!(
+        attempts.load(Ordering::SeqCst) >= 2,
+        "failed cycle must be retried on backlog"
+    );
+}
+
+/// 停止 flush で残 PCM が最終バッチとして処理される (req 2.3, 6.3)
+#[test]
+fn integration_batch_pipeline_stop_flush_processes_remaining_pcm() {
+    let mut fixture = setup_batch_pipeline(MockSegmentEngine {
+        segments: vec![WhisperSegment {
+            text: "flush-batch".to_string(),
+            start_ms: 250,
+            end_ms: 750,
+        }],
+        inference_called: Arc::new(AtomicBool::new(false)),
+    });
+
+    publish_speech_pcm(&fixture.pcm_bus, CHUNKS_PER_BATCH / 6, 0);
+    thread::sleep(Duration::from_millis(50));
+    assert!(
+        fixture.recorded_blocks.lock().unwrap().is_empty(),
+        "partial buffer must not infer before stop flush"
+    );
+
+    fixture
+        .worker
+        .stop_and_join(Duration::from_secs(2))
+        .expect("stop batch worker");
+
+    let blocks = fixture.recorded_blocks.lock().unwrap().clone();
+    assert_eq!(blocks.len(), 1, "stop flush must emit a block for remaining PCM");
+    assert_eq!(blocks[0].text, "flush-batch");
+    assert_eq!(blocks[0].sequence, 1);
+    assert_eq!(blocks[0].start_timestamp_ms, 250);
 }

@@ -7,6 +7,7 @@ mod whisper_adapter;
 pub use model_downloader::{ModelDownloadProgress, ModelDownloadStatus, ModelDownloader};
 pub use model_store::{MODEL_FILENAME, ModelStore};
 pub use transcribe_worker::{
-    MAX_PCM_BUFFER_SAMPLES, ModelPathLoadable, SegmentEngine, TranscribeWorker,
+    BatchCycleCompleted, BatchCycleStarted, MAX_PCM_BUFFER_SAMPLES, ModelPathLoadable, SegmentEngine,
+    TranscribeWorker,
 };
 pub use whisper_adapter::{WhisperCppAdapter, WhisperSegment};

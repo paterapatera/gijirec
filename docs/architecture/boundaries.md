@@ -117,8 +117,9 @@
 
 | 領域 | コンポーネント / 成果物 |
 |------|-------------------------|
-| PCM 消費と推論ウィンドウ蓄積 | `PcmIngestConsumer`（`PcmChunkConsumer` 実装）、`rtrb::RingBuffer` |
-| ローカル Whisper 推論 | `WhisperCppAdapter`（whisper-cpp-plus）、`TranscribeWorker` |
+| PCM 消費と推論ウィンドウ蓄積 | `PcmIngestConsumer`、`rtrb::RingBuffer`、`transcribe_worker.rs` 内 `VecDeque`（非破棄） |
+| バッチ推論スケジュール | `transcribe_worker.rs` 内 30 秒固定サイクル（前サイクル完了起点） |
+| ローカル Whisper 推論 | `WhisperCppAdapter`（`whisper_adapter.rs`）、`TranscribeWorker` |
 | テキストブロック生成と下流供給 | `TranscriptBlock`、`BlockEmitter`、`TranscriptBlockBus`（契約: `whisper-transcribe-blocks.md`） |
 | 音声認識モデルの取得・検証 | `ModelStore`、`ModelDownloader` |
 | 文字起こしフェーズと利用者向けエラー | `TranscribePhase`、`TranscribeError` → UI イベント（契約: `whisper-transcribe-status.md`） |
