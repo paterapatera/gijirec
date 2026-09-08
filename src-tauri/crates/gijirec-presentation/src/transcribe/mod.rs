@@ -231,7 +231,7 @@ mod tests {
         assert!(
             adapter
                 .model_path()
-                .ends_with("kotoba-whisper-v2.2-ggml-q5_0.bin")
+                .ends_with("kotoba-whisper-v2.2-ggml.bin")
         );
 
         let _ = std::fs::remove_dir_all(base);

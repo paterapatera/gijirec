@@ -7,12 +7,12 @@
 
 ## Context
 
-Whisper モデルファイル（`kotoba-whisper-v2.2-ggml-q5_0.bin`）のローカル保存先は `ModelStore` が解決する。実装では composition root が `dirs::data_local_dir()/gijirec` を渡していたが、Tauri setup では `app.path().app_data_dir()`（identifier `com.gijirec.app`）を editor 設定・release 診断ログと共有している。Windows では `Local` と `Roaming` が分かれ、リリースビルドでモデル取得・検証・他機能のデータ所在が一致しない。
+Whisper モデルファイル（`kotoba-whisper-v2.2-ggml.bin`）のローカル保存先は `ModelStore` が解決する。実装では composition root が `dirs::data_local_dir()/gijirec` を渡していたが、Tauri setup では `app.path().app_data_dir()`（identifier `com.gijirec.app`）を editor 設定・release 診断ログと共有している。Windows では `Local` と `Roaming` が分かれ、リリースビルドでモデル取得・検証・他機能のデータ所在が一致しない。
 
 ## Decision
 
 - Whisper モデルの保存ルートは **Tauri `app.path().app_data_dir()`** を正本とする。
-- パス: `{app_data_dir}/models/kotoba-whisper-v2.2-ggml-q5_0.bin`（`ModelStore::MODEL_FILENAME` 既存規約を維持）。
+- パス: `{app_data_dir}/models/kotoba-whisper-v2.2-ggml.bin`（`ModelStore::MODEL_FILENAME` 既存規約を維持）。
 - `ModelStore` の初期化とモデルロード開始は **Tauri setup 完了後**（`app_data_dir` 解決後）に行う。
 - `dirs::data_local_dir()` による独自 `gijirec` サブディレクトリは使用しない。
 

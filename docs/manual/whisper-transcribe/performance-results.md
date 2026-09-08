@@ -47,7 +47,7 @@
 | 環境 | Windows 11 / macOS 14.x 等 |
 | ビルド | release / debug |
 | OS / CPU / RAM | 例: Win11, 4C/8T, 16 GB |
-| 使用モデル | kotoba-whisper-v2.2-ggml-q5_0.bin |
+| 使用モデル | kotoba-whisper-v2.2-ggml.bin |
 
 | 基準 | 測定値 | 合格 |
 |------|--------|------|

@@ -154,10 +154,10 @@ pub(crate) struct ComposedCapture {
     pub model_orchestrator: SharedModelOrchestrator,
 }
 
-/// Default HuggingFace download URL and SHA-256 for kotoba-whisper-v2.2 GGML (Q5_0).
-pub(crate) const DEFAULT_WHISPER_MODEL_URL: &str = "https://huggingface.co/kenrouse/kotoba-whisper-v2.2-ggml/resolve/main/kotoba-whisper-v2.2-ggml-q5_0.bin";
+/// Default HuggingFace download URL and SHA-256 for kotoba-whisper-v2.2 GGML (FP16).
+pub(crate) const DEFAULT_WHISPER_MODEL_URL: &str = "https://huggingface.co/kenrouse/kotoba-whisper-v2.2-ggml/resolve/main/kotoba-whisper-v2.2-ggml.bin";
 pub(crate) const DEFAULT_WHISPER_MODEL_SHA256: &str =
-    "4a3b92192b5d3578ff854a5876213e2e27af0c2d357492c2d14271e82c303658";
+    "eff70a8a236e731abba774ba71e1f6d0fce53302137208c32207e694e0bf4546";
 
 fn default_model_config() -> ModelOrchestratorConfig {
     ModelOrchestratorConfig {

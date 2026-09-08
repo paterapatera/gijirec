@@ -35,5 +35,5 @@ gijirec は whisper.cpp を Python なしで Rust バイナリ内に組み込み
 ## Notes
 
 - モデル初回取得は HTTPS（HuggingFace ggml 配布）のみ。取得後はオフライン
-- **デフォルトモデル**: `ggml-small-q5_0.bin` → **ADR-0004** で `kotoba-whisper-v2.2-ggml-q5_0.bin` に置換（ライブラリ判断は本 ADR を維持）
+- **デフォルトモデル**: `ggml-small-q5_0.bin` → **ADR-0004** で `kotoba-whisper-v2.2-ggml-q5_0.bin` → **ADR-0010** で `kotoba-whisper-v2.2-ggml-q8_0.bin` → **ADR-0011** で `kotoba-whisper-v2.2-ggml.bin`（FP16）に置換（ライブラリ判断は本 ADR を維持）
 - 判断を覆す場合は新 ADR を作成し、本 ADR の Status を `Superseded by ADR-XXXX` に変更する

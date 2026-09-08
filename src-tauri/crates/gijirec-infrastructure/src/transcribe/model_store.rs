@@ -8,7 +8,7 @@ use gijirec_domain::transcribe::TranscribeError;
 use sha2::{Digest, Sha256};
 
 /// Default whisper model filename stored under `{app_data_dir}/models/`.
-pub const MODEL_FILENAME: &str = "kotoba-whisper-v2.2-ggml-q5_0.bin";
+pub const MODEL_FILENAME: &str = "kotoba-whisper-v2.2-ggml.bin";
 
 const MODELS_SUBDIR: &str = "models";
 const LEGACY_APP_SUBDIR: &str = "gijirec";

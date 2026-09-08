@@ -111,7 +111,7 @@
 
 ## whisper-transcribe ドメイン境界
 
-`docs/contracts/whisper-transcribe-*.md` および ADR-0003 / ADR-0004 に基づく。手動性能記録は `docs/manual/whisper-transcribe/performance-results.md`。
+`docs/contracts/whisper-transcribe-*.md` および ADR-0003 / ADR-0011 に基づく。手動性能記録は `docs/manual/whisper-transcribe/performance-results.md`。
 
 ### Owns（この Spec が所有）
 
@@ -265,7 +265,7 @@ ADR-0008 およびホスト composition のリリースパリティ修正に基�
 
 | 領域 | 備考 |
 |------|------|
-| whisper 推論アルゴリズム・モデル選定 | whisper-transcribe / ADR-0003, ADR-0004 |
+| whisper 推論アルゴリズム・モデル選定 | whisper-transcribe / ADR-0003, ADR-0011 |
 | ログ永続化実装 | release-logging が所有 |
 | 新規 IPC / 契約イベント形状 | 本 spec では既存契約のみ使用 |
 | Linux 対応 | スコープ外 |

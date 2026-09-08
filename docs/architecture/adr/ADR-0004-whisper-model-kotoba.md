@@ -1,6 +1,6 @@
 # ADR-0004: デフォルト Whisper モデルを kotoba-whisper-v2.2（GGML Q5_0）に採用
 
-- **Status**: Accepted
+- **Status**: Superseded by ADR-0010
 - **Date**: 2026-09-06
 - **Feature**: whisper-transcribe
 - **Owners / Domains**: whisper-transcribe

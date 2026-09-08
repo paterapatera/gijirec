@@ -11,7 +11,7 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 - **Frontend**: TypeScript（strict）、React 19、Vite 8、Tauri 2 IPC（`@tauri-apps/api`）
 - **Backend**: Rust（edition 2024、stable toolchain）
 - **Desktop Shell**: Tauri 2（`cargo tauri` CLI）
-- **STT**: `whisper-cpp-plus` 0.1（ADR-0003）+ デフォルトモデル `kotoba-whisper-v2.2-ggml-q5_0.bin`（ADR-0004、kenrouse 配布）
+- **STT**: `whisper-cpp-plus` 0.1（ADR-0003）+ デフォルトモデル `kotoba-whisper-v2.2-ggml.bin`（ADR-0011、kenrouse 配布）
 - **Audio**: cpal（マイク / Windows ループバック）、screencapturekit（macOS システム音声）、rubato（リサンプル）、rtrb（スレッド間バッファ）— ADR-0001 準拠
 - **Runtime**: Bun >= 1.2（フロントエンドパッケージマネージャ・スクリプト実行。npm 非前提）
 
@@ -34,7 +34,7 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 
 ### Whisper 推論パラメータ（調整時）
 
-- デフォルトモデル: `kotoba-whisper-v2.2-ggml-q5_0.bin`（ADR-0004）
+- デフォルトモデル: `kotoba-whisper-v2.2-ggml.bin`（FP16、ADR-0011）
 - 窓長・スレッド・VAD は **1 軸ずつ** 変更し、`bun run verify` + 実機で確認してから次へ
 - 繰り返し発話・区切り不良は、窓長変更と `single_segment` / `entropy_thold` を同時に変えない
 - スレッド数: CPU コア数に応じた動的設定、**上限 4**
