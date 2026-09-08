@@ -30,6 +30,21 @@ pub trait TranscribeObservability: Send + Sync {
         _segments_count: usize,
     ) {
     }
+    fn log_inference_window_level(
+        &self,
+        _window_rms: f32,
+        _samples_count: usize,
+        _inference_skipped: bool,
+    ) {
+    }
+    fn log_pcm_ingest_rms_summary(
+        &self,
+        _min_rms: f32,
+        _max_rms: f32,
+        _mean_rms: f32,
+        _chunk_count: u64,
+    ) {
+    }
 }
 
 struct NoopTranscribeObservability;
@@ -168,6 +183,31 @@ pub fn log_batch_cycle_completed(
         .log_batch_cycle_completed(cycle_id, duration_ms, samples_count, segments_count);
 }
 
+/// Logs whisper.cpp input window level (RMS in `[-1, 1]` f32 scale).
+pub fn log_inference_window_level(
+    window_rms: f32,
+    samples_count: usize,
+    inference_skipped: bool,
+) {
+    transcribe_observability()
+        .read()
+        .expect("lock")
+        .log_inference_window_level(window_rms, samples_count, inference_skipped);
+}
+
+/// Logs aggregated PCM ingest RMS over a capture interval (default: 5 s).
+pub fn log_pcm_ingest_rms_summary(
+    min_rms: f32,
+    max_rms: f32,
+    mean_rms: f32,
+    chunk_count: u64,
+) {
+    transcribe_observability()
+        .read()
+        .expect("lock")
+        .log_pcm_ingest_rms_summary(min_rms, max_rms, mean_rms, chunk_count);
+}
+
 /// Restores the noop backend between tests that replace the global observability hook.
 #[cfg(test)]
 pub fn reset_transcribe_observability_for_tests() {
@@ -223,6 +263,23 @@ impl TranscribeObservability for RecordingTranscribeObservability {
         _duration_ms: u64,
         _samples_count: usize,
         _segments_count: usize,
+    ) {
+    }
+
+    fn log_inference_window_level(
+        &self,
+        _window_rms: f32,
+        _samples_count: usize,
+        _inference_skipped: bool,
+    ) {
+    }
+
+    fn log_pcm_ingest_rms_summary(
+        &self,
+        _min_rms: f32,
+        _max_rms: f32,
+        _mean_rms: f32,
+        _chunk_count: u64,
     ) {
     }
 }

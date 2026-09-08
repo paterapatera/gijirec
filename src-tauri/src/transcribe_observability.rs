@@ -134,4 +134,50 @@ impl TranscribeObservability for TracingTranscribeObservability {
             "transcribe batch cycle completed"
         );
     }
+
+    fn log_inference_window_level(
+        &self,
+        window_rms: f32,
+        samples_count: usize,
+        inference_skipped: bool,
+    ) {
+        tracing::info!(
+            target: TRANSCRIBE_LOG_TARGET,
+            transcribe_window_rms = window_rms,
+            transcribe_window_rms_dbfs = rms_to_dbfs(window_rms),
+            transcribe_window_samples = samples_count,
+            transcribe_inference_skipped = inference_skipped,
+            session_id = session_id(),
+            "transcribe inference window level"
+        );
+    }
+
+    fn log_pcm_ingest_rms_summary(
+        &self,
+        min_rms: f32,
+        max_rms: f32,
+        mean_rms: f32,
+        chunk_count: u64,
+    ) {
+        tracing::info!(
+            target: TRANSCRIBE_LOG_TARGET,
+            transcribe_pcm_ingest_min_rms = min_rms,
+            transcribe_pcm_ingest_max_rms = max_rms,
+            transcribe_pcm_ingest_mean_rms = mean_rms,
+            transcribe_pcm_ingest_min_rms_dbfs = rms_to_dbfs(min_rms),
+            transcribe_pcm_ingest_max_rms_dbfs = rms_to_dbfs(max_rms),
+            transcribe_pcm_ingest_mean_rms_dbfs = rms_to_dbfs(mean_rms),
+            transcribe_pcm_ingest_chunk_count = chunk_count,
+            session_id = session_id(),
+            "transcribe pcm ingest rms summary"
+        );
+    }
+}
+
+fn rms_to_dbfs(rms: f32) -> f32 {
+    if rms <= 0.0 {
+        -120.0
+    } else {
+        20.0 * rms.log10()
+    }
 }

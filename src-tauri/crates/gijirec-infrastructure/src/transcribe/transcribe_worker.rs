@@ -70,6 +70,16 @@ pub struct BatchCycleCompleted {
 type BatchCycleStartedCallback = Arc<dyn Fn(BatchCycleStarted) + Send + Sync>;
 type BatchCycleCompletedCallback = Arc<dyn Fn(BatchCycleCompleted) + Send + Sync>;
 
+/// PCM level metrics for one whisper.cpp inference window.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InferenceWindowLevel {
+    pub window_rms: f32,
+    pub samples_count: usize,
+    pub inference_skipped: bool,
+}
+
+pub(crate) type InferenceWindowLevelCallback = Arc<dyn Fn(InferenceWindowLevel) + Send + Sync>;
+
 /// Inference engine abstraction (production: [`WhisperCppAdapter`], tests: mocks).
 pub trait SegmentEngine: Send {
     fn transcribe_pcm(&mut self, pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError>;
@@ -121,6 +131,7 @@ pub struct TranscribeWorker<E: SegmentEngine + 'static = WhisperCppAdapter> {
     on_inference_progress: Option<Arc<dyn Fn(i32) + Send + Sync>>,
     on_batch_cycle_started: Option<BatchCycleStartedCallback>,
     on_batch_cycle_completed: Option<BatchCycleCompletedCallback>,
+    on_inference_window_level: Option<InferenceWindowLevelCallback>,
     rtrb_overflow_count: Option<Arc<AtomicU64>>,
 }
 
@@ -151,6 +162,7 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
             on_inference_progress: None,
             on_batch_cycle_started: None,
             on_batch_cycle_completed: None,
+            on_inference_window_level: None,
             rtrb_overflow_count: None,
         }
     }
@@ -208,6 +220,10 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
         self.on_batch_cycle_completed = Some(callback);
     }
 
+    pub fn set_inference_window_level_callback(&mut self, callback: InferenceWindowLevelCallback) {
+        self.on_inference_window_level = Some(callback);
+    }
+
     /// Optional shared counter incremented when rtrb ingest hits backpressure.
     pub fn set_rtrb_overflow_counter(&mut self, counter: Arc<AtomicU64>) {
         self.rtrb_overflow_count = Some(counter);
@@ -254,6 +270,7 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
         let on_inference_attempted = self.on_inference_attempted.clone();
         let on_batch_cycle_started = self.on_batch_cycle_started.clone();
         let on_batch_cycle_completed = self.on_batch_cycle_completed.clone();
+        let on_inference_window_level = self.on_inference_window_level.clone();
         let rtrb_overflow_count = self.rtrb_overflow_count.clone();
 
         let params = WorkerParams {
@@ -268,6 +285,7 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
             on_inference_attempted,
             on_batch_cycle_started,
             on_batch_cycle_completed,
+            on_inference_window_level,
             rtrb_overflow_count,
         };
         let handle = thread::Builder::new()
@@ -324,6 +342,7 @@ struct WorkerParams<E> {
     on_inference_attempted: Option<Arc<dyn Fn() + Send + Sync>>,
     on_batch_cycle_started: Option<BatchCycleStartedCallback>,
     on_batch_cycle_completed: Option<BatchCycleCompletedCallback>,
+    on_inference_window_level: Option<InferenceWindowLevelCallback>,
     rtrb_overflow_count: Option<Arc<AtomicU64>>,
 }
 
@@ -337,6 +356,7 @@ struct InferenceContext<'a, E> {
     sink: &'a Arc<dyn TranscriptSegmentSink>,
     on_latency: Option<&'a Arc<dyn Fn(u64) + Send + Sync>>,
     on_attempted: Option<&'a Arc<dyn Fn() + Send + Sync>>,
+    on_window_level: Option<&'a InferenceWindowLevelCallback>,
 }
 
 struct InferenceOutcome {
@@ -356,6 +376,7 @@ fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
         on_inference_attempted,
         on_batch_cycle_started,
         on_batch_cycle_completed,
+        on_inference_window_level,
         rtrb_overflow_count,
     } = params;
 
@@ -438,6 +459,7 @@ fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
                     on_inference_attempted.as_ref(),
                     on_batch_cycle_started.as_ref(),
                     on_batch_cycle_completed.as_ref(),
+                    on_inference_window_level.as_ref(),
                 );
                 last_cycle_complete = Some(Instant::now());
                 backlog_after_last_cycle = {
@@ -473,6 +495,7 @@ fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
             on_inference_attempted.as_ref(),
             on_batch_cycle_started.as_ref(),
             on_batch_cycle_completed.as_ref(),
+            on_inference_window_level.as_ref(),
         );
     }
 
@@ -678,6 +701,7 @@ fn run_batch_cycle<E: SegmentEngine>(
     on_inference_attempted: Option<&Arc<dyn Fn() + Send + Sync>>,
     on_batch_cycle_started: Option<&BatchCycleStartedCallback>,
     on_batch_cycle_completed: Option<&BatchCycleCompletedCallback>,
+    on_inference_window_level: Option<&InferenceWindowLevelCallback>,
 ) {
     let samples_count = pcm.len();
     if let Some(record) = on_batch_cycle_started {
@@ -696,6 +720,7 @@ fn run_batch_cycle<E: SegmentEngine>(
             sink,
             on_latency,
             on_attempted: on_inference_attempted,
+            on_window_level: on_inference_window_level,
         };
         run_inference_window(&pcm, base_samples, ctx).segments_count
     } else {
@@ -721,7 +746,17 @@ fn run_inference_window<E: SegmentEngine>(
         return InferenceOutcome { segments_count: 0 };
     }
 
-    if window_rms(pcm) < SILENCE_RMS_THRESHOLD {
+    let window_rms = window_rms(pcm);
+    let inference_skipped = window_rms < SILENCE_RMS_THRESHOLD;
+    if let Some(record) = ctx.on_window_level {
+        record(InferenceWindowLevel {
+            window_rms,
+            samples_count: pcm.len(),
+            inference_skipped,
+        });
+    }
+
+    if inference_skipped {
         return InferenceOutcome { segments_count: 0 };
     }
 
@@ -1994,6 +2029,32 @@ mod tests {
     }
 
     #[test]
+    fn run_inference_window_reports_level_before_skip_or_inference() {
+        let (sink, _) = recording_sink();
+        let sink_trait: Arc<dyn TranscriptSegmentSink> = sink;
+        let mut engine = MockEngine::default();
+        let levels: Arc<Mutex<Vec<InferenceWindowLevel>>> = Arc::new(Mutex::new(Vec::new()));
+        let levels_cb: InferenceWindowLevelCallback = Arc::new({
+            let levels = Arc::clone(&levels);
+            move |level| levels.lock().expect("lock").push(level)
+        });
+        let ctx = InferenceContext {
+            engine: &mut engine,
+            sink: &sink_trait,
+            on_latency: None,
+            on_attempted: None,
+            on_window_level: Some(&levels_cb),
+        };
+
+        let silent = vec![0.0_f32; 1_600];
+        run_inference_window(&silent, 0, ctx);
+        let recorded = levels.lock().expect("lock");
+        assert_eq!(recorded.len(), 1);
+        assert!(recorded[0].inference_skipped);
+        assert!(recorded[0].window_rms < SILENCE_RMS_THRESHOLD);
+    }
+
+    #[test]
     fn run_inference_window_timestamp_uses_batch_window_front_plus_segment_offset() {
         let (sink, segments) = recording_sink();
         let sink_trait: Arc<dyn TranscriptSegmentSink> = sink;
@@ -2010,6 +2071,7 @@ mod tests {
             sink: &sink_trait,
             on_latency: None,
             on_attempted: None,
+            on_window_level: None,
         };
         let pcm = tone(0.5, 1_600);
         run_inference_window(&pcm, 160_000, ctx);

@@ -115,6 +115,53 @@ fn stall_detected_records_diagnostic_once() {
 }
 
 #[test]
+fn inference_window_level_records_rms_and_skip_flag() {
+    let logs = with_transcribe_tracing_logs(|| {
+        gijirec_presentation::transcribe::observability::log_inference_window_level(
+            0.12, 480_000, false,
+        );
+        gijirec_presentation::transcribe::observability::log_inference_window_level(
+            0.004, 480_000, true,
+        );
+    });
+
+    assert!(
+        logs.contains("transcribe_window_rms="),
+        "log must record window rms: {logs}"
+    );
+    assert!(
+        logs.contains("transcribe_window_rms_dbfs"),
+        "log must record window rms in dBFS: {logs}"
+    );
+    assert!(
+        logs.contains("transcribe_inference_skipped=false"),
+        "log must record skip flag: {logs}"
+    );
+    assert!(
+        logs.contains("transcribe_inference_skipped=true"),
+        "log must record skipped windows: {logs}"
+    );
+}
+
+#[test]
+fn pcm_ingest_rms_summary_records_min_max_mean() {
+    let logs = with_transcribe_tracing_logs(|| {
+        gijirec_presentation::transcribe::observability::log_pcm_ingest_rms_summary(
+            0.05, 0.14, 0.09, 50,
+        );
+    });
+
+    assert!(
+        logs.contains("transcribe_pcm_ingest_mean_rms=0.09"),
+        "log must record mean ingest rms: {logs}"
+    );
+    assert!(
+        logs.contains("transcribe_pcm_ingest_chunk_count=50"),
+        "log must record chunk count: {logs}"
+    );
+}
+
+#[test]
 fn error_records_error_code_and_masks_transcription_text() {
     let logs = with_transcribe_tracing_logs(|| {
         log_transcribe_error(&TranscribeError::InferenceFailed {

@@ -293,6 +293,9 @@ const PCM_SAMPLE_RATE_HZ: u32 = 16_000;
 const PCM_INFERENCE_WINDOW_SAMPLES: usize =
     30 * PCM_SAMPLE_RATE_HZ as usize;
 
+/// Number of 100 ms PCM chunks between ingest RMS summary logs (5 s).
+const PCM_INGEST_RMS_LOG_INTERVAL_CHUNKS: u64 = 50;
+
 /// rtrb capacity between [`PcmIngestConsumer`] and the transcribe PCM drain thread.
 ///
 /// Worst-case headroom: slow 30 s window inference while capture continues at 16 kHz,
@@ -301,6 +304,47 @@ const PCM_INFERENCE_WINDOW_SAMPLES: usize =
 /// fails with `Internal("rtrb buffer full")` (Req 2.1/2.2). Long-term backlog retreat
 /// lives in task 2.1; compose only sizes this burst buffer (10 windows ≈ 5 min @ 16 kHz).
 pub(crate) const PCM_RTRB_CAPACITY_SAMPLES: usize = PCM_INFERENCE_WINDOW_SAMPLES * 10;
+
+#[derive(Debug)]
+struct PcmIngestRmsAccumulator {
+    count: u64,
+    min_rms: f32,
+    max_rms: f32,
+    sum_rms: f64,
+}
+
+impl PcmIngestRmsAccumulator {
+    fn new() -> Self {
+        Self {
+            count: 0,
+            min_rms: f32::INFINITY,
+            max_rms: 0.0,
+            sum_rms: 0.0,
+        }
+    }
+
+    fn observe(&mut self, rms: f32) -> Option<(f32, f32, f32, u64)> {
+        self.count += 1;
+        self.min_rms = self.min_rms.min(rms);
+        self.max_rms = self.max_rms.max(rms);
+        self.sum_rms += rms as f64;
+        if self.count < PCM_INGEST_RMS_LOG_INTERVAL_CHUNKS {
+            return None;
+        }
+        let chunk_count = self.count;
+        let summary = (
+            self.min_rms,
+            self.max_rms,
+            (self.sum_rms / chunk_count as f64) as f32,
+            chunk_count,
+        );
+        self.count = 0;
+        self.min_rms = f32::INFINITY;
+        self.max_rms = 0.0;
+        self.sum_rms = 0.0;
+        Some(summary)
+    }
+}
 
 fn compose_with_ports_and_model_orchestrator<M, S>(
     mic: M,
@@ -339,6 +383,21 @@ where
     let mut pcm_ingest = PcmIngestConsumer::new(pcm_prod);
     pcm_ingest.set_sequence_gap_callback(Arc::new(|from, to| {
         gijirec_presentation::transcribe::observability::log_pcm_sequence_gaps(from, to);
+    }));
+    let pcm_ingest_rms = Arc::new(Mutex::new(PcmIngestRmsAccumulator::new()));
+    pcm_ingest.set_pcm_rms_callback(Arc::new({
+        let accumulator = Arc::clone(&pcm_ingest_rms);
+        move |rms| {
+            let summary = accumulator.lock().expect("lock pcm ingest rms").observe(rms);
+            if let Some((min_rms, max_rms, mean_rms, chunk_count)) = summary {
+                gijirec_presentation::transcribe::observability::log_pcm_ingest_rms_summary(
+                    min_rms,
+                    max_rms,
+                    mean_rms,
+                    chunk_count,
+                );
+            }
+        }
     }));
     let rtrb_overflow_counter = pcm_ingest.rtrb_overflow_counter();
     let pcm_ingest = Arc::new(pcm_ingest);
@@ -381,6 +440,13 @@ where
             event.duration_ms,
             event.samples_count,
             event.segments_count,
+        );
+    }));
+    worker.set_inference_window_level_callback(Arc::new(|level| {
+        gijirec_presentation::transcribe::observability::log_inference_window_level(
+            level.window_rms,
+            level.samples_count,
+            level.inference_skipped,
         );
     }));
     worker.set_inference_latency_callback({
@@ -868,5 +934,18 @@ mod tests {
             composed.orchestrator.lock().expect("lock").phase(),
             CapturePhase::Idle
         );
+    }
+
+    #[test]
+    fn pcm_ingest_rms_accumulator_emits_every_fifty_chunks() {
+        let mut acc = PcmIngestRmsAccumulator::new();
+        for i in 1..50 {
+            assert!(acc.observe(i as f32 * 0.001).is_none());
+        }
+        let (min, max, mean, count) = acc.observe(0.05).expect("summary");
+        assert_eq!(count, 50);
+        assert!((min - 0.001).abs() < f32::EPSILON);
+        assert!((max - 0.05).abs() < f32::EPSILON);
+        assert!(mean > 0.0);
     }
 }
