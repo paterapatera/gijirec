@@ -15,6 +15,7 @@
 |--------|-----|--------|
 | Event | `audio-capture://phase-changed` | audio-capture |
 | Data | `PcmChunk` 形状・供給規約 | audio-capture |
+| Data | `TranscriptBlock` 形状・追記供給規約（30 秒バッチ遅延目標。ADR-0012） | whisper-transcribe |
 | Command | `get_capture_phase`、`get_transcribe_phase`、`get_transcribe_status`、`list_audio_devices`、`get_device_selection`、`set_device_selection`、`set_audio_device_ui_visible`、`save_transcript_session`、`get_editor_settings`、`set_editor_settings`、`pick_save_directory` | audio-capture / whisper-transcribe / audio-device-selection / transcript-editor |
 | Data | リリース診断ログの保存場所・セッション ID・禁止フィールド | release-logging |
 
@@ -130,5 +131,5 @@ export const PHASE_CHANGED_EVENT = "audio-capture://phase-changed" as const;
 | `docs/manual/` | 手動検証チェックリスト・運用手順（spec 削除後も維持） |
 
 ---
-_updated_at: 2026-09-07（docs/manual 参照を追記）_
+_updated_at: 2026-09-09（whisper-transcribe-blocks バッチ遅延目標を索引に追記）_
 _Document contract lifecycle and mirroring, not every field of every contract._

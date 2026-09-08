@@ -115,3 +115,19 @@
 | whisper-transcribe-blocks 契約手動確認 | **未確認** | 空ブロックなし・追記のみ・5 秒遅延目標 |
 
 関連: [docs/steering/testing.md](../../steering/testing.md)（リリース vs dev パリティ）、[docs/manual/README.md](../README.md)
+
+---
+
+## transcribe-batch-interval（tasks 5.3 完了 — 2026-09-09）
+
+| 項目 | 値 |
+|------|-----|
+| **spec** | `transcribe-batch-interval` |
+| **BATCH_INTERVAL** | 30 s（本番）。テストは 100 ms |
+| **MAX_INFERENCE_WINDOW_SAMPLES** | 480_000（30 s @ 16 kHz） |
+| **MAX_PCM_BUFFER_SAMPLES** | 9_600_000（10 min @ 16 kHz） |
+| **PcmChunkBus MAX_QUEUED_CHUNKS** | 3_000（旧記録の 3 チャンク上限は superseded） |
+| **自動検証** | `bun run verify` pass、`transcribe_integration.rs` バッチパイプライン統合テスト pass |
+| **手動検証（5.3）** | tasks `[x]` 完了。実測値（6.1 backlog 照合 / 6.2 タイムスタンプ / 6.3 CPU 遅延 flush）は開発者追記待ち |
+
+> 上記「リソース上限設計」行（rtrb 30 s / PcmChunkBus 3 チャンク）は VAD ストリーミング時代の記録。バッチ移行後は本節を正とする。

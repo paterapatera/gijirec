@@ -1,11 +1,11 @@
 # Product Overview
 
-gijirec は、Web 会議中にマイクとシステム音声を仮想オーディオデバイスなしで同時取り込みし、ローカル Whisper で低遅延に文字起こし、その場で手動編集して Markdown 保存できるデスクトップアプリ。
+gijirec は、Web 会議中にマイクとシステム音声を仮想オーディオデバイスなしで同時取り込みし、ローカル Whisper で約 30 秒間隔のバッチ文字起こし、その場で手動編集して Markdown 保存できるデスクトップアプリ。
 
 ## Core Capabilities
 
 1. **二重キャプチャ＋ミキシング** — マイクとスピーカー（システム音声）を 16kHz モノラル PCM にリアルタイム合成
-2. **ローカル逐次文字起こし** — whisper.cpp による数秒遅延のストリーミングテキスト（タイムスタンプ付き）
+2. **ローカルバッチ文字起こし** — whisper.cpp による約 30 秒間隔のバッチ推論（タイムスタンプ付きブロック追記。ADR-0012）
 3. **部分ロック付きエディタ** — 手動修正箇所を AI 上書きから保護し、タイムスタンプ構造を維持
 4. **Markdown 出力** — 会議記録を `.md` として保存
 5. **オフライン運用** — モデル初回取得後はインターネット不要
@@ -19,7 +19,7 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 ## Value Proposition
 
 - **仮想デバイス不要** — OS ネイティブのループバック（Mac: ScreenCaptureKit 等 / Windows: WASAPI）でシステム音声を取得
-- **低遅延・その場編集** — 録音後起こしではなく、発言から数秒以内にテキストが流れ、すぐ手直しできる
+- **その場編集** — 録音後起こしではなく、会議中にテキストが追記され、すぐ手直しできる（表示は約 30 秒バッチ＋推論時間。完全性・安定性を優先）
 - **軽量・オフライン** — Python ランタイムやクラウド API に依存せず、会議の裏で OS を極端に重くしない
 - **シンプルな起動・終了** — ダブルクリック起動、ウィンドウ閉じでキャプチャ・推論も完全停止
 
@@ -36,9 +36,9 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 
 ## Implementation Phasing
 
-製品ビジョン全体に対し、実装は roadmap の spec 順に段階投入する。
+製品ビジョン全体に対し、実装は spec 単位で段階投入する（未着手分は `docs/steering/roadmap.md`、完了履歴は下表）。
 
-表の「状態」列は `docs/steering/roadmap.md` と同期し、根拠は各 spec の `tasks.md` の `[x]` とする（`spec.json` の phase だけで未完了と判断しない）。
+表の「状態」列は完了した spec の記録。根拠は各 spec の `tasks.md` の `[x]` とする（`spec.json` の phase だけで未完了と判断しない）。
 
 | Spec | 状態 | 備考 |
 |------|------|------|
@@ -49,9 +49,12 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 | release-logging | 完了 | リリースビルド `--log` 時の診断ログ永続化（`app_data_dir/logs/`） |
 | fix-release-transcribe | 完了 | `app_data_dir` モデルパス（ADR-0008）、`block-appended` ACL、`TranscribeStallWatchdog`、compose 起動順序 |
 | default-window-size | 完了 | `src-tauri/tauri.conf.json` — main ウィンドウ 1000×800 |
+| fix-handwriting-input | 完了 | `AiTranscriptPanel` による購読局所化・`HandwritingEditor` memo / IME composition ガード（spec アーカイブ済み） |
+| transcribe-batch-interval | 完了 | 30 秒固定バッチ推論・PCM 非破棄バッファ（ADR-0012）。spec アーカイブ済み |
+| transcribe-segment-timing | 完了 | VAD 区切り定数チューニング（レガシー経路。本番は ADR-0012 バッチ）。spec アーカイブ済み |
 
-**現 UI の範囲**: キャプチャ／文字起こしフェーズ、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、マイク／スピーカー選択パネル、手書き＋AI 転写の二重エディタ、保存ツールバー・結果トースト。起動時ウィンドウは 1000×800。
+**現 UI の範囲**: キャプチャ／文字起こしフェーズ、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、マイク／スピーカー選択パネル、手書き＋AI 転写の二重エディタ（`AiTranscriptPanel` で block 購読を局所化）、保存ツールバー・結果トースト。起動時ウィンドウは 1000×800。
 
 ---
-_updated_at: 2026-09-07（docs/manual・spec アーカイブ運用を追記）_
+_updated_at: 2026-09-09（roadmap との役割分担を明確化）_
 _Focus on patterns and purpose, not exhaustive feature lists_

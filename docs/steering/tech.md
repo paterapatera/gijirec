@@ -23,7 +23,7 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 |------|------|------|
 | 音声キャプチャ | cpal、screencapturekit（macOS）、WASAPI loopback（Windows）、rubato、rtrb | マイク＋システム音声の二重取り込み・16 kHz ミックス |
 | キャプチャ配信 | `PcmChunkBus`（presentation） | 100 ms チャンクの下流 consumer 向けバックプレッシャー付き配信 |
-| 文字起こし | `whisper-cpp-plus`（`WhisperCppAdapter`） | VAD 駆動ストリーミング推論。専用ワーカースレッド + rtrb |
+| 文字起こし | `whisper-cpp-plus`（`WhisperCppAdapter`） | 30 秒固定バッチ推論（ADR-0012）。専用ワーカースレッド + rtrb。推論中も PCM 非破棄蓄積 |
 | 転写ブロック配信 | `TranscriptBlockBus`（presentation） | `whisper-transcribe://block-appended` で追記のみ配信 |
 | マウント同期 | `TranscribeStatusCache`（presentation） | モデル取得中でもブロックしないフェーズ／進捗スナップショット |
 | エディタ | Slate.js（編集面）+ shadcn/ui + Sonner | 部分ロック付き二重エディタ（ADR-0005 / ADR-0006） |
@@ -32,12 +32,19 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 | 診断ログ | `src-tauri/src/logging/`（`--log`） | リリースビルドのファイル永続化（ADR-0007）。`app_data_dir/logs/` |
 | アーキテクチャ検証 | cargo bylaw、dependency-cruiser | レイヤ依存の自動チェック |
 
-### Whisper 推論パラメータ（調整時）
+### Whisper 推論（バッチスケジュール）
 
+- スケジュール: 前サイクル完了から **30 秒**（`BATCH_INTERVAL`）。未処理 PCM ≥ 480k samples でも起動。バックログ残存時は連続サイクル（ADR-0012）
+- 窓長: `MAX_INFERENCE_WINDOW_SAMPLES = 480_000`（30 s @ 16 kHz）。停止時は残 PCM を最終バッチ flush
 - デフォルトモデル: `kotoba-whisper-v2.2-ggml.bin`（FP16、ADR-0011）
+- 可観測性: `batch_cycle_started` / `batch_cycle_completed`、`transcribe_pcm_backlog_seconds`、`transcribe_rtrb_overflow_count`（ingest 共有 `AtomicU64` を worker がサイクル開始時に読む。PCM 全文・転写全文はログに出さない）
+- スレッド数: CPU コア数に応じた動的設定、**上限 4**
+- VAD 区切り定数（`TRAILING_SILENCE_FRAMES` 等）はユニットテスト用レガシー経路に残存。本番は `take_batch_window` 経路
+
+### Whisper 推論パラメータ（レガシー VAD 経路の調整時）
+
 - 窓長・スレッド・VAD は **1 軸ずつ** 変更し、`bun run verify` + 実機で確認してから次へ
 - 繰り返し発話・区切り不良は、窓長変更と `single_segment` / `entropy_thold` を同時に変えない
-- スレッド数: CPU コア数に応じた動的設定、**上限 4**
 - 大きく戻す前に revert 条件をメモする（調整セッションで全 revert が起きやすい）
 
 ## Development Standards
@@ -112,6 +119,8 @@ bun run rust:typecheck
 - **Vite + React プラグイン**: `@vitejs/plugin-react` **6** は Vite **8** 専用（`vite/internal`）。Vite 7 では 5.x、Vite 8 では 6.x を組にする
 - **tailwindcss**: shadcn の `tailwind.config.ts` 互換のため **v3.4.19** にピン留め（`bun add` が v4 を解決しうる）
 - **Rust typecheck / test**: Cursor の一時 `CARGO_TARGET_DIR` だと whisper-cpp-plus-sys の cmake が失敗する。`src-tauri/.cargo/config.toml` で `target` を固定し、ルートから `--manifest-path src-tauri/Cargo.toml` で実行。**`CARGO_TARGET_DIR=src-tauri/target` は `src-tauri/src-tauri/target` を誤生成するので不可**
+- **compose 統合テスト**: `cargo test -p gijirec -- compose::`（`-p gijirec-presentation` ではマッチしない）
+- **契約テスト配置**: `gijirec-infrastructure` → `gijirec-application` の dev-dep は bylaw 違反。ブロック供給の契約テストは `block_emitter.rs` 側に置く
 
 ## Key Technical Decisions
 
@@ -128,5 +137,5 @@ bun run rust:typecheck
 永続的な技術判断は `docs/architecture/adr/` に ADR として記録する。
 
 ---
-_updated_at: 2026-09-07（Toolchain & build gotchas を追記）_
+_updated_at: 2026-09-09（30 秒バッチ推論・compose テスト・契約テスト配置を追記）_
 _Document standards and patterns, not every dependency_

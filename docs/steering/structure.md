@@ -30,6 +30,8 @@
 - `src/infrastructure/` — 外部アダプタ（domain のみ）。`infrastructure/tauri/editorCommands.ts` が保存／設定 invoke をラップ。`infrastructure/tauri/audioDeviceCommands.ts` がデバイス一覧・選択 invoke をラップ
 - `src/presentation/` — UI・composition root（`App.tsx`、hooks、`components/` の二重エディタ・`DeviceSelectorPanel` と chrome）
 
+**二重エディタ再描画分離**: `TranscriptEditorView` は block 購読を持たず、`AiTranscriptPanel` 内で `useTranscriptBlocks` を局所化する。`block-appended` 更新は AI 側のみ再描画し、手入力 `HandwritingEditor` へ波及しない。`HandwritingEditor` は `React.memo` + IME `composition` イベントガード。親からの ref は `useCallback` + `externalHandwritingRef` で安定化（`exactOptionalPropertyTypes` 対応のため `AiTranscriptPanel` への ref は条件付き spread）。
+
 **Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_phase` / `get_transcribe_status` / `get_editor_settings` / `get_device_selection` で同期。テスト時は `listenFn` / `invokeFn` を注入。command ミラーは hooks ではなく `infrastructure/tauri/{editorCommands,audioDeviceCommands}.ts`。
 
 ### Rust Backend
@@ -53,6 +55,8 @@
 **キャプチャパイプライン（composition）**: `CapturePipelineState`（mixer / `ChunkEmitter` / `PcmChunkBus`）を Tauri state に保持。アダプタの rtrb consumer はポート内にあり、処理スレッド結線は `CaptureProcessingHook`（start 後起動）。リサンプラは入力レートが open 後まで不明なため processing スレッド起動時に構築。macOS SCK は 48 kHz 固定。可観測性は presentation の `CaptureObservability` トレイト経由（host が tracing 実装）。`capture_rt_callback_max_us` は処理スレッド drain レイテンシの代理。Linux 非対応は `on_app_setup` でダイアログ。`RunEvent::Exit` 停止は `handle_capture_run_event` を `app.run` から呼ぶ。
 
 **デバイス再選択**: 再キャプチャ時は `ChunkEmitter` を再生成せず `discard_partial_buffer` のみ行い `sequence` を継続する（`audio-capture-pcm` の単調増加・欠番なし）。
+
+**転写ワーカー（バッチ）**: `TranscribeWorker` は `take_batch_window` で先頭 480k samples を非破棄切り出し、`BATCH_INTERVAL`（30 s）起点でサイクル実行。停止時 flush・推論失敗時は次サイクル継続。可観測性は worker コールバック → presentation `observability` → host tracing。
 
 **転写エディタ（上流同期）**: AI 転写ブロックの上流同期は `editor.applyUpstream(op)` 必須。直接 `Editor.apply` では locked 範囲保護されない（`withLockedRanges`）。末尾判定は `Editor.end` ベース（`withStableSelection`）。
 
@@ -140,5 +144,5 @@ feature 完了後、spec ディレクトリを削除する前に次を行う（�
 | Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-07（キャプチャ・エディタパターン、Spec ライフサイクル、docs/manual を追記）_
+_updated_at: 2026-09-09（二重エディタ再描画分離・バッチ転写ワーカーを追記）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_

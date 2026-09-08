@@ -22,7 +22,7 @@ gijirec のテスト方針。何をどこで検証し、何を CI に載せな�
 | TS infrastructure | `src/infrastructure/**/*.test.ts` | invoke ラッパ（editor / audio device） |
 | アーキテクチャ検証 | `scripts/*.test.ts` | レイヤルールの fixture テスト |
 | Rust ユニット | 各 crate の `#[cfg(test)] mod tests` | モジュール内 |
-| Rust 統合 | `src-tauri/crates/*/tests/*.rs`、`src-tauri/tests/*.rs` | crate 外統合テスト（device selection 性能・observability 含む） |
+| Rust 統合 | `src-tauri/crates/*/tests/*.rs`、`src-tauri/tests/*.rs` | crate 外統合テスト（device selection 性能・observability・バッチ transcribe パイプライン含む） |
 
 `src/**/*.test.*` は `tsconfig.json` の `exclude` に入れ、型チェック対象外とする（本番ビルドに含めない）。
 
@@ -42,6 +42,7 @@ bun run test           # フロント4レイヤ（capture / transcribe / editor�
 bun run test:arch      # depcruise レイヤルール fixture
 bun run rust:check     # fmt / clippy / bylaw / machete
 bun run rust:test      # cargo test --workspace
+# compose 結線のみ: cargo test -p gijirec -- compose::
 ```
 
 ## Test Types
@@ -85,7 +86,7 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 | E2E（デバイス選択） | 既定表示・選択変更・empty state・`action_ja` | `App.device-selection.e2e.test.tsx`（モック IPC） |
 | 性能 | 30 分連続キャプチャ、CPU / メモリ / バッファドロップ | `docs/manual/audio-capture/performance-results.md` |
 | 性能（デバイス選択） | 選択変更 → capturing 復帰 < 2 s | `docs/manual/audio-device-selection/performance-results.md`（自動: `src-tauri/tests/device_selection_performance.rs`） |
-| 性能（転写） | 10 分転写 latency・3 s→5 s E2E | `docs/manual/whisper-transcribe/performance-results.md` |
+| 性能（転写） | 10 分転写 latency・バッチ間隔（30 s）・停止後 flush 完全性 | `docs/manual/whisper-transcribe/performance-results.md` |
 | 性能（エディタ） | 500 ブロック追記 p95、保存 100 KB、ログ本文除外 | `docs/manual/transcript-editor/validation-checklist.md` |
 | 並走 | Zoom / Teams との同時実行 | `docs/manual/audio-capture/manual-concurrency-checklist.md` |
 | リリース smoke | release EXE でキャプチャ→文字起こし→ブロック表示 | `docs/manual/fix-release-transcribe/smoke-checklist.md` |
@@ -130,5 +131,5 @@ release で文字起こししないとき、**コード変更前に**次を確�
 - 品質ゲート一覧: `docs/steering/tech.md`
 
 ---
-_updated_at: 2026-09-07（release smoke 記録先・docs/manual 整合）_
+_updated_at: 2026-09-09（バッチ転写手動検証・compose テストコマンドを追記）_
 _Focus on patterns and decisions. Tool-specific config lives in package.json / Cargo.toml._
