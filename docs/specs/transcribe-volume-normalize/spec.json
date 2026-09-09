@@ -1,0 +1,25 @@
+{
+  "feature_name": "transcribe-volume-normalize",
+  "created_at": "2026-09-09T00:00:00+09:00",
+  "updated_at": "2026-09-09T08:20:00+09:00",
+  "language": "ja",
+  "phase": "tasks-approved",
+  "complexity_tier": "S",
+  "complexity_score": 1,
+  "complexity_rationale": "brownfield +2, scope 6 bullets +1, reference patterns -1, complete brief -1",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}

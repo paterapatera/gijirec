@@ -12,9 +12,10 @@
 
 ## Planned Specs
 
-現時点で未着手の feature はなし。新規 spec は `/sdd-discovery` 経由で起票し、依存順でここに `[ ]` として追記する。
+新規 spec は `/sdd-discovery` 経由で起票し、依存順でここに `[ ]` として追記する。完了済み feature の履歴は `docs/steering/product.md` の Implementation Phasing 表を参照。
 
-完了済み feature の履歴は `docs/steering/product.md` の Implementation Phasing 表を参照。
+- [ ] transcribe-volume-normalize -- Whisper 転写パス専用の音量正規化（目標 -18〜-17 dBFS、OS 音量非依存）。Dependencies: none
+- [ ] whisper-model-selection -- kotoba-whisper-v2.2 の Q5_0 / Q8_0 / FP16 切り替え。Dependencies: none
 
 ## 完了状態のルール
 

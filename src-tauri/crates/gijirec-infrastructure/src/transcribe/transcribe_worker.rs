@@ -363,6 +363,7 @@ struct InferenceOutcome {
     segments_count: usize,
 }
 
+#[allow(clippy::excessive_nesting, clippy::too_many_lines)]
 fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
     let WorkerParams {
         consumer,
@@ -681,6 +682,7 @@ fn take_batch_window_from_state(state: &mut PcmBufferState) -> Option<(Vec<f32>,
 }
 
 fn window_rms(pcm: &[f32]) -> f32 {
+    // Samples are post-`PcmIngestConsumer` gain (rtrb holds f32 after TRANSCRIBE_INGEST_GAIN).
     if pcm.is_empty() {
         return 0.0;
     }
@@ -688,6 +690,7 @@ fn window_rms(pcm: &[f32]) -> f32 {
     (sum_sq / pcm.len() as f32).sqrt()
 }
 
+#[allow(clippy::too_many_arguments)] // batch cycle wires engine, sink, and observability callbacks.
 fn run_batch_cycle<E: SegmentEngine>(
     cycle_id: u64,
     pcm: Vec<f32>,
@@ -810,6 +813,7 @@ fn samples_to_ms(samples: u64) -> u64 {
 }
 
 #[cfg(test)]
+#[allow(clippy::excessive_nesting, clippy::too_many_lines)]
 mod tests {
     use super::*;
     use gijirec_domain::transcribe::TranscribeErrorCode;
@@ -901,9 +905,8 @@ mod tests {
     const TEST_PAUSE_PADDING_SAMPLES: usize = TRAILING_SILENCE_FRAMES * FRAME_SAMPLES * 2;
 
     fn push_samples(prod: &mut rtrb::Producer<f32>, value: f32, count: usize) {
-        for _ in 0..count {
-            prod.push(value).expect("push pcm");
-        }
+        let samples = vec![value; count];
+        prod.push_entire_slice(&samples).expect("push pcm");
     }
 
     /// Pushes one complete utterance (speech then silence) so endpointing closes it.
@@ -1188,11 +1191,7 @@ mod tests {
         worker.attach_pcm_consumer(cons);
         worker.spawn().expect("spawn");
 
-        push_samples(
-            &mut prod,
-            0.5,
-            MAX_INFERENCE_WINDOW_SAMPLES * 2,
-        );
+        push_samples(&mut prod, 0.5, MAX_INFERENCE_WINDOW_SAMPLES * 2);
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while inference_count.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
@@ -1240,7 +1239,11 @@ mod tests {
         worker.stop_and_join(Duration::from_secs(2)).expect("stop");
 
         let recorded = segments.lock().expect("lock").clone();
-        assert_eq!(recorded.len(), 1, "stop flush must transcribe remaining PCM");
+        assert_eq!(
+            recorded.len(),
+            1,
+            "stop flush must transcribe remaining PCM"
+        );
         assert_eq!(recorded[0].0, "flushed");
     }
 
@@ -1299,11 +1302,7 @@ mod tests {
         worker.attach_pcm_consumer(cons);
         worker.spawn().expect("spawn");
 
-        push_samples(
-            &mut prod,
-            0.6,
-            MAX_INFERENCE_WINDOW_SAMPLES * 2,
-        );
+        push_samples(&mut prod, 0.6, MAX_INFERENCE_WINDOW_SAMPLES * 2);
 
         let deadline = Instant::now() + Duration::from_secs(3);
         while segments.lock().expect("lock").is_empty() && Instant::now() < deadline {
@@ -1326,7 +1325,10 @@ mod tests {
 
     #[test]
     fn cuts_utterance_at_trailing_silence() {
-        let mut state = state_with(&concat(&[tone(0.2, 32_000), silence(TEST_PAUSE_PADDING_SAMPLES)]));
+        let mut state = state_with(&concat(&[
+            tone(0.2, 32_000),
+            silence(TEST_PAUSE_PADDING_SAMPLES),
+        ]));
 
         let (pcm, base) = take_window_from_state(&mut state, false).expect("window");
 
@@ -1364,15 +1366,18 @@ mod tests {
 
     #[test]
     fn short_speech_waits_for_a_long_pause() {
-        let mut state = state_with(&concat(&[tone(0.2, 8_000), silence(TEST_PAUSE_PADDING_SAMPLES)]));
+        let mut state = state_with(&concat(&[
+            tone(0.2, 8_000),
+            silence(TEST_PAUSE_PADDING_SAMPLES),
+        ]));
         assert!(
             take_window_from_state(&mut state, false).is_none(),
             "a brief pause after short speech must not close the utterance"
         );
 
-        state
-            .samples
-            .extend(silence(LONG_SILENCE_FRAMES * FRAME_SAMPLES - TEST_PAUSE_PADDING_SAMPLES));
+        state.samples.extend(silence(
+            LONG_SILENCE_FRAMES * FRAME_SAMPLES - TEST_PAUSE_PADDING_SAMPLES,
+        ));
         let (pcm, base) = take_window_from_state(&mut state, false).expect("window");
         assert_eq!(base, 0);
         assert_eq!(pcm.len(), 8_000 + LONG_SILENCE_FRAMES * FRAME_SAMPLES);
@@ -1484,13 +1489,11 @@ mod tests {
 
         let retained = state.samples.len() + state.samples_before_buffer as usize;
         assert_eq!(
-            drained,
-            push_count,
+            drained, push_count,
             "drain must pop every sample from the ring buffer"
         );
         assert_eq!(
-            retained,
-            push_count,
+            retained, push_count,
             "no samples may be silently dropped when buffer exceeds old cap"
         );
     }
@@ -2079,8 +2082,7 @@ mod tests {
         let recorded = segments.lock().expect("lock");
         assert_eq!(recorded.len(), 1);
         assert_eq!(
-            recorded[0].1,
-            10_500,
+            recorded[0].1, 10_500,
             "start_ms must be samples_before_buffer (10_000 ms) + segment offset (500 ms)"
         );
     }
@@ -2124,8 +2126,7 @@ mod tests {
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].0, "offset batch");
         assert_eq!(
-            recorded[0].1,
-            30_500,
+            recorded[0].1, 30_500,
             "timestamp must use batch window front (30_000 ms) + segment offset (500 ms)"
         );
 

@@ -290,8 +290,7 @@ where
 const PCM_SAMPLE_RATE_HZ: u32 = 16_000;
 
 /// One 30 s inference window at [`PCM_SAMPLE_RATE_HZ`].
-const PCM_INFERENCE_WINDOW_SAMPLES: usize =
-    30 * PCM_SAMPLE_RATE_HZ as usize;
+const PCM_INFERENCE_WINDOW_SAMPLES: usize = 30 * PCM_SAMPLE_RATE_HZ as usize;
 
 /// Number of 100 ms PCM chunks between ingest RMS summary logs (5 s).
 const PCM_INGEST_RMS_LOG_INTERVAL_CHUNKS: u64 = 50;
@@ -388,7 +387,10 @@ where
     pcm_ingest.set_pcm_rms_callback(Arc::new({
         let accumulator = Arc::clone(&pcm_ingest_rms);
         move |rms| {
-            let summary = accumulator.lock().expect("lock pcm ingest rms").observe(rms);
+            let summary = accumulator
+                .lock()
+                .expect("lock pcm ingest rms")
+                .observe(rms);
             if let Some((min_rms, max_rms, mean_rms, chunk_count)) = summary {
                 gijirec_presentation::transcribe::observability::log_pcm_ingest_rms_summary(
                     min_rms,
@@ -721,6 +723,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn pcm_rtrb_capacity_exceeds_inference_window_with_backlog_headroom() {
         assert!(
             PCM_RTRB_CAPACITY_SAMPLES > PCM_INFERENCE_WINDOW_SAMPLES,
@@ -803,14 +806,11 @@ mod tests {
         blocks: Arc<Mutex<Vec<gijirec_presentation::domain::transcribe::TranscriptBlock>>>,
     }
 
-    impl gijirec_presentation::domain::transcribe::TranscriptBlockConsumer
-        for RecordingBlockConsumer
-    {
+    impl gijirec_presentation::domain::transcribe::TranscriptBlockConsumer for RecordingBlockConsumer {
         fn on_block_appended(
             &self,
             block: gijirec_presentation::domain::transcribe::TranscriptBlock,
-        ) -> Result<(), gijirec_presentation::domain::transcribe::TranscriptConsumerError>
-        {
+        ) -> Result<(), gijirec_presentation::domain::transcribe::TranscriptConsumerError> {
             self.blocks.lock().expect("lock").push(block);
             Ok(())
         }
@@ -849,6 +849,7 @@ mod tests {
 
     /// Mirrors compose wiring: pcm_bus → ingest → expanded rtrb → batch worker → mock adapter → blocks.
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn compose_batch_pipeline_end_to_end_synthetic_pcm_to_blocks() {
         use gijirec_presentation::domain::audio::pcm_chunk::{CHUNK_FRAME_COUNT, PcmChunk};
         use gijirec_presentation::tauri::pcm_bus::MAX_QUEUED_CHUNKS;
@@ -875,11 +876,13 @@ mod tests {
 
         let emitter = Arc::new(BlockEmitter::new(Arc::clone(&block_bus)));
         let engine = ComposeBatchMockEngine {
-            segments: vec![gijirec_presentation::infrastructure::transcribe::WhisperSegment {
-                text: "batch compose".to_string(),
-                start_ms: 500,
-                end_ms: 1500,
-            }],
+            segments: vec![
+                gijirec_presentation::infrastructure::transcribe::WhisperSegment {
+                    text: "batch compose".to_string(),
+                    start_ms: 500,
+                    end_ms: 1500,
+                },
+            ],
         };
         let mut worker = TranscribeWorker::with_engine(
             Arc::clone(&emitter) as Arc<dyn TranscriptSegmentSink>,
@@ -908,7 +911,11 @@ mod tests {
             .expect("stop batch worker");
 
         let blocks = recorded_blocks.lock().expect("lock");
-        assert_eq!(blocks.len(), 1, "mock adapter must emit one block through compose wiring");
+        assert_eq!(
+            blocks.len(),
+            1,
+            "mock adapter must emit one block through compose wiring"
+        );
         assert_eq!(blocks[0].text, "batch compose");
         assert_eq!(blocks[0].sequence, 1);
         assert_eq!(blocks[0].start_timestamp_ms, 500);

@@ -1010,7 +1010,10 @@ fn integration_batch_pipeline_continues_after_inference_failure() {
         .expect("stop batch worker");
 
     let blocks = fixture.recorded_blocks.lock().unwrap().clone();
-    assert!(!blocks.is_empty(), "recovery cycle must emit at least one block");
+    assert!(
+        !blocks.is_empty(),
+        "recovery cycle must emit at least one block"
+    );
     assert_eq!(blocks[0].text, "recovered-batch");
     assert_contiguous_sequences(&blocks);
     assert!(
@@ -1044,7 +1047,11 @@ fn integration_batch_pipeline_stop_flush_processes_remaining_pcm() {
         .expect("stop batch worker");
 
     let blocks = fixture.recorded_blocks.lock().unwrap().clone();
-    assert_eq!(blocks.len(), 1, "stop flush must emit a block for remaining PCM");
+    assert_eq!(
+        blocks.len(),
+        1,
+        "stop flush must emit a block for remaining PCM"
+    );
     assert_eq!(blocks[0].text, "flush-batch");
     assert_eq!(blocks[0].sequence, 1);
     assert_eq!(blocks[0].start_timestamp_ms, 250);

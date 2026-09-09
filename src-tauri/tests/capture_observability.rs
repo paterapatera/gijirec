@@ -52,6 +52,7 @@ fn tracing_backend_emits_structured_fields_without_pcm_samples() {
                 .expect("chunk");
             bus.publish(chunk);
         }
+        gijirec_presentation::tauri::observability::log_buffer_drop(bus.buffer_drops_total());
 
         gijirec_presentation::tauri::observability::log_stream_open_failure(
             "mic",
