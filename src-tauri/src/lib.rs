@@ -43,11 +43,17 @@ use commands::device_selection::{
 use commands::editor::{
     get_editor_settings, pick_save_directory, save_transcript_session, set_editor_settings,
 };
-use commands::{EditorState, get_capture_phase, get_transcribe_phase, get_transcribe_status};
+use commands::transcribe_settings::{
+    get_transcribe_settings, set_transcribe_model_variant,
+};
+use commands::{EditorState, TranscribeSettingsState, get_capture_phase, get_transcribe_phase, get_transcribe_status};
 use compose::{SharedModelOrchestrator, build_capture_stack, inject_model_stack_shared};
 use editor_observability::TracingEditorObservability;
 use gijirec_presentation::application::editor::SettingsService;
+use gijirec_presentation::application::transcribe::TranscribeSettingsService;
 use gijirec_presentation::application::transcribe::orchestrator::TranscribeOrchestrator;
+use gijirec_presentation::domain::transcribe::WhisperModelVariant;
+use gijirec_presentation::transcribe::apply_transcribe_model_variant_impl;
 use gijirec_presentation::application::transcribe::ports::{
     ModelDownloadProgress, ModelDownloadStatus,
 };
@@ -108,7 +114,7 @@ impl ModelProgressThrottle {
     }
 }
 
-struct ModelLoadReporter {
+pub(crate) struct ModelLoadReporter {
     cache: Arc<TranscribeStatusCache>,
     emitter: Arc<dyn TranscribeEventEmitter>,
     throttle: ModelProgressThrottle,
@@ -246,11 +252,54 @@ fn start_model_load_thread(
         };
 
         match acquire_result {
-            Ok(path) => finish_loaded_model(&orch_for_model, lifecycle.as_ref(), &reporter, path),
+            Ok(path) => {
+                {
+                    let variant = model_orchestrator
+                        .lock()
+                        .expect("lock model orchestrator")
+                        .selected_variant();
+                    model_orchestrator
+                        .lock()
+                        .expect("lock model orchestrator")
+                        .mark_active_variant(variant);
+                    gijirec_presentation::transcribe::observability::log_model_variant_applied(
+                        variant,
+                    );
+                }
+                finish_loaded_model(&orch_for_model, lifecycle.as_ref(), &reporter, path);
+            }
             Err(err) => {
                 let mut orch = orch_for_model.lock().expect("lock orchestrator");
                 reporter.report_orchestrator_error(&mut *orch, &err);
             }
+        }
+    });
+}
+
+pub(crate) fn spawn_transcribe_model_variant_apply(
+    model_orchestrator: SharedModelOrchestrator,
+    transcribe_orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
+    cache: Arc<TranscribeStatusCache>,
+    emitter: Arc<dyn TranscribeEventEmitter>,
+    model_variant: WhisperModelVariant,
+) {
+    let reporter = ModelLoadReporter::new(cache, emitter);
+    std::thread::spawn(move || {
+        if let Err(err) = apply_transcribe_model_variant_impl(
+            &model_orchestrator,
+            &transcribe_orchestrator,
+            model_variant,
+            |progress| reporter.emit_progress(&progress, progress_emit_is_forced(&progress)),
+        ) {
+            let mut orch = transcribe_orchestrator.lock().expect("lock orchestrator");
+            reporter.report_orchestrator_error(&mut *orch, &err);
+        } else {
+            reporter.emit_phase(
+                transcribe_orchestrator
+                    .lock()
+                    .expect("lock orchestrator")
+                    .phase(),
+            );
         }
     });
 }
@@ -312,12 +361,35 @@ pub fn run() {
             settings_service: Arc::new(SettingsService::new(app_data_dir.clone())),
         });
 
-        inject_model_stack_shared(&model_orchestrator, app_data_dir);
+        inject_model_stack_shared(&model_orchestrator, app_data_dir.clone());
 
-        let emitter = Arc::new(
+        let transcribe_settings_service =
+            Arc::new(TranscribeSettingsService::new(app_data_dir));
+        let settings_load = transcribe_settings_service.load();
+        if let Some(issue) = settings_load.issue {
+            tracing::warn!(
+                target: gijirec_presentation::transcribe::observability::TRANSCRIBE_LOG_TARGET,
+                issue = issue.message_ja(),
+                "transcribe settings load used defaults"
+            );
+        }
+        {
+            let mut model = model_orchestrator.lock().expect("lock model orchestrator");
+            model.initialize_selected_variant(settings_load.settings.model_variant);
+            gijirec_presentation::transcribe::observability::log_model_variant_selected(
+                settings_load.settings.model_variant,
+            );
+        }
+        app.manage(TranscribeSettingsState {
+            settings_service: transcribe_settings_service,
+            model_orchestrator: Arc::clone(&model_orchestrator),
+        });
+
+        let emitter: Arc<dyn TranscribeEventEmitter> = Arc::new(
             gijirec_presentation::transcribe::TauriTranscribeEventEmitter::new(handle.clone()),
         );
-        transcribe_lifecycle.set_emitter(emitter.clone());
+        transcribe_lifecycle.set_emitter(Arc::clone(&emitter));
+        app.manage(Arc::clone(&emitter));
         transcribe_bus.set_emitter(Arc::new(
             gijirec_presentation::transcribe::TauriTranscriptBlockEventEmitter::new(handle.clone()),
         ));
@@ -351,6 +423,8 @@ pub fn run() {
         get_editor_settings,
         set_editor_settings,
         pick_save_directory,
+        get_transcribe_settings,
+        set_transcribe_model_variant,
         list_audio_devices,
         get_device_selection,
         set_device_selection,

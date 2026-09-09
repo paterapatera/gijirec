@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-transcribe-settings-commands"
+description = "Allows whisper model variant settings IPC (whisper-transcribe-settings.md)."
+commands.allow = [
+  "get_transcribe_settings",
+  "set_transcribe_model_variant",
+]

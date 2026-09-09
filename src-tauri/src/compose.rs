@@ -16,7 +16,7 @@ use gijirec_presentation::application::device_selection::{
 };
 use gijirec_presentation::application::transcribe::block_emitter::BlockEmitter;
 use gijirec_presentation::application::transcribe::model_orchestrator::{
-    ModelOrchestrator, ModelOrchestratorConfig,
+    ApplyVariantOutcome, ModelOrchestrator, ModelOrchestratorConfig,
 };
 use gijirec_presentation::application::transcribe::orchestrator::{
     DefaultTranscribeOrchestrator, TranscribeOrchestrator,
@@ -154,16 +154,9 @@ pub(crate) struct ComposedCapture {
     pub model_orchestrator: SharedModelOrchestrator,
 }
 
-/// Default HuggingFace download URL and SHA-256 for kotoba-whisper-v2.2 GGML (FP16).
-pub(crate) const DEFAULT_WHISPER_MODEL_URL: &str = "https://huggingface.co/kenrouse/kotoba-whisper-v2.2-ggml/resolve/main/kotoba-whisper-v2.2-ggml.bin";
-pub(crate) const DEFAULT_WHISPER_MODEL_SHA256: &str =
-    "eff70a8a236e731abba774ba71e1f6d0fce53302137208c32207e694e0bf4546";
-
-fn default_model_config() -> ModelOrchestratorConfig {
-    ModelOrchestratorConfig {
-        model_url: DEFAULT_WHISPER_MODEL_URL.to_string(),
-        expected_sha256: DEFAULT_WHISPER_MODEL_SHA256.to_string(),
-    }
+/// Default model orchestrator config (FP16 catalog entry).
+pub(crate) fn default_model_config() -> ModelOrchestratorConfig {
+    ModelOrchestratorConfig::fp16_from_catalog()
 }
 
 fn build_model_orchestrator(
@@ -290,7 +283,8 @@ where
 const PCM_SAMPLE_RATE_HZ: u32 = 16_000;
 
 /// One 30 s inference window at [`PCM_SAMPLE_RATE_HZ`].
-const PCM_INFERENCE_WINDOW_SAMPLES: usize = 30 * PCM_SAMPLE_RATE_HZ as usize;
+const PCM_INFERENCE_WINDOW_SAMPLES: usize =
+    30 * PCM_SAMPLE_RATE_HZ as usize;
 
 /// Number of 100 ms PCM chunks between ingest RMS summary logs (5 s).
 const PCM_INGEST_RMS_LOG_INTERVAL_CHUNKS: u64 = 50;
@@ -387,10 +381,7 @@ where
     pcm_ingest.set_pcm_rms_callback(Arc::new({
         let accumulator = Arc::clone(&pcm_ingest_rms);
         move |rms| {
-            let summary = accumulator
-                .lock()
-                .expect("lock pcm ingest rms")
-                .observe(rms);
+            let summary = accumulator.lock().expect("lock pcm ingest rms").observe(rms);
             if let Some((min_rms, max_rms, mean_rms, chunk_count)) = summary {
                 gijirec_presentation::transcribe::observability::log_pcm_ingest_rms_summary(
                     min_rms,
@@ -428,13 +419,34 @@ where
         TranscribeWorker::new(Arc::clone(&block_emitter) as Arc<dyn TranscriptSegmentSink>);
     worker.attach_pcm_consumer(pcm_cons);
     worker.set_rtrb_overflow_counter(rtrb_overflow_counter);
-    worker.set_batch_cycle_started_callback(Arc::new(|event| {
+    let model_orchestrator_for_cycles = Arc::clone(&model_orchestrator);
+    worker.set_batch_cycle_started_callback(Arc::new(move |event| {
         gijirec_presentation::transcribe::observability::log_batch_cycle_started(
             event.cycle_id,
             event.samples_count,
             event.pcm_backlog_seconds,
             event.rtrb_overflow_count,
         );
+        let reload_path = match model_orchestrator_for_cycles
+            .lock()
+            .expect("lock model orchestrator")
+            .try_apply_pending_variant()
+        {
+            Ok(Some(ApplyVariantOutcome::Applied { path })) => {
+                if let Some(variant) = model_orchestrator_for_cycles
+                    .lock()
+                    .expect("lock model orchestrator")
+                    .active_variant()
+                {
+                    gijirec_presentation::transcribe::observability::log_model_variant_applied(
+                        variant,
+                    );
+                }
+                Some(path)
+            }
+            Ok(_) | Err(_) => None,
+        };
+        reload_path
     }));
     worker.set_batch_cycle_completed_callback(Arc::new(|event| {
         gijirec_presentation::transcribe::observability::log_batch_cycle_completed(
@@ -723,7 +735,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::assertions_on_constants)]
     fn pcm_rtrb_capacity_exceeds_inference_window_with_backlog_headroom() {
         assert!(
             PCM_RTRB_CAPACITY_SAMPLES > PCM_INFERENCE_WINDOW_SAMPLES,
@@ -806,11 +817,14 @@ mod tests {
         blocks: Arc<Mutex<Vec<gijirec_presentation::domain::transcribe::TranscriptBlock>>>,
     }
 
-    impl gijirec_presentation::domain::transcribe::TranscriptBlockConsumer for RecordingBlockConsumer {
+    impl gijirec_presentation::domain::transcribe::TranscriptBlockConsumer
+        for RecordingBlockConsumer
+    {
         fn on_block_appended(
             &self,
             block: gijirec_presentation::domain::transcribe::TranscriptBlock,
-        ) -> Result<(), gijirec_presentation::domain::transcribe::TranscriptConsumerError> {
+        ) -> Result<(), gijirec_presentation::domain::transcribe::TranscriptConsumerError>
+        {
             self.blocks.lock().expect("lock").push(block);
             Ok(())
         }
@@ -849,7 +863,6 @@ mod tests {
 
     /// Mirrors compose wiring: pcm_bus → ingest → expanded rtrb → batch worker → mock adapter → blocks.
     #[test]
-    #[allow(clippy::assertions_on_constants)]
     fn compose_batch_pipeline_end_to_end_synthetic_pcm_to_blocks() {
         use gijirec_presentation::domain::audio::pcm_chunk::{CHUNK_FRAME_COUNT, PcmChunk};
         use gijirec_presentation::tauri::pcm_bus::MAX_QUEUED_CHUNKS;
@@ -876,13 +889,11 @@ mod tests {
 
         let emitter = Arc::new(BlockEmitter::new(Arc::clone(&block_bus)));
         let engine = ComposeBatchMockEngine {
-            segments: vec![
-                gijirec_presentation::infrastructure::transcribe::WhisperSegment {
-                    text: "batch compose".to_string(),
-                    start_ms: 500,
-                    end_ms: 1500,
-                },
-            ],
+            segments: vec![gijirec_presentation::infrastructure::transcribe::WhisperSegment {
+                text: "batch compose".to_string(),
+                start_ms: 500,
+                end_ms: 1500,
+            }],
         };
         let mut worker = TranscribeWorker::with_engine(
             Arc::clone(&emitter) as Arc<dyn TranscriptSegmentSink>,
@@ -911,11 +922,7 @@ mod tests {
             .expect("stop batch worker");
 
         let blocks = recorded_blocks.lock().expect("lock");
-        assert_eq!(
-            blocks.len(),
-            1,
-            "mock adapter must emit one block through compose wiring"
-        );
+        assert_eq!(blocks.len(), 1, "mock adapter must emit one block through compose wiring");
         assert_eq!(blocks[0].text, "batch compose");
         assert_eq!(blocks[0].sequence, 1);
         assert_eq!(blocks[0].start_timestamp_ms, 500);

@@ -433,12 +433,28 @@ mod tests {
             self.model_path.clone()
         }
 
+        fn model_path_for(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> PathBuf {
+            self.model_path()
+        }
+
         fn verify(&self, _expected_sha256: Option<&str>) -> Result<PathBuf, TranscribeError> {
             let mut results = self.verify_results.lock().expect("lock");
             if results.is_empty() {
                 panic!("unexpected verify call");
             }
             results.remove(0)
+        }
+
+        fn verify_variant(
+            &self,
+            _variant: gijirec_domain::transcribe::WhisperModelVariant,
+            expected_sha256: Option<&str>,
+        ) -> Result<PathBuf, TranscribeError> {
+            self.verify(expected_sha256)
+        }
+
+        fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
+            false
         }
     }
 
@@ -524,17 +540,19 @@ mod tests {
         let model_path = PathBuf::from("/tmp/models/model.bin");
         let store = Arc::new(MockStore {
             model_path,
-            verify_results: Mutex::new(vec![Err(TranscribeError::ModelNotFound {
-                detail: "missing".to_string(),
-            })]),
+            verify_results: Mutex::new(vec![
+                Err(TranscribeError::ModelNotFound {
+                    detail: "missing".to_string(),
+                }),
+                Err(TranscribeError::ModelNotFound {
+                    detail: "still missing after download".to_string(),
+                }),
+            ]),
         });
         let model_orchestrator = Arc::new(Mutex::new(ModelOrchestrator::new(
             Arc::clone(&store),
             MockDownloader,
-            ModelOrchestratorConfig {
-                model_url: String::new(),
-                expected_sha256: EXPECTED_SHA.to_string(),
-            },
+            ModelOrchestratorConfig::fp16_from_catalog(),
         )));
         let mut orch = DefaultTranscribeOrchestrator::new(
             worker,

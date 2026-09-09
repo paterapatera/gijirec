@@ -1,7 +1,7 @@
 //! Host tracing backend for whisper transcribe observability.
 
 use gijirec_presentation::domain::transcribe::{
-    TranscribeError, TranscribeErrorCode, TranscribePhase,
+    TranscribeError, TranscribeErrorCode, TranscribePhase, WhisperModelVariant,
 };
 use gijirec_presentation::tauri::observability::session_id;
 use gijirec_presentation::transcribe::observability::{
@@ -10,6 +10,14 @@ use gijirec_presentation::transcribe::observability::{
 
 /// Emits structured transcribe events via `tracing` without raw audio or text.
 pub struct TracingTranscribeObservability;
+
+fn variant_tracing_label(variant: WhisperModelVariant) -> &'static str {
+    match variant {
+        WhisperModelVariant::Q5_0 => "q5_0",
+        WhisperModelVariant::Q8_0 => "q8_0",
+        WhisperModelVariant::Fp16 => "fp16",
+    }
+}
 
 impl TranscribeObservability for TracingTranscribeObservability {
     fn log_phase_transition(&self, phase: TranscribePhase) {
@@ -170,6 +178,28 @@ impl TranscribeObservability for TracingTranscribeObservability {
             transcribe_pcm_ingest_chunk_count = chunk_count,
             session_id = session_id(),
             "transcribe pcm ingest rms summary"
+        );
+    }
+
+    fn log_model_variant_selected(&self, variant: WhisperModelVariant) {
+        let label = variant_tracing_label(variant);
+        tracing::info!(
+            target: TRANSCRIBE_LOG_TARGET,
+            model_variant_selected = label,
+            transcribe_active_model_variant = label,
+            session_id = session_id(),
+            "transcribe model variant selected"
+        );
+    }
+
+    fn log_model_variant_applied(&self, variant: WhisperModelVariant) {
+        let label = variant_tracing_label(variant);
+        tracing::info!(
+            target: TRANSCRIBE_LOG_TARGET,
+            model_variant_applied = label,
+            transcribe_active_model_variant = label,
+            session_id = session_id(),
+            "transcribe model variant applied"
         );
     }
 }

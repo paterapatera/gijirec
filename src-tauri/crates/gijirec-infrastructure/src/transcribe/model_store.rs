@@ -4,16 +4,16 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use gijirec_domain::transcribe::TranscribeError;
+use gijirec_domain::transcribe::{ModelVariantCatalog, TranscribeError, WhisperModelVariant};
 use sha2::{Digest, Sha256};
 
-/// Default whisper model filename stored under `{app_data_dir}/models/`.
+/// Default FP16 whisper model filename stored under `{app_data_dir}/models/`.
 pub const MODEL_FILENAME: &str = "kotoba-whisper-v2.2-ggml.bin";
 
 const MODELS_SUBDIR: &str = "models";
 const LEGACY_APP_SUBDIR: &str = "gijirec";
 
-/// Resolves and validates the local whisper model under Tauri `app_data_dir`.
+/// Resolves and validates local whisper models under Tauri `app_data_dir`.
 pub struct ModelStore {
     base_data_dir: PathBuf,
 }
@@ -28,7 +28,7 @@ impl ModelStore {
         dirs::data_local_dir().map(|local| local.join(LEGACY_APP_SUBDIR).join(MODELS_SUBDIR))
     }
 
-    /// Copies a legacy local model into `{app_data_dir}/models/` when present.
+    /// Copies a legacy local FP16 model into `{app_data_dir}/models/` when present.
     /// Copy failures are ignored so the existing download flow can recover.
     pub fn maybe_migrate_from_legacy_local(&self) -> Result<(), TranscribeError> {
         if self.base_data_dir.as_os_str().is_empty() {
@@ -48,7 +48,7 @@ impl ModelStore {
         if self.base_data_dir.as_os_str().is_empty() {
             return Ok(());
         }
-        let destination = self.model_path();
+        let destination = self.model_path_for(WhisperModelVariant::Fp16);
         if destination.exists() {
             return Ok(());
         }
@@ -77,12 +77,34 @@ impl ModelStore {
         self.base_data_dir.join(MODELS_SUBDIR)
     }
 
+    /// FP16 model path (既存 API 後方互換).
     pub fn model_path(&self) -> PathBuf {
-        self.models_dir().join(MODEL_FILENAME)
+        self.model_path_for(WhisperModelVariant::Fp16)
     }
 
+    /// Resolves the on-disk path for a variant.
+    pub fn model_path_for(&self, variant: WhisperModelVariant) -> PathBuf {
+        let filename = ModelVariantCatalog::get(variant).filename;
+        self.models_dir().join(filename)
+    }
+
+    /// Returns whether the variant's model file exists (existence only, no verification).
+    pub fn file_exists(&self, variant: WhisperModelVariant) -> bool {
+        self.model_path_for(variant).is_file()
+    }
+
+    /// Verifies the FP16 model (既存 API 後方互換).
     pub fn verify(&self, expected_sha256: Option<&str>) -> Result<PathBuf, TranscribeError> {
-        let path = self.model_path();
+        self.verify_variant(WhisperModelVariant::Fp16, expected_sha256)
+    }
+
+    /// Verifies a variant's local model file and checksum.
+    pub fn verify_variant(
+        &self,
+        variant: WhisperModelVariant,
+        expected_sha256: Option<&str>,
+    ) -> Result<PathBuf, TranscribeError> {
+        let path = self.model_path_for(variant);
         if !path.exists() {
             return Err(TranscribeError::ModelNotFound {
                 detail: format!("model file not found at {}", path.display()),
@@ -114,7 +136,11 @@ impl ModelStore {
     }
 
     pub fn delete_model(&self) -> Result<(), TranscribeError> {
-        let path = self.model_path();
+        self.delete_variant(WhisperModelVariant::Fp16)
+    }
+
+    pub fn delete_variant(&self, variant: WhisperModelVariant) -> Result<(), TranscribeError> {
+        let path = self.model_path_for(variant);
         if !path.exists() {
             return Ok(());
         }
@@ -385,5 +411,65 @@ mod tests {
 
         cleanup(&base);
         cleanup(&legacy_models);
+    }
+
+    #[test]
+    fn model_path_for_resolves_all_three_variants() {
+        use gijirec_domain::transcribe::{ModelVariantCatalog, WhisperModelVariant};
+
+        let (store, base) = temp_store();
+        for descriptor in ModelVariantCatalog::all() {
+            let path = store.model_path_for(descriptor.variant);
+            assert_eq!(
+                path,
+                base.join("models").join(descriptor.filename),
+                "path for {:?}",
+                descriptor.variant
+            );
+        }
+        assert_eq!(
+            store.model_path(),
+            store.model_path_for(WhisperModelVariant::Fp16)
+        );
+        cleanup(&base);
+    }
+
+    #[test]
+    fn verify_variant_validates_per_variant_file() {
+        use gijirec_domain::transcribe::WhisperModelVariant;
+
+        let (store, base) = temp_store();
+        fs::create_dir_all(store.models_dir()).expect("create models dir");
+        let content = b"q5-model-bytes";
+        fs::write(store.model_path_for(WhisperModelVariant::Q5_0), content)
+            .expect("write q5 model");
+
+        let expected = sha256_hex(content);
+        let path = store
+            .verify_variant(WhisperModelVariant::Q5_0, Some(&expected))
+            .expect("verify q5 model");
+        assert_eq!(path, store.model_path_for(WhisperModelVariant::Q5_0));
+
+        cleanup(&base);
+    }
+
+    #[test]
+    fn existing_fp16_file_verifies_without_rename() {
+        use gijirec_domain::transcribe::{ModelVariantCatalog, WhisperModelVariant};
+
+        let (store, base) = temp_store();
+        fs::create_dir_all(store.models_dir()).expect("create models dir");
+        let content = b"existing-fp16-model";
+        fs::write(store.model_path(), content).expect("write fp16 model");
+
+        let expected = sha256_hex(content);
+        let path = store
+            .verify_variant(WhisperModelVariant::Fp16, Some(&expected))
+            .expect("fp16 verify");
+        assert_eq!(path.file_name().map(|n| n.to_string_lossy()), Some(ModelVariantCatalog::fp16().filename.into()));
+        assert!(store.file_exists(WhisperModelVariant::Fp16));
+        assert!(!store.file_exists(WhisperModelVariant::Q5_0));
+
+        cleanup(&base);
     }
 }

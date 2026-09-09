@@ -157,6 +157,40 @@
 | `gijirec-domain` | 他 crate | **禁止** |
 | `gijirec-*` | `audio-capture` 実装 crate | **禁止** — `PcmChunk` 契約と Tauri イベントのみ |
 
+## whisper-model-selection ドメイン境界
+
+`docs/contracts/whisper-transcribe-settings.md` および ADR-0013 に基づく。完了済み whisper-transcribe のモデル取得・ロード経路を拡張する。
+
+### Owns（この Spec が所有）
+
+| 領域 | コンポーネント / 成果物 |
+|------|-------------------------|
+| バリアント定義カタログ | `WhisperModelVariant`、`ModelVariantCatalog`（filename / URL / SHA-256） |
+| バリアント別ローカルモデル I/O | `ModelStore` 拡張（バリアント別 path / verify / delete） |
+| 選択永続化 | `TranscribeSettings`、`TranscribeSettingsService`、`transcribe-settings.json` |
+| バリアント切替オーケストレーション | `ModelOrchestrator` 拡張（選択変更・次サイクル適用・DL 委譲） |
+| Tauri 設定 IPC | `get_transcribe_settings` / `set_transcribe_model_variant`（契約: `whisper-transcribe-settings.md`） |
+| バリアント選択 UI | `ModelVariantSelector`（または設定パネル内セレクタ）、`useTranscribeSettings` |
+
+### Out of Boundary（境界外）
+
+| 領域 | 備考 |
+|------|------|
+| フェーズ列挙・`model-progress` イベント形状 | `whisper-transcribe-status.md` が所有（変更しない） |
+| 転写ブロック生成・30 s バッチスケジュール | whisper-transcribe が所有 |
+| 音量正規化 | `transcribe-volume-normalize` が独立 spec |
+| ハードウェア自動推奨・他モデルファミリ | product / brief スコープ外 |
+| 転写中即時ホットスワップ | v1 スコープ外（次サイクル適用のみ） |
+
+### Allowed Dependencies（許可依存）
+
+| 種別 | 依存 |
+|------|------|
+| 上流 | whisper-transcribe の `ModelDownloader`、`TranscribeWorker`、`TranscribeLifecycleHook` |
+| 契約 | `whisper-transcribe-status.md`（reference）、`whisper-transcribe-settings.md`（modify） |
+| 参照パターン | `transcript-editor-settings.md`（永続化形状） |
+| ネットワーク | バリアント初回取得の HTTPS のみ（既存 trust boundary 踏襲） |
+
 ## transcript-editor ドメイン境界
 
 `docs/contracts/transcript-editor-*.md` および ADR-0005 / ADR-0006 に基づく。手動検証は `docs/manual/transcript-editor/validation-checklist.md`。

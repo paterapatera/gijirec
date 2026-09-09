@@ -59,9 +59,25 @@ function createMockListen() {
   return { listenFn, emit, listeners };
 }
 
+const defaultTranscribeSettingsResponse = {
+  settings: { model_variant: "fp16" as const },
+  local_availability: { q5_0: false, q8_0: false, fp16: true },
+};
+
+const defaultTranscribeStatusResponse = {
+  phase: { phase: "ready" as const, timestamp_ms: 1 },
+  model_progress: null,
+};
+
 const mockInvokeFn = async (cmd: string, _args?: Record<string, unknown>) => {
   if (cmd === "get_editor_settings") {
     return { save_directory: null, export_jsonl_enabled: false };
+  }
+  if (cmd === "get_transcribe_settings") {
+    return defaultTranscribeSettingsResponse;
+  }
+  if (cmd === "get_transcribe_status") {
+    return defaultTranscribeStatusResponse;
   }
   if (cmd === "list_audio_devices") {
     return { inputs: [], outputs: [] };
@@ -89,6 +105,10 @@ function createStatefulMockInvoke(
     switch (cmd) {
       case "get_editor_settings":
         return { ...persisted };
+      case "get_transcribe_settings":
+        return defaultTranscribeSettingsResponse;
+      case "get_transcribe_status":
+        return defaultTranscribeStatusResponse;
       case "set_editor_settings":
         persisted = { ...persisted, ...args };
         return { ...persisted };
@@ -361,10 +381,11 @@ describe("App", () => {
     const { unmount } = render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
 
     await waitFor(() => {
-      expect(listeners.get(TRANSCRIBE_PHASE_CHANGED_EVENT)?.length).toBe(1);
-      expect(listeners.get(MODEL_PROGRESS_EVENT)?.length).toBe(1);
-      // useTranscribeStatus + TranscriptEditorView (retain-on-error) both subscribe
-      expect(listeners.get(TRANSCRIBE_ERROR_EVENT)?.length).toBe(2);
+      // App root + ModelVariantSelector each subscribe via useTranscribeStatus
+      expect(listeners.get(TRANSCRIBE_PHASE_CHANGED_EVENT)?.length).toBe(2);
+      expect(listeners.get(MODEL_PROGRESS_EVENT)?.length).toBe(2);
+      // useTranscribeStatus (x2) + TranscriptEditorView (retain-on-error)
+      expect(listeners.get(TRANSCRIBE_ERROR_EVENT)?.length).toBe(3);
       expect(listeners.has(BLOCK_APPENDED_EVENT)).toBe(true);
     });
 
@@ -402,5 +423,54 @@ describe("App", () => {
     });
 
     expect(container.textContent).not.toContain("MODEL_CORRUPT");
+  });
+
+  test("renders model variant selector with three choices (req 1.1, 1.2)", async () => {
+    const { listenFn } = createMockListen();
+    const { getByTestId, getByText } = render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
+
+    await waitFor(() => {
+      const select = getByTestId("model-variant-select") as HTMLSelectElement;
+      expect(select.options.length).toBe(3);
+      expect(select.value).toBe("fp16");
+      expect(getByText(/現在: FP16/)).toBeTruthy();
+    });
+  });
+
+  test("syncs transcribe phase from get_transcribe_status on mount (req 5.1)", async () => {
+    const invokeFn = async (cmd: string) => {
+      if (cmd === "get_transcribe_status") {
+        return {
+          phase: { phase: "loading_model", timestamp_ms: 42 },
+          model_progress: null,
+        };
+      }
+      return mockInvokeFn(cmd);
+    };
+    const { listenFn } = createMockListen();
+    const { getByTestId } = render(<App listenFn={listenFn} invokeFn={invokeFn} />);
+
+    await waitFor(() => {
+      expect(getByTestId("transcribe-phase").textContent).toBe("loading_model");
+    });
+  });
+
+  test("disables model variant select while loading_model (req 3.2)", async () => {
+    const invokeFn = async (cmd: string) => {
+      if (cmd === "get_transcribe_status") {
+        return {
+          phase: { phase: "loading_model", timestamp_ms: 42 },
+          model_progress: null,
+        };
+      }
+      return mockInvokeFn(cmd);
+    };
+    const { listenFn } = createMockListen();
+    const { getByTestId } = render(<App listenFn={listenFn} invokeFn={invokeFn} />);
+
+    await waitFor(() => {
+      const select = getByTestId("model-variant-select") as HTMLSelectElement;
+      expect(select.disabled).toBe(true);
+    });
   });
 });

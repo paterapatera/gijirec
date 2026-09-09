@@ -7,6 +7,7 @@ pub mod event_emitter;
 pub mod lifecycle_hook;
 pub mod observability;
 pub mod pcm_ingest_consumer;
+pub mod settings_commands;
 pub mod stall_watchdog;
 pub mod status_cache;
 pub mod transcript_block_bus;
@@ -17,10 +18,11 @@ pub use event_emitter::{
     TranscribeModelProgressPayload, TranscribePhaseChangedPayload,
 };
 pub use gijirec_application::transcribe::{
-    ModelDownloadProgress, ModelDownloadStatus, ModelDownloaderPort, ModelOrchestrator,
-    ModelOrchestratorConfig, ModelStorePort, TranscribeWorkerPort, WhisperContextPort,
+    ApplyVariantOutcome, ModelDownloadProgress, ModelDownloadStatus, ModelDownloaderPort,
+    ModelOrchestrator, ModelOrchestratorConfig, ModelStorePort, TranscribeSettingsService,
+    TranscribeWorkerPort, WhisperContextPort,
 };
-pub use gijirec_domain::transcribe::{TranscribeError, TranscriptSegmentSink};
+pub use gijirec_domain::transcribe::{TranscribeError, TranscriptSegmentSink, WhisperModelVariant};
 pub use gijirec_infrastructure::transcribe::{
     ModelDownloader, ModelStore, TranscribeWorker, WhisperCppAdapter,
 };
@@ -28,7 +30,13 @@ pub use lifecycle_hook::{
     DEFAULT_TRANSCRIBE_STOP_TIMEOUT, TRANSCRIBE_STOP_INFERENCE_MARGIN, TranscribeLifecycleHook,
 };
 pub use observability::{
-    TRANSCRIBE_LOG_TARGET, TranscribeObservability, set_transcribe_observability,
+    TRANSCRIBE_LOG_TARGET, TranscribeObservability, log_model_variant_applied,
+    log_model_variant_selected, set_transcribe_observability,
+};
+pub use settings_commands::{
+    GetTranscribeSettingsResponse, SetTranscribeModelVariantResponse,
+    apply_transcribe_model_variant_impl, get_transcribe_settings_impl,
+    invalid_model_variant_error, persist_transcribe_model_variant,
 };
 pub use pcm_ingest_consumer::{PcmIngestConsumer, SequenceGapCallback};
 pub use stall_watchdog::{
@@ -90,8 +98,24 @@ impl ModelStorePort for ModelStorePortAdapter {
         self.0.model_path()
     }
 
+    fn model_path_for(&self, variant: WhisperModelVariant) -> PathBuf {
+        self.0.model_path_for(variant)
+    }
+
     fn verify(&self, expected_sha256: Option<&str>) -> Result<PathBuf, TranscribeError> {
         self.0.verify(expected_sha256)
+    }
+
+    fn verify_variant(
+        &self,
+        variant: WhisperModelVariant,
+        expected_sha256: Option<&str>,
+    ) -> Result<PathBuf, TranscribeError> {
+        self.0.verify_variant(variant, expected_sha256)
+    }
+
+    fn file_exists(&self, variant: WhisperModelVariant) -> bool {
+        self.0.file_exists(variant)
     }
 }
 

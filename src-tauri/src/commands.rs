@@ -1,6 +1,8 @@
 //! Tauri IPC commands for capture and transcribe status.
 
 use gijirec_presentation::application::editor::SettingsService;
+use gijirec_presentation::application::transcribe::TranscribeSettingsService;
+use gijirec_presentation::application::transcribe::orchestrator::TranscribeOrchestrator;
 use gijirec_presentation::domain::editor::{
     AiTranscriptionJsonlRecord, EditorSettings, EditorUserError, SaveTranscriptSessionRequest,
     SaveTranscriptSessionResult,
@@ -12,9 +14,13 @@ use gijirec_presentation::editor::{
 use gijirec_presentation::tauri::events::CapturePhaseChangedPayload;
 use gijirec_presentation::tauri::lifecycle::CaptureLifecycleState;
 use gijirec_presentation::transcribe::event_emitter::TranscribePhaseChangedPayload;
-use gijirec_presentation::transcribe::{TranscribeStatusCache, TranscribeStatusSnapshot};
+use gijirec_presentation::transcribe::{
+    GetTranscribeSettingsResponse, SetTranscribeModelVariantResponse, TranscribeEventEmitter,
+    TranscribeStatusCache, TranscribeStatusSnapshot, get_transcribe_settings_impl,
+    persist_transcribe_model_variant,
+};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
@@ -25,6 +31,12 @@ fn dialog_folder_to_path(file_path: FilePath) -> Option<PathBuf> {
 /// Shared editor settings service (backed by `app_data_dir`).
 pub struct EditorState {
     pub settings_service: Arc<SettingsService>,
+}
+
+/// Shared transcribe settings service and model orchestrator handle.
+pub struct TranscribeSettingsState {
+    pub settings_service: Arc<TranscribeSettingsService>,
+    pub model_orchestrator: crate::compose::SharedModelOrchestrator,
 }
 
 /// Editor IPC commands (`docs/contracts/transcript-editor-save.md`, `transcript-editor-settings.md`).
@@ -92,6 +104,43 @@ pub mod editor {
             .blocking_pick_folder()
             .and_then(dialog_folder_to_path);
         pick_save_directory_from_selection(selected)
+    }
+}
+
+/// Transcribe settings IPC commands (`docs/contracts/whisper-transcribe-settings.md`).
+pub mod transcribe_settings {
+    use super::*;
+    use gijirec_presentation::domain::transcribe::TranscribeSettingsUserError;
+
+    #[tauri::command]
+    pub fn get_transcribe_settings(
+        state: State<'_, TranscribeSettingsState>,
+    ) -> GetTranscribeSettingsResponse {
+        let availability = state
+            .model_orchestrator
+            .lock()
+            .expect("lock model orchestrator")
+            .local_availability();
+        get_transcribe_settings_impl(&state.settings_service, availability)
+    }
+
+    #[tauri::command(rename_all = "snake_case")]
+    pub fn set_transcribe_model_variant(
+        state: State<'_, TranscribeSettingsState>,
+        transcribe_orchestrator: State<'_, Arc<Mutex<dyn TranscribeOrchestrator>>>,
+        cache: State<'_, Arc<TranscribeStatusCache>>,
+        emitter: State<'_, Arc<dyn TranscribeEventEmitter>>,
+        model_variant: gijirec_presentation::domain::transcribe::WhisperModelVariant,
+    ) -> Result<SetTranscribeModelVariantResponse, TranscribeSettingsUserError> {
+        let settings = persist_transcribe_model_variant(&state.settings_service, model_variant)?;
+        crate::spawn_transcribe_model_variant_apply(
+            Arc::clone(&state.model_orchestrator),
+            Arc::clone(transcribe_orchestrator.inner()),
+            Arc::clone(cache.inner()),
+            Arc::clone(emitter.inner()),
+            model_variant,
+        );
+        Ok(SetTranscribeModelVariantResponse { settings })
     }
 }
 

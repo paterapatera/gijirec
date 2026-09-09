@@ -54,6 +54,7 @@ Architecture Decision Records。重要な設計判断を永続化する。contra
 | `ADR-0007-release-file-logging.md` | release ビルド向け tracing-appender ファイル永続化 | release-logging | Accepted |
 | `ADR-0008-model-store-app-data-dir.md` | Whisper ModelStore の保存先を Tauri app_data_dir に統一 | fix-release-transcribe | Accepted |
 | `ADR-0009-macos-speaker-selection-strategy.md` | macOS スピーカー選択と SCK システムミックスの整合 | audio-device-selection | Accepted |
+| `ADR-0013-whisper-model-variant-selection.md` | kotoba-whisper Q5_0 / Q8_0 / FP16 のユーザー選択 | whisper-model-selection | Accepted |
 
 ## 命名・採番
 

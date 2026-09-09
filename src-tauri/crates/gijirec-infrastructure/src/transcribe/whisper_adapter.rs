@@ -96,6 +96,12 @@ impl WhisperCppAdapter {
         Ok(())
     }
 
+    /// Drops any loaded model and loads from `path` (batch-cycle variant switch).
+    pub fn reload_model(&mut self, path: &Path) -> Result<(), TranscribeError> {
+        self.model = None;
+        self.load_model(path)
+    }
+
     /// Runs inference over 16 kHz mono f32 PCM, reusing a single whisper state.
     pub fn transcribe_pcm(&mut self, pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
         if pcm.is_empty() {

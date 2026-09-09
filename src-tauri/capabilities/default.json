@@ -10,6 +10,7 @@
     "allow-listen-capture-events",
     "allow-listen-transcribe-events",
     "allow-editor-commands",
+    "allow-transcribe-settings-commands",
     "allow-audio-device-commands",
     "allow-listen-audio-device-events",
     "fs:default",

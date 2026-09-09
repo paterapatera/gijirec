@@ -9,19 +9,6 @@ use gijirec_domain::audio::pcm_chunk::{PcmChunk, PcmChunkConsumer, PcmConsumerEr
 /// Max spin wait for rtrb space before signaling backpressure (bus re-queues chunk).
 const RTRB_PUSH_SPIN_BUDGET: Duration = Duration::from_millis(5);
 
-/// Fixed transcribe-path gain targeting ~−18 to −17 dBFS window RMS (v1).
-const TRANSCRIBE_INGEST_GAIN: f32 = 1.25;
-/// Soft limit ceiling after gain to prevent clipping (matches mixer `SOFT_LIMIT`).
-const TRANSCRIBE_SOFT_LIMIT: f32 = 0.95;
-
-fn soft_limit(sample: f32) -> f32 {
-    sample.clamp(-TRANSCRIBE_SOFT_LIMIT, TRANSCRIBE_SOFT_LIMIT)
-}
-
-fn apply_transcribe_ingest_gain(sample: f32) -> f32 {
-    soft_limit(sample * TRANSCRIBE_INGEST_GAIN)
-}
-
 /// Metrics hook for recording sequence gaps.
 pub type SequenceGapCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
@@ -98,7 +85,6 @@ impl PcmIngestConsumer {
     }
 
     /// Pushes normalized samples atomically; spins briefly for space, then signals backpressure.
-    #[allow(clippy::excessive_nesting)]
     fn push_normalized_samples(
         producer: &mut rtrb::Producer<f32>,
         samples: &[f32],
@@ -140,14 +126,15 @@ impl PcmChunkConsumer for PcmIngestConsumer {
         let mut normalized = Vec::with_capacity(samples.len());
         let mut sum_sq = 0.0f32;
         for &sample in samples {
-            let value = apply_transcribe_ingest_gain((sample as f32) / 32768.0);
+            let value = (sample as f32) / 32768.0;
             sum_sq += value * value;
             normalized.push(value);
         }
 
         Self::push_normalized_samples(&mut producer, &normalized).map_err(|err| {
             if matches!(err, PcmConsumerError::Disconnected) {
-                self.rtrb_overflow_count.fetch_add(1, Ordering::Relaxed);
+                self.rtrb_overflow_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
             err
         })?;
@@ -201,8 +188,7 @@ mod tests {
 
         assert_eq!(cons.slots(), CHUNK_FRAME_COUNT as usize);
         let first = cons.pop().expect("pop");
-        let expected = apply_transcribe_ingest_gain(0.5);
-        assert!((first - expected).abs() < 1e-4);
+        assert!((first - 0.5).abs() < 1e-4);
     }
 
     #[test]
@@ -273,8 +259,7 @@ mod tests {
             .expect("retry after drain");
         assert_eq!(cons.slots(), CHUNK_FRAME_COUNT as usize);
         let first = cons.pop().expect("pop");
-        let expected = apply_transcribe_ingest_gain(300.0 / 32768.0);
-        assert!((first - expected).abs() < 1e-4);
+        assert!((first - (300.0 / 32768.0)).abs() < 1e-4);
     }
 
     #[test]
@@ -291,80 +276,5 @@ mod tests {
         // Chunk with seq 1 should not be considered a gap from 100
         consumer.on_pcm_chunk(make_test_chunk(1, 0)).unwrap();
         assert_eq!(consumer.sequence_gaps_total(), 0);
-    }
-
-    fn chunk_rms(samples: &[f32]) -> f32 {
-        if samples.is_empty() {
-            return 0.0;
-        }
-        let sum_sq: f32 = samples.iter().map(|sample| sample * sample).sum();
-        (sum_sq / samples.len() as f32).sqrt()
-    }
-
-    fn constant_amplitude_chunk(sequence: u64, amplitude: f32) -> PcmChunk {
-        let sample = (amplitude * 32768.0).round() as i16;
-        make_test_chunk(sequence, sample)
-    }
-
-    #[test]
-    fn silence_stays_below_silence_threshold_after_gain() {
-        let (prod, mut cons) = rtrb::RingBuffer::<f32>::new(4096);
-        let consumer = PcmIngestConsumer::new(prod);
-
-        // Pre-gain RMS well below SILENCE_RMS_THRESHOLD (0.008).
-        consumer
-            .on_pcm_chunk(constant_amplitude_chunk(1, 0.004))
-            .expect("ingest");
-
-        let mut gained = Vec::with_capacity(CHUNK_FRAME_COUNT as usize);
-        while cons.slots() > 0 {
-            gained.push(cons.pop().expect("pop"));
-        }
-
-        assert!(
-            chunk_rms(&gained) < 0.008,
-            "quiet input must remain below silence skip threshold after gain: {}",
-            chunk_rms(&gained)
-        );
-    }
-
-    #[test]
-    fn nominal_input_reaches_target_rms_after_gain() {
-        let (prod, mut cons) = rtrb::RingBuffer::<f32>::new(4096);
-        let consumer = PcmIngestConsumer::new(prod);
-
-        // ~−20 dBFS pre-gain; ×1.25 lands near −18 to −17 dBFS target.
-        consumer
-            .on_pcm_chunk(constant_amplitude_chunk(1, 0.10))
-            .expect("ingest");
-
-        let mut gained = Vec::with_capacity(CHUNK_FRAME_COUNT as usize);
-        while cons.slots() > 0 {
-            gained.push(cons.pop().expect("pop"));
-        }
-
-        let rms = chunk_rms(&gained);
-        assert!(
-            (0.12..=0.13).contains(&rms),
-            "expected post-gain RMS in 0.12..=0.13, got {rms}"
-        );
-    }
-
-    #[test]
-    fn soft_limit_caps_high_peak_input() {
-        let (prod, mut cons) = rtrb::RingBuffer::<f32>::new(4096);
-        let consumer = PcmIngestConsumer::new(prod);
-
-        consumer
-            .on_pcm_chunk(constant_amplitude_chunk(1, 0.9))
-            .expect("ingest");
-
-        while cons.slots() > 0 {
-            let sample = cons.pop().expect("pop");
-            assert!(
-                sample.abs() <= TRANSCRIBE_SOFT_LIMIT + f32::EPSILON,
-                "sample {sample} exceeded soft limit {TRANSCRIBE_SOFT_LIMIT}"
-            );
-        }
     }
 }

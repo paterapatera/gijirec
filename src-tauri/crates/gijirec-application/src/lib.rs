@@ -7,6 +7,6 @@ pub mod editor;
 pub mod transcribe;
 
 pub use transcribe::{
-    BlockEmitter, DefaultTranscribeOrchestrator, ModelOrchestrator, ModelOrchestratorConfig,
-    TranscribeOrchestrator,
+    ApplyVariantOutcome, BlockEmitter, DefaultTranscribeOrchestrator, ModelOrchestrator,
+    ModelOrchestratorConfig, TranscribeOrchestrator, TranscribeSettingsService,
 };

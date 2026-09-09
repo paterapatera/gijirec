@@ -4,6 +4,7 @@ import type { SaveTranscriptSessionResult } from "../infrastructure/tauri/editor
 import type { AiTranscriptEditorRef } from "./components/AiTranscriptEditor";
 import { AppStatusPanels } from "./components/AppStatusPanels";
 import { DeviceSelectorPanel } from "./components/DeviceSelectorPanel";
+import { ModelVariantSelector } from "./components/ModelVariantSelector";
 import type { HandwritingEditorRef } from "./components/HandwritingEditor";
 import { TranscriptEditorView } from "./components/TranscriptEditorView";
 import { Toaster } from "./components/ui/sonner";
@@ -46,7 +47,10 @@ export function App({
   showSaveResultFn,
 }: AppProps = {}) {
   const captureStatus = useCaptureStatus(listenFn === undefined ? {} : { listenFn });
-  const transcribeStatus = useTranscribeStatus(listenFn === undefined ? {} : { listenFn });
+  const transcribeStatus = useTranscribeStatus({
+    ...(listenFn === undefined ? {} : { listenFn }),
+    invokeFn,
+  });
 
   const settingsHook = useEditorSettings({ invokeFn });
 
@@ -104,6 +108,10 @@ export function App({
       <DeviceSelectorPanel
         invokeFn={invokeFn}
         {...(listenFn !== undefined ? { listenFn, captureListenFn: listenFn } : {})}
+      />
+      <ModelVariantSelector
+        invokeFn={invokeFn}
+        {...(listenFn !== undefined ? { listenFn } : {})}
       />
       <TranscriptEditorView
         onSave={onSave}

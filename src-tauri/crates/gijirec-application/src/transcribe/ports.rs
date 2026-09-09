@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gijirec_domain::transcribe::TranscribeError;
+use gijirec_domain::transcribe::{TranscribeError, WhisperModelVariant};
 
 /// Progress payload per `docs/contracts/whisper-transcribe-status.md`.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,7 +26,14 @@ pub enum ModelDownloadStatus {
 /// Local model path resolution and integrity verification.
 pub trait ModelStorePort: Send {
     fn model_path(&self) -> PathBuf;
+    fn model_path_for(&self, variant: WhisperModelVariant) -> PathBuf;
     fn verify(&self, expected_sha256: Option<&str>) -> Result<PathBuf, TranscribeError>;
+    fn verify_variant(
+        &self,
+        variant: WhisperModelVariant,
+        expected_sha256: Option<&str>,
+    ) -> Result<PathBuf, TranscribeError>;
+    fn file_exists(&self, variant: WhisperModelVariant) -> bool;
 }
 
 /// HTTPS model acquisition with streaming progress.
@@ -86,8 +93,24 @@ mod tests {
             PathBuf::from("/tmp/model.bin")
         }
 
+        fn model_path_for(&self, _variant: WhisperModelVariant) -> PathBuf {
+            self.model_path()
+        }
+
         fn verify(&self, _expected_sha256: Option<&str>) -> Result<PathBuf, TranscribeError> {
             Ok(self.model_path())
+        }
+
+        fn verify_variant(
+            &self,
+            _variant: WhisperModelVariant,
+            _expected_sha256: Option<&str>,
+        ) -> Result<PathBuf, TranscribeError> {
+            Ok(self.model_path())
+        }
+
+        fn file_exists(&self, _variant: WhisperModelVariant) -> bool {
+            true
         }
     }
 

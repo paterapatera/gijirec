@@ -909,11 +909,27 @@ mod tests {
             fn model_path(&self) -> std::path::PathBuf {
                 std::path::PathBuf::from("/tmp/model")
             }
+            fn model_path_for(
+                &self,
+                _variant: gijirec_domain::transcribe::WhisperModelVariant,
+            ) -> std::path::PathBuf {
+                self.model_path()
+            }
             fn verify(
                 &self,
                 _expected: Option<&str>,
             ) -> Result<std::path::PathBuf, TranscribeError> {
                 Ok(std::path::PathBuf::from("/tmp/model"))
+            }
+            fn verify_variant(
+                &self,
+                _variant: gijirec_domain::transcribe::WhisperModelVariant,
+                expected: Option<&str>,
+            ) -> Result<std::path::PathBuf, TranscribeError> {
+                self.verify(expected)
+            }
+            fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
+                true
             }
         }
         struct DummyDownloader;
@@ -1024,11 +1040,27 @@ mod tests {
             fn model_path(&self) -> std::path::PathBuf {
                 std::path::PathBuf::from("/tmp/model")
             }
+            fn model_path_for(
+                &self,
+                _variant: gijirec_domain::transcribe::WhisperModelVariant,
+            ) -> std::path::PathBuf {
+                self.model_path()
+            }
             fn verify(
                 &self,
                 _expected: Option<&str>,
             ) -> Result<std::path::PathBuf, TranscribeError> {
                 Ok(std::path::PathBuf::from("/tmp/model"))
+            }
+            fn verify_variant(
+                &self,
+                _variant: gijirec_domain::transcribe::WhisperModelVariant,
+                expected: Option<&str>,
+            ) -> Result<std::path::PathBuf, TranscribeError> {
+                self.verify(expected)
+            }
+            fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
+                true
             }
         }
         struct DummyDownloader;

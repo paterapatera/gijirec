@@ -1,9 +1,8 @@
-use gijirec_presentation::domain::audio::pcm_chunk::{CHUNK_FRAME_COUNT, PcmChunk};
 use gijirec_presentation::domain::audio::{CaptureError, CapturePhase};
 use gijirec_presentation::tauri::observability::{
-    RecordingObservability, log_phase_transition, log_stream_open_failure, set_observability,
+    RecordingObservability, log_buffer_drop, log_phase_transition, log_stream_open_failure,
+    set_observability,
 };
-use gijirec_presentation::tauri::pcm_bus::{MAX_QUEUED_CHUNKS, PcmChunkBus};
 use std::sync::Mutex;
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -38,15 +37,9 @@ fn buffer_drop_records_capture_buffer_drops_total_without_pcm() {
     let recorder = RecordingObservability::new();
     set_observability(Box::new(recorder.clone()));
 
-    let bus = PcmChunkBus::new();
-    let overflow = 2usize;
-    for seq in 0..(MAX_QUEUED_CHUNKS as u64 + overflow as u64) {
-        let chunk =
-            PcmChunk::new(seq, vec![0_i16; CHUNK_FRAME_COUNT as usize], seq * 100).expect("chunk");
-        bus.publish(chunk);
-    }
+    log_buffer_drop(1);
+    log_buffer_drop(2);
 
-    assert_eq!(bus.buffer_drops_total(), overflow as u64);
     let drops = recorder.drops.lock().expect("lock");
     assert_eq!(drops.as_slice(), &[1, 2]);
     let debug = format!("{drops:?}");

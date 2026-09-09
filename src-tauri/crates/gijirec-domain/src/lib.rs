@@ -4,8 +4,10 @@ pub mod editor;
 pub mod transcribe;
 
 pub use transcribe::{
-    PhaseTransitionError, TranscribeError, TranscribeErrorCode, TranscribePhase,
-    UserFacingTranscribeError,
+    ModelVariantCatalog, ModelVariantDescriptor, PhaseTransitionError, TranscribeError,
+    TranscribeErrorCode, TranscribePhase, TranscribeSettings, TranscribeSettingsError,
+    TranscribeSettingsErrorCode, TranscribeSettingsLoadIssue, TranscribeSettingsLoadResult,
+    TranscribeSettingsUserError, UserFacingTranscribeError, WhisperModelVariant,
 };
 
 #[cfg(test)]

@@ -89,8 +89,21 @@ impl ModelStorePort for MockStore {
     fn model_path(&self) -> PathBuf {
         self.path.clone()
     }
+    fn model_path_for(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> PathBuf {
+        self.path.clone()
+    }
     fn verify(&self, _expected: Option<&str>) -> Result<PathBuf, TranscribeError> {
         Ok(self.path.clone())
+    }
+    fn verify_variant(
+        &self,
+        _variant: gijirec_domain::transcribe::WhisperModelVariant,
+        _expected: Option<&str>,
+    ) -> Result<PathBuf, TranscribeError> {
+        Ok(self.path.clone())
+    }
+    fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
+        true
     }
 }
 
@@ -512,6 +525,9 @@ fn integration_5_model_download_progress_event_series() {
         fn model_path(&self) -> PathBuf {
             self.path.clone()
         }
+        fn model_path_for(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> PathBuf {
+            self.path.clone()
+        }
         fn verify(&self, _expected: Option<&str>) -> Result<PathBuf, TranscribeError> {
             if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
                 Err(TranscribeError::ModelNotFound {
@@ -520,6 +536,16 @@ fn integration_5_model_download_progress_event_series() {
             } else {
                 Ok(self.path.clone())
             }
+        }
+        fn verify_variant(
+            &self,
+            _variant: gijirec_domain::transcribe::WhisperModelVariant,
+            expected: Option<&str>,
+        ) -> Result<PathBuf, TranscribeError> {
+            self.verify(expected)
+        }
+        fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
+            false
         }
     }
 
@@ -617,6 +643,10 @@ impl ModelStorePort for InjectableMockStore {
             .clone()
     }
 
+    fn model_path_for(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> PathBuf {
+        self.model_path()
+    }
+
     fn verify(&self, _expected: Option<&str>) -> Result<PathBuf, TranscribeError> {
         let state = self.state.lock().expect("lock injectable store");
         if !state.injected {
@@ -625,6 +655,18 @@ impl ModelStorePort for InjectableMockStore {
             });
         }
         Ok(state.path.clone())
+    }
+
+    fn verify_variant(
+        &self,
+        _variant: gijirec_domain::transcribe::WhisperModelVariant,
+        expected: Option<&str>,
+    ) -> Result<PathBuf, TranscribeError> {
+        self.verify(expected)
+    }
+
+    fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
+        false
     }
 }
 
@@ -635,10 +677,26 @@ impl ModelStorePort for DeferredPlaceholderStore {
         PathBuf::from("/deferred/unavailable/model.bin")
     }
 
+    fn model_path_for(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> PathBuf {
+        self.model_path()
+    }
+
     fn verify(&self, _expected: Option<&str>) -> Result<PathBuf, TranscribeError> {
         Err(TranscribeError::ModelNotFound {
             detail: "deferred until app_data_dir inject".to_string(),
         })
+    }
+
+    fn verify_variant(
+        &self,
+        _variant: gijirec_domain::transcribe::WhisperModelVariant,
+        expected: Option<&str>,
+    ) -> Result<PathBuf, TranscribeError> {
+        self.verify(expected)
+    }
+
+    fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
+        false
     }
 }
 
@@ -1010,10 +1068,7 @@ fn integration_batch_pipeline_continues_after_inference_failure() {
         .expect("stop batch worker");
 
     let blocks = fixture.recorded_blocks.lock().unwrap().clone();
-    assert!(
-        !blocks.is_empty(),
-        "recovery cycle must emit at least one block"
-    );
+    assert!(!blocks.is_empty(), "recovery cycle must emit at least one block");
     assert_eq!(blocks[0].text, "recovered-batch");
     assert_contiguous_sequences(&blocks);
     assert!(
@@ -1047,11 +1102,7 @@ fn integration_batch_pipeline_stop_flush_processes_remaining_pcm() {
         .expect("stop batch worker");
 
     let blocks = fixture.recorded_blocks.lock().unwrap().clone();
-    assert_eq!(
-        blocks.len(),
-        1,
-        "stop flush must emit a block for remaining PCM"
-    );
+    assert_eq!(blocks.len(), 1, "stop flush must emit a block for remaining PCM");
     assert_eq!(blocks[0].text, "flush-batch");
     assert_eq!(blocks[0].sequence, 1);
     assert_eq!(blocks[0].start_timestamp_ms, 250);

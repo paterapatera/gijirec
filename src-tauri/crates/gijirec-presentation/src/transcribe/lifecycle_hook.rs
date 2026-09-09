@@ -417,11 +417,7 @@ mod tests {
 
             hook.on_capture_stopping();
 
-            assert_eq!(
-                orch.lock().unwrap().stop_count,
-                1,
-                "capture stop must stop worker for PCM flush"
-            );
+            assert_eq!(orch.lock().unwrap().stop_count, 1, "capture stop must stop worker for PCM flush");
             assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
             assert!(!orch.lock().unwrap().upstream_capturing);
         });
@@ -595,10 +591,8 @@ mod tests {
             let mut loading = MockOrchestrator::new(TranscribePhase::LoadingModel);
             loading.set_upstream_capturing(true);
             let orch_loading = Arc::new(Mutex::new(loading));
-            let hook_loading = TranscribeLifecycleHook::new(
-                orch_loading.clone(),
-                Arc::new(MockEmitter::default()),
-            );
+            let hook_loading =
+                TranscribeLifecycleHook::new(orch_loading.clone(), Arc::new(MockEmitter::default()));
 
             hook_loading.on_app_exit();
 

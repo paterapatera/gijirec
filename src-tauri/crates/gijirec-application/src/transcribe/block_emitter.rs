@@ -247,15 +247,9 @@ mod tests {
 
         // Simulates three batch cycles routed through run_inference_window → on_segment.
         emitter.on_segment("one", 0, "ja").expect("first batch");
-        emitter
-            .on_segment("   ", 100, "ja")
-            .expect("empty segment skipped");
-        emitter
-            .on_segment("two", 30_000, "ja")
-            .expect("second batch");
-        emitter
-            .on_segment("three", 60_000, "ja")
-            .expect("third batch");
+        emitter.on_segment("   ", 100, "ja").expect("empty segment skipped");
+        emitter.on_segment("two", 30_000, "ja").expect("second batch");
+        emitter.on_segment("three", 60_000, "ja").expect("third batch");
 
         let blocks = blocks.lock().expect("lock");
         assert_eq!(blocks.len(), 3);

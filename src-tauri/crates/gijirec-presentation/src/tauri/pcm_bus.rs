@@ -162,7 +162,6 @@ mod tests {
 
     // Integration Tests 5: キュー上限超過時にドロップが記録される (req 2.3, 7.2)
     #[test]
-    #[allow(clippy::assertions_on_constants)]
     fn max_queued_chunks_covers_worst_case_inference_backlog() {
         const EXPECTED_WORST_CASE_QUEUED_CHUNKS: usize = 3000;
         assert!(

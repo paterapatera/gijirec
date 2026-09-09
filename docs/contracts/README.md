@@ -17,6 +17,7 @@
 | `audio-device-selection.md` | マイク／スピーカー一覧・セッション選択 Tauri command / イベント | audio-device-selection |
 | `whisper-transcribe-blocks.md` | 下流向けタイムスタンプ付きテキストブロック形状・追記供給規約 | whisper-transcribe |
 | `whisper-transcribe-status.md` | 文字起こしフェーズ・モデル進捗・利用者向けエラー Tauri イベント | whisper-transcribe |
+| `whisper-transcribe-settings.md` | kotoba-whisper バリアント選択の永続化・Tauri command | whisper-model-selection |
 | `transcript-editor-save.md` | 議事録保存コマンド・JST サブディレクトリ・Markdown/JSONL 出力形状 | transcript-editor |
 | `transcript-editor-settings.md` | 保存先ディレクトリ・JSONL 出力設定の永続化 | transcript-editor |
 | `transcript-editor-status.md` | 保存・設定操作の利用者向けエラー形状 | transcript-editor |

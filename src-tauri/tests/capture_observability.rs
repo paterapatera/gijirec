@@ -46,13 +46,14 @@ fn tracing_backend_emits_structured_fields_without_pcm_samples() {
     let logs = with_tracing_logs(|| {
         gijirec_presentation::tauri::observability::log_phase_transition(CapturePhase::Capturing);
 
+        gijirec_presentation::tauri::observability::log_buffer_drop(2);
+
         let bus = PcmChunkBus::new();
         for seq in 0..5 {
             let chunk = PcmChunk::new(seq, vec![12345_i16; CHUNK_FRAME_COUNT as usize], seq * 100)
                 .expect("chunk");
             bus.publish(chunk);
         }
-        gijirec_presentation::tauri::observability::log_buffer_drop(bus.buffer_drops_total());
 
         gijirec_presentation::tauri::observability::log_stream_open_failure(
             "mic",

@@ -4,7 +4,7 @@ export const PHASE_CHANGED_EVENT = "whisper-transcribe://phase-changed" as const
 export const MODEL_PROGRESS_EVENT = "whisper-transcribe://model-progress" as const;
 export const TRANSCRIBE_ERROR_EVENT = "whisper-transcribe://error" as const;
 
-type TranscribePhase = "idle" | "loading_model" | "ready" | "transcribing" | "stopping" | "error";
+export type TranscribePhase = "idle" | "loading_model" | "ready" | "transcribing" | "stopping" | "error";
 
 export interface TranscribePhaseChanged {
   phase: TranscribePhase;
