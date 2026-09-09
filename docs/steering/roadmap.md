@@ -14,6 +14,8 @@
 
 新規 spec は `/sdd-discovery` 経由で起票し、依存順でここに `[ ]` として追記する。完了済み feature の履歴は `docs/steering/product.md` の Implementation Phasing 表を参照。
 
+- [ ] capture-audio-controls -- マイクトグル・dB メーター・手動ゲイン調整（−18〜−17 dBFS 目標）。Dependencies: transcribe-volume-normalize
+
 ## 完了状態のルール
 
 - **完了**: `docs/specs/<feature>/tasks.md` が全 `[x]`（spec 削除後は `docs/steering/product.md` の実装フェーズ表とコードで確認）
@@ -23,4 +25,4 @@
 - **アーカイブ**: 完了 spec は Implementation Notes 昇格・`docs/manual/` 移設後、人間が週次で `docs/specs/<feature>/` を削除（手順は `docs/steering/structure.md` の Spec ライフサイクル）
 
 ---
-_updated_at: 2026-09-10（transcribe-volume-normalize 完了を product.md へ移行）_
+_updated_at: 2026-09-10（capture-audio-controls 起票）_
