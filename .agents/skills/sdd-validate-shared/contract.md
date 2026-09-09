@@ -47,7 +47,7 @@ Create `reviews/` if missing.
 （重大度付き。NO-GO 時は修正指示を actionable に）
 
 ## Decisions
-（自律的に確定した判断・前提・トレードオフ。承認ゲートでユーザーに報告する原文）
+（自律的に確定した判断・前提・トレードオフ。PR Summary / 残リスクの原文）
 
 ## Reflected Fixes
 （対象成果物を編集した validate は必須。編集なしの場合は「なし」と明記）

@@ -23,7 +23,7 @@ Single invocation: Pass A (po→qa→sec) then Pass B (reflection + gap domains 
 | - | ----------------------- | ---------------------------------- |
 | Purpose | Draft quality, EARS mechanical fit | Semantic + testability + security + gap audit |
 | Form | Internal loop (max 2 passes) | Autonomous; decisions in report |
-| User report | None | At approval gate via `## Decisions` / 承認ゲートサマリ |
+| User report | None | Recorded in `## Decisions` / 承認ゲートサマリ (consumed later by PR Summary) |
 
 ## Design Phase (unified: `/sdd-validate-design-qa`)
 
@@ -44,4 +44,4 @@ Single invocation: Pass A (qa→arch→sec) then Pass B (reflection + gap domain
 
 - **Requirements:** unified skill embeds phase-gate checks in `requirements-review.md` (`## Phase Gate`). Orchestrator does not dispatch `/sdd-verify-phase-gate` when `STATUS: VERIFIED`.
 - **Design:** unified `/sdd-validate-design-qa` embeds phase-gate checks in `design-review.md`. Orchestrator does not dispatch `/sdd-verify-phase-gate` when `STATUS: VERIFIED`.
-- **Tasks:** after generation, before human approval: `/sdd-verify-phase-gate` with `PHASE_GATE` (not `FEATURE_GO`). Checklist: `phase-gate.md`.
+- **Tasks:** after generation, before Terminal auto-approve: `/sdd-verify-phase-gate` with `PHASE_GATE` (not `FEATURE_GO`). Checklist: `phase-gate.md`.

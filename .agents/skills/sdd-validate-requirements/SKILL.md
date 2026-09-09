@@ -59,7 +59,7 @@ Skip when `--only po|qa|sec` (unless `--only final`).
 
 - Single `VERDICT: GO | NO-GO | MANUAL_VERIFY_REQUIRED` at the end of `requirements-review.md`
 - On `NO-GO`: name rollback target in Findings (`/sdd-spec-requirements` or specific pass: `po` / `qa` / `sec` / `final`)
-- Orchestrator opens **[GATE] 要求** when `VERDICT: GO` **and** `Phase Gate` → `STATUS: VERIFIED` (no separate `/sdd-verify-phase-gate` dispatch in the flow)
+- Orchestrator emits Phase Handoff and ends when `VERDICT: GO` **and** `Phase Gate` → `STATUS: VERIFIED` (no separate `/sdd-verify-phase-gate` dispatch in the flow). Next `/sdd-orchestrate` resumes at design.
 
 ## Report format (`reviews/requirements-review.md`)
 

@@ -90,7 +90,7 @@ Skip when `--only qa|arch|sec` (unless `--only final`).
 
 - Single `VERDICT: GO | NO-GO | MANUAL_VERIFY_REQUIRED` at the end of `design-review.md`
 - On `NO-GO`: name rollback target in Findings (`/sdd-spec-design`, `qa` / `arch` / `sec` / `final`, or requirements phase)
-- Orchestrator opens **[GATE] 設計** when `VERDICT: GO` **and** `Phase Gate` → `STATUS: VERIFIED` (no separate `/sdd-verify-phase-gate` for design in the flow)
+- Orchestrator emits Phase Handoff and ends when `VERDICT: GO` **and** `Phase Gate` → `STATUS: VERIFIED` (no separate `/sdd-verify-phase-gate` for design in the flow). Next `/sdd-orchestrate` resumes at tasks.
 
 ## Report format (`reviews/design-review.md`)
 

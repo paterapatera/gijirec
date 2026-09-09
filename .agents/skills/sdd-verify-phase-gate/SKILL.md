@@ -16,7 +16,7 @@ This skill verifies **artifact readiness** only: files exist, `VERDICT: GO` on r
 <instructions>
 ## When to Use
 
-- After all mechanical validates for a phase report `GO`, **before** the human approval gate（要求 / 設計）or **before** Terminal auto-approve（タスク）
+- After all mechanical validates for a phase report `GO`, **before** the next phase step or **before** Terminal auto-approve（タスク）
 - When `/sdd-orchestrate` reaches the tasks terminal step (`/sdd-verify-phase-gate <feature> tasks` → then auto-approve)
 - **Requirements / design:** normally embedded in `/sdd-validate-requirements` / `/sdd-validate-design-qa` (`*-review.md` ## Phase Gate). Use this skill standalone for those phases only for debug / re-check
 - **Do not** use for: per-task impl loop (`TASK`), Path B end (`FIX` / `TEST_OR_BUILD`), or post-impl feature completion (`FEATURE_GO`)
@@ -38,7 +38,7 @@ This skill verifies **artifact readiness** only: files exist, `VERDICT: GO` on r
 ## Output
 
 Return one of:
-- `VERIFIED` — safe to proceed to human approval gate
+- `VERIFIED` — safe to proceed to next phase or Terminal auto-approve
 - `NOT_VERIFIED` — missing artifact, non-GO verdict, or inconsistency
 - `MANUAL_VERIFY_REQUIRED` — cannot determine without user input
 
@@ -48,7 +48,7 @@ Return one of:
 - CLAIM_TYPE: PHASE_GATE
 - PHASE: requirements | design | tasks
 - FEATURE: <feature>
-- CLAIM: <e.g. "Requirements phase ready for human approval">
+- CLAIM: <e.g. "Requirements phase ready for next step">
 - EVIDENCE: <checklist items and file paths inspected>
 - GAPS: <what failed or is missing>
 - NOTES: <next action if not verified>
@@ -58,7 +58,7 @@ Use language from `spec.json`.
 
 ## On NOT_VERIFIED
 
-Do not open the human approval gate. Re-run the failing validate or generation step per `sdd-orchestrate/rules/rollback.md` § Phase gate failures.
+Re-run the failing validate or generation step per `sdd-orchestrate/rules/rollback.md` § Phase gate failures.
 </instructions>
 
 ## Safety

@@ -29,7 +29,7 @@ Read on demand when routing, Path B, requirements init, or impl monitoring needs
 
 - Decided by `/sdd-discovery` **before** orchestration; Path B work never enters an orchestration flow.
 - No spec create/update; do not enter spec flow.
-- Implement in main context — **no** `/sdd-impl` (no approved tasks).
+- Implement in main context — **no** `/sdd-impl` (no `ready_for_implementation` spec).
 - Verify with `/sdd-verify-completion` (`FIX` or `TEST_OR_BUILD`).
 - **Not used**: `spec.json` gates, `/sdd-impl`, `/sdd-validate-impl`, mandatory `/sdd-review`.
 
@@ -37,7 +37,7 @@ Read on demand when routing, Path B, requirements init, or impl monitoring needs
 
 Batch / selection loop (delegate to impl skill — detail in `sdd-impl`):
 
-1. Form next Wave/batch (or `direct` selection) → implementer TDD → `READY_FOR_REVIEW`
+1. Form next **major** batch (or `direct` selection) → implementer TDD → `READY_FOR_REVIEW`
 2. Parent mechanical checks → on FAIL, remediate (no reviewer yet)
 3. Judgment `/sdd-review` (batch/selection-local) → `APPROVED` / `REJECTED`
 4. On `APPROVED`: `/sdd-verify-completion` once (`BATCH`, or `TASK` only for a single manual task) — **not** after every APPROVED when more tasks remain unmarked

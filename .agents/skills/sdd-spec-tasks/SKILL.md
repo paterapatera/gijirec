@@ -41,9 +41,8 @@ metadata:
 - Do not “read everything just in case”
 - **Recommended**: annotate executable sub-tasks that touch a public surface with `_Contracts: docs/contracts/<file>.md_` (path form; optional — Persistent References remain the fallback at impl)
 
-**Validate approvals**:
-- If `-y` flag provided: Auto-approve requirements and design in spec.json. Tasks approval is also handled automatically in Step 4.
-- Otherwise: Verify both approved (stop if not, see Safety & Fallback)
+**Validate prerequisites**:
+- Verify `approvals.requirements.generated === true` and `approvals.design.generated === true` (stop if not, see Safety & Fallback)
 - Determine sequential mode based on presence of `--sequential`
 
 **Artifact-only resume**: 前のチャット履歴・口頭の合意・未書き込みの決定を前提にしない。フェーズの入力は上記 Load Context の成果物（および steering）のみ。チャットにしかない意図が必要なら、生成前に成果物へ書いてから続行する（勝手に補完しない）。設計にないコンポーネントや暗黙の実装方針を会話から追加しない。
@@ -75,7 +74,7 @@ After all parallel research completes, synthesize findings before generating tas
 - Keep normal implementation tasks within a single responsibility boundary; if work crosses boundaries, make it an explicit integration task
 - Collapse single-subtask structures by promoting them to major tasks and avoid duplicating details on container-only major tasks (use template patterns accordingly)
 - Apply `(P)` markers to tasks that satisfy parallel criteria (omit markers when sequential mode requested)
-- Annotate every executable sub-task with `_Wave: N_` (Foundation → Core → Integration → Validation; Integration/Validation Waves stay separate from implementation Waves; `(P)` + different `_Boundary:_` → different Wave numbers)
+- Annotate every executable sub-task with `_Wave: N_` (phase order: Foundation → Core → Integration → Validation; Integration/Validation stay in their own majors; `(P)` + different `_Boundary:_` → different **majors**)
 - Mark optional test coverage subtasks with `- [ ]*` only when they strictly cover acceptance criteria already satisfied by core implementation and can be deferred post-MVP
 - If existing tasks.md found, merge with new content
 
@@ -92,7 +91,7 @@ After all parallel research completes, synthesize findings before generating tas
   - Each executable sub-task includes an observable completion bullet
   - Each executable sub-task includes `_Wave: N_` (flag and repair any missing Waves)
   - No implicit prerequisites remain hidden
-  - `_Depends:_`, `_Boundary:_`, `_Wave:_`, and `(P)` markers still match the dependency graph, architecture boundaries, and wave batch rules
+  - `_Depends:_`, `_Boundary:_`, `_Wave:_`, and `(P)` markers still match the dependency graph, architecture boundaries, and **major** dispatch rules
 - If issues are task-plan-local, repair the draft and re-run the review gate before writing
 - Keep the review bounded to at most 2 repair passes
 - If review exposes a real requirements/design gap or contradiction, stop and send the user back to requirements/design instead of inventing filler tasks
@@ -123,31 +122,19 @@ Before writing `tasks.md`, run one lightweight independent sanity review of the 
 - Create/update `docs/specs/$1/tasks.md`
 - Update spec.json metadata:
   - Set `phase: "tasks-generated"`
-  - Set `approvals.tasks.generated: true, approved: false`
-  - Set `approvals.requirements.approved: true`
-  - Set `approvals.design.approved: true`
+  - Set `approvals.tasks.generated: true`
+  - Set `ready_for_implementation: true`
   - Update `updated_at` timestamp
 
-**Approval**:
-- If auto-approve flag (`-y`) is provided:
-  - Set `approvals.tasks.approved: true` in spec.json
-  - Display task summary (task count, major groups, parallel markers)
-  - Respond: "Tasks generated and auto-approved. Start implementation with `/sdd-impl $1`"
-- Otherwise (interactive):
-  - Display a summary of the generated tasks (task count, major groups, parallel markers)
-  - Ask the user: "Tasks generated. Approve and proceed to implementation?"
-  - If the user approves:
-    - Set `approvals.tasks.approved: true` in spec.json
-    - Respond: "Tasks approved. Start implementation with `/sdd-impl $1`"
-  - If the user wants changes:
-    - Keep `approvals.tasks.approved: false`
-    - Respond with guidance on what to adjust and re-run
+**Summary**:
+- Display task summary (task count, major groups, parallel markers)
+- Respond: "Tasks generated. Start implementation with `/sdd-impl $1` or `/sdd-orchestrate $1 実装のみ`"
 
 ## Critical Constraints
 - **Task Integration**: Every task must connect to the system (no orphaned work)
-- **Boundary annotations**: Required for `(P)` tasks, recommended for all (`_Boundary: ComponentName_`)
+- **Boundary annotations**: Required for `(P)` **majors**, recommended for all (`_Boundary: ComponentName_`)
 - **Contracts annotations** (optional, recommended): `_Contracts: docs/contracts/<file>.md_` when the task touches that public surface
-- **Wave annotations**: Required on every executable sub-task (`_Wave: N_`); same Wave = same dispatch-batch candidate
+- **Wave annotations**: Required on every executable sub-task (`_Wave: N_`) as phase order; `sdd-impl` dispatches by **major number**, not by Wave
 - **Explicit dependencies**: Cross-boundary non-obvious dependencies declared with `_Depends: X.X_`
 - **Executable deliverable granularity**: Each task must produce a verifiable deliverable (file, endpoint, UI component, config). Infrastructure tasks (project scaffolding, manifest, host integration, build config) must be explicit — never assume they exist
 - **Observable done state**: Each executable sub-task must include at least one detail bullet that makes the completed state visible without adding new bookkeeping fields
@@ -179,10 +166,10 @@ Provide brief summary in the language specified in spec.json:
 
 ### Error Scenarios
 
-**Requirements or Design Not Approved**:
-- **Stop Execution**: Cannot proceed without approved requirements and design
-- **User Message**: "Requirements and design must be approved before task generation"
-- **Suggested Action**: "Run `/sdd-spec-tasks $1 -y` to auto-approve both and proceed"
+**Requirements or Design Not Generated**:
+- **Stop Execution**: Cannot proceed without generated requirements and design
+- **User Message**: "Requirements and design must be generated before task generation"
+- **Suggested Action**: "Run `/sdd-spec-requirements $1` and `/sdd-spec-design $1` first"
 
 **Missing Requirements or Design**:
 - **Stop Execution**: Both documents must exist
@@ -207,6 +194,6 @@ Provide brief summary in the language specified in spec.json:
 
 ### Next Phase: Implementation
 
-Tasks are approved in Step 4 via user confirmation. Once approved:
+Once `ready_for_implementation: true` is set in Step 4:
 - Autonomous implementation: `/sdd-impl $1`
 - Specific tasks only: `/sdd-impl $1 1.1,1.2`

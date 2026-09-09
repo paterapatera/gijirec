@@ -11,7 +11,7 @@ On `NO-GO` / `REJECTED`, roll back to the **generating step** for the failed che
 
 ## Phase gate failures (`/sdd-verify-phase-gate` or unified inline Phase Gate)
 
-On `NOT_VERIFIED`, parse `GAPS` / Phase Gate `CHECKS` against `../sdd-validate-shared/phase-gate.md`. Do **not** open the human approval gate. On `MANUAL_VERIFY_REQUIRED`, stop and report gaps — rollback only if the user directs a fix path.
+On `NOT_VERIFIED`, parse `GAPS` / Phase Gate `CHECKS` against `../sdd-validate-shared/phase-gate.md`. Do **not** auto-approve. On `MANUAL_VERIFY_REQUIRED`, stop and report gaps — rollback only if the user directs a fix path.
 
 | Phase | Gap (checklist item) | Rollback to | Re-run from |
 | ----- | -------------------- | ----------- | ----------- |
@@ -19,16 +19,17 @@ On `NOT_VERIFIED`, parse `GAPS` / Phase Gate `CHECKS` against `../sdd-validate-s
 | `requirements` | `approvals.requirements.generated !== true` | `/sdd-spec-requirements` | `/sdd-validate-requirements` |
 | `requirements` | non-GO / missing `reviews/requirements-review.md` | `/sdd-spec-requirements` or `requirements.md` fix | `/sdd-validate-requirements` |
 | `requirements` | Phase Gate not `VERIFIED` | fix gaps named in CHECKS | `/sdd-validate-requirements` or standalone `/sdd-verify-phase-gate` |
-| `requirements` | `approvals.requirements.approved === true` | **[調整者]** re-apply 要求更新 approval invalidation (`flows.md`) | re-check Phase Gate |
+| `requirements` | `ready_for_implementation === true` while re-gating requirements | **[調整者]** re-apply 要求更新 invalidation (`flows.md`) | re-check Phase Gate |
 | `design` | missing `design.md` | `/sdd-spec-design` | `/sdd-validate-design-qa` |
 | `design` | `approvals.design.generated !== true` | `/sdd-spec-design` | `/sdd-validate-design-qa` |
 | `design` | non-GO / missing `reviews/design-review.md` | `/sdd-spec-design` or `design.md` fix | `/sdd-validate-design-qa` |
 | `design` | Phase Gate not `VERIFIED` | fix gaps named in CHECKS | `/sdd-validate-design-qa` or standalone `/sdd-verify-phase-gate` |
-| `design` | `approvals.design.approved === true` | **[調整者]** set `approvals.design.approved: false` (and `approvals.tasks.approved: false`, `ready_for_implementation: false` if tasks were approved) | re-check Phase Gate |
+| `design` | `ready_for_implementation === true` while re-gating design | **[調整者]** set `ready_for_implementation: false` | re-check Phase Gate |
 | `tasks` | missing / empty `tasks.md` | `/sdd-spec-tasks` | `/sdd-verify-phase-gate` |
 | `tasks` | `approvals.tasks.generated !== true` | `/sdd-spec-tasks` | `/sdd-verify-phase-gate` |
-| `tasks` | `approvals.tasks.approved === true` | **[調整者]** set `approvals.tasks.approved: false`, `ready_for_implementation: false` | `/sdd-verify-phase-gate` |
+| `tasks` | `ready_for_implementation === true` while re-gating tasks | **[調整者]** set `ready_for_implementation: false` | `/sdd-verify-phase-gate` |
 | `tasks` | `_Blocked:_` tasks present | stop — report user | resolve blockers before re-gate |
+| `tasks` | any other `NOT_VERIFIED` after `/sdd-spec-tasks` ran | **[調整者]** set `ready_for_implementation: false` if true | `/sdd-verify-phase-gate` |
 
 ## Rules
 

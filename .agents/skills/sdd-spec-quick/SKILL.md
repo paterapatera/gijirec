@@ -105,7 +105,7 @@ Wait for completion. IGNORE any "Next Step" message (it is for standalone usage)
 
 #### Phase 3: Generate Design
 
-Invoke `/sdd-spec-design {feature-name} -y`. The `-y` flag auto-approves requirements.
+Invoke `/sdd-spec-design {feature-name}`.
 
 Wait for completion. IGNORE any "Next Step" message.
 
@@ -121,7 +121,7 @@ Wait for completion. IGNORE any "Next Step" message.
 
 #### Phase 4: Generate Tasks
 
-Invoke `/sdd-spec-tasks {feature-name} -y`. The `-y` flag auto-approves requirements, design, and tasks.
+Invoke `/sdd-spec-tasks {feature-name}`.
 
 Wait for completion.
 
@@ -142,7 +142,7 @@ After Phase 4, run a lightweight sanity review before claiming completion.
 
 **All 4 phases plus sanity review complete.**
 
-**If `--from-orchestrate`:** follow Flag: `--from-orchestrate` completion (optional unified validates, set `complexity_tier` if missing, do **not** approve or chain into `sdd-impl`). Return control to orchestrator for **Terminal auto-approve (S)**.
+**If `--from-orchestrate`:** follow Flag: `--from-orchestrate` completion (optional unified validates, set `complexity_tier` if missing, do **not** set `ready_for_implementation` or chain into `sdd-impl`). Return control to orchestrator for **Terminal auto-approve (S)**.
 
 **Otherwise:** Output final completion summary (see Output Description section) and exit.
 
@@ -160,13 +160,12 @@ When present with `--auto`:
 - Then run **one** unified validate pass per phase if 05/06 implemented (`/sdd-validate-requirements`, `/sdd-validate-design-qa`); else run sanity review only.
 - Set `spec.json` `complexity_tier` if missing (default `S` when invoked via this flag).
 - Do **NOT** chain into `sdd-impl`.
-- Do **not** set `approvals.*.approved` or `ready_for_implementation` — the orchestrator **[調整者]** owns those updates at Terminal auto-approve (S).
+- Do **not** set `ready_for_implementation` — the orchestrator **[調整者]** owns that update at Terminal auto-approve (S).
 
 Terminal completion for `--from-orchestrate`:
 
-- Do **not** open `[GATE] 仕様一式` for user approval
 - Return control after artifact generation + sanity review (+ optional unified validates) succeed with all three `approvals.*.generated === true`
-- Orchestrator **[調整者]** auto-sets all three `approvals.*.approved: true` and `ready_for_implementation: true`, emits PR Summary Output (`gates.md`), then ends orchestration
+- Orchestrator **[調整者]** sets `ready_for_implementation: true`, emits PR Summary Output (`gates.md`), then ends orchestration
 
 Without `--from-orchestrate`, keep the standalone Next Steps output below — do **not** overwrite with orchestrate PR Summary format.
 
@@ -194,7 +193,7 @@ Note: Skips gap analysis and design validation.
 Quick Spec Generation (Automatic Mode)
 
 All phases execute automatically without prompts.
-Note: Skips optional validations (gap analysis, design review) and user approval prompts. Internal review gates still run.
+Note: Skips optional validations (gap analysis, design review). Internal review gates still run.
 Final sanity review still runs.
 ```
 
@@ -203,7 +202,7 @@ Final sanity review still runs.
 Quick Spec Generation (From Orchestrate / S-tier quick-path)
 
 All phases execute automatically. Sanity review (+ optional unified validates) runs.
-Returns to orchestrator for Terminal auto-approve (S) — does not approve or start implementation.
+Returns to orchestrator for Terminal auto-approve (S) — does not set `ready_for_implementation` or start implementation.
 ```
 
 ### Intermediate Output
@@ -217,7 +216,7 @@ Design generated → Continuing to tasks...
 
 ### Final Completion Summary
 
-**When `--from-orchestrate`:** note sanity review result and return control for orchestrator Terminal auto-approve (S) + PR Summary. Do **not** approve, do **not** emit PR Summary here, and do **not** suggest `/sdd-impl`.
+**When `--from-orchestrate`:** note sanity review result and return control for orchestrator Terminal auto-approve (S) + PR Summary. Do **not** set `ready_for_implementation`, do **not** emit PR Summary here, and do **not** suggest `/sdd-impl`.
 
 **Otherwise** — provide output in the language specified in `spec.json`:
 

@@ -48,9 +48,8 @@ disable-model-invocation: true
 - Do not “read everything just in case”. Extra persistent excerpts for parent orchestration: aim **~80–150 lines** total; if over, cut paths / shrink scope
 - Whole architecture diagrams only when this feature changes boundaries
 
-**Validate requirements approval**:
-- If `-y` flag provided ($2 == "-y"): Auto-approve requirements in spec.json
-- Otherwise: Verify approval status (stop if unapproved, see Safety & Fallback)
+**Validate requirements readiness**:
+- Verify `approvals.requirements.generated === true` in spec.json (stop if false, see Safety & Fallback)
 
 **Artifact-only resume**: 前のチャット履歴・口頭の合意・未書き込みの決定を前提にしない。フェーズの入力は上記 Load Context の成果物（および steering）のみ。チャットにしかない意図が必要なら、生成前に成果物へ書いてから続行する（勝手に補完しない）。要求の曖昧さを会話記憶で埋めない。不足なら `requirements.md` の修正をユーザーに求め、設計を進めない。
 
@@ -95,7 +94,7 @@ If **brownfield**:
 | ----- | ---- |
 | **greenfield** | No existing implementation; Step 2.0 skipped |
 | **brownfield** | Extending existing system; Step 2.0 ran |
-| **extension** | Existing *spec* / feature extension (update flow or brief says extend an approved spec) |
+| **extension** | Existing *spec* / feature extension (update flow or brief says extend a generated spec) |
 
 **Axis B — Scope scale** (from brief; `spec.json` `complexity_tier` overrides when present):
 
@@ -261,8 +260,7 @@ After all findings return, synthesize in main context before proceeding.
 
 2. **Update Metadata** in spec.json:
    - Set `phase: "design-generated"`
-   - Set `approvals.design.generated: true, approved: false`
-   - Set `approvals.requirements.approved: true`
+   - Set `approvals.design.generated: true`
    - Update `updated_at` timestamp
 
 ## Critical Constraints
@@ -291,7 +289,7 @@ Provide brief summary in the language specified in spec.json:
 4. **Persistent Contracts**: Which `docs/contracts/**` / `docs/architecture/**` / ADR paths were created or modified (or **No contract changes**)
 5. **Key Findings**: 2-3 critical insights from `research.md` (if any) that shaped the design
 6. **Review Gate**: Confirm the design review gate passed
-7. **Next Action**: Approval workflow guidance (see Safety & Fallback)
+7. **Next Action**: Continue to `/sdd-validate-design-qa $1` (orchestrated) or review `design.md`
 8. **Research Log**: Confirm `research.md` updated, or note that none was needed (greenfield)
 
 **Format**: Concise Markdown (under 200 words) - this is the command output, NOT the design document itself
@@ -302,10 +300,10 @@ Provide brief summary in the language specified in spec.json:
 
 ### Error Scenarios
 
-**Requirements Not Approved**:
-- **Stop Execution**: Cannot proceed without approved requirements
-- **User Message**: "Requirements not yet approved. Approval required before design generation."
-- **Suggested Action**: "Run `/sdd-spec-design $1 -y` to auto-approve requirements and proceed"
+**Requirements Not Generated**:
+- **Stop Execution**: Cannot proceed without generated requirements
+- **User Message**: "Requirements not yet generated. Run requirements phase first."
+- **Suggested Action**: "Run `/sdd-spec-requirements $1` first"
 
 **Missing Requirements**:
 - **Stop Execution**: Requirements document must exist
@@ -331,9 +329,9 @@ Provide brief summary in the language specified in spec.json:
 
 ### Next Phase: Task Generation
 
-**If Design Approved**:
+**If Design generated**:
 - Review generated design at `docs/specs/$1/design.md`
-- Then `/sdd-spec-tasks $1 -y` to generate implementation tasks
+- Then `/sdd-spec-tasks $1` to generate implementation tasks
 
 **If Modifications Needed**:
 - Provide feedback and re-run `/sdd-spec-design $1`

@@ -6,7 +6,7 @@ If the host can invoke skills directly inside subagents, use `sdd-review` as the
 
 
 ## Role
-You are an independent, adversarial reviewer. Your job is to verify that a batch implementation is correct, complete, and production-ready by reading the actual code and tests -- NOT by trusting the implementer's self-report.
+You are an independent, adversarial reviewer. Your job is to verify that a **major** implementation (all tasks in the assigned major batch) is correct, complete, and production-ready by reading the actual code and tests -- NOT by trusting the implementer's self-report.
 
 The parent controller already ran mechanical checks and provides `MECHANICAL_RESULTS`. Focus on **judgment**: spec alignment, test quality, and implementation reality. Do **not** re-run the full test suite by default.
 

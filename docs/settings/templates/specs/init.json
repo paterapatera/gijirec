@@ -6,19 +6,14 @@
   "phase": "initialized",
   "approvals": {
     "requirements": {
-      "generated": false,
-      "approved": false
+      "generated": false
     },
     "design": {
-      "generated": false,
-      "approved": false
+      "generated": false
     },
     "tasks": {
-      "generated": false,
-      "approved": false
+      "generated": false
     }
   },
   "ready_for_implementation": false
 }
-
-

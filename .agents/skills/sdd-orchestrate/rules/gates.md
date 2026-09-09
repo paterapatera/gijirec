@@ -22,9 +22,9 @@ Report paths: see `../sdd-validate-shared/contract.md` (read only if parsing).
 
 ## Phase Gate Verification (要求 / 設計 / タスク)
 
-**要求 (unified):** After `/sdd-validate-requirements` writes `reviews/requirements-review.md` with `VERDICT: GO` and `## Phase Gate` → `STATUS: VERIFIED`, open the human approval gate. Do **not** dispatch `/sdd-verify-phase-gate` for requirements in the orchestrated flow (standalone re-check still allowed).
+**要求 (unified):** After `/sdd-validate-requirements` writes `reviews/requirements-review.md` with `VERDICT: GO` and `## Phase Gate` → `STATUS: VERIFIED`, **Phase terminal** (handoff → end). Do **not** dispatch `/sdd-verify-phase-gate` for requirements in the orchestrated flow (standalone re-check still allowed).
 
-**設計 (unified):** After `/sdd-validate-design-qa` writes `reviews/design-review.md` with `VERDICT: GO` and `## Phase Gate` → `STATUS: VERIFIED`, open the human approval gate. Do **not** dispatch `/sdd-verify-phase-gate` for design in the orchestrated flow.
+**設計 (unified):** After `/sdd-validate-design-qa` writes `reviews/design-review.md` with `VERDICT: GO` and `## Phase Gate` → `STATUS: VERIFIED`, **Phase terminal** (handoff → end). Do **not** dispatch `/sdd-verify-phase-gate` for design in the orchestrated flow.
 
 **タスク:** After generation, **before** terminal auto-approve:
 
@@ -34,113 +34,63 @@ Report paths: see `../sdd-validate-shared/contract.md` (read only if parsing).
 
 | Result | Orchestrator action |
 | ------ | ------------------- |
-| `VERIFIED` | **Terminal auto-approve** (below) — do **not** open a human approval prompt |
-| `NOT_VERIFIED` | Do **not** auto-approve; rollback per `rollback.md` § Phase gate failures |
+| `VERIFIED` | **Terminal auto-approve** (below) |
+| `NOT_VERIFIED` | Rollback per `rollback.md` § Phase gate failures |
 | `MANUAL_VERIFY_REQUIRED` | Stop; report gaps to user |
 
-**Do not** use `/sdd-verify-completion` with `FEATURE_GO` for 要求 / 設計 / タスク — that claim type is for post-impl feature completion only. Inside `/sdd-impl`, use `BATCH` at each batch/selection completion gate (or `TASK` only for a single manual task); use `FEATURE_GO` only after `/sdd-validate-impl` GO at **[GATE] 実装**. Do **not** require verify-completion after every intermediate `APPROVED` while batch tasks remain unmarked.
+**Do not** use `/sdd-verify-completion` with `FEATURE_GO` for 要求 / 設計 / タスク — that claim type is for post-impl feature completion only. Inside `/sdd-impl`, use `BATCH` at each batch/selection completion gate (or `TASK` only for a single manual task); use `FEATURE_GO` only after `/sdd-validate-impl` GO at the end of `実装のみ`. Do **not** require verify-completion after every intermediate `APPROVED` while batch tasks remain unmarked.
 
 ## Phase Gate Table (`spec.json`)
 
 | Phase | Pass condition | After readiness |
 | ----- | -------------- | ------------------- |
-| 要求 | `requirements.md` + `/sdd-validate-requirements` GO + Phase Gate VERIFIED (`requirements-review.md`) | On **`go`**: `approvals.requirements.approved: true` → **Phase Handoff → end**（`/sdd-spec-design` は**次の新規セッション**で） |
-| 設計 | `design.md` + `/sdd-validate-design-qa` GO + Phase Gate VERIFIED (`design-review.md`) | On **`go`**: `approvals.design.approved: true` → **Phase Handoff → end**（`/sdd-spec-tasks` は**次の新規セッション**で） |
-| タスク | `tasks.md` generated + `/sdd-verify-phase-gate` VERIFIED | After **auto-approve**（人間プロンプトなし）: `approvals.tasks.approved: true`, `ready_for_implementation: true` → **end orchestration (do not dispatch `/sdd-impl`)** |
-| 仕様一式 (S) | `requirements`/`design`/`tasks` generated + sanity review (or unified validates GO) | After **auto-approve**（人間プロンプトなし）: all three `approvals.*.approved: true`, `ready_for_implementation: true` → **end orchestration** |
-| 実装 | (out of orchestration scope) | On **`go`**: continue / end per `実装のみ` — reached only via an explicit `実装のみ` invocation（**not** Phase terminal） |
+| 要求 | `requirements.md` + `approvals.requirements.generated` + `/sdd-validate-requirements` GO + Phase Gate VERIFIED | **Phase terminal** → 次チャットで設計 |
+| 設計 | `design.md` + `approvals.design.generated` + `/sdd-validate-design-qa` GO + Phase Gate VERIFIED | **Phase terminal** → 次チャットでタスク |
+| タスク | `tasks.md` + `approvals.tasks.generated` + `/sdd-verify-phase-gate` VERIFIED | Set `ready_for_implementation: true` → **end orchestration (do not dispatch `/sdd-impl`)** |
+| 仕様一式 (S) | all three `approvals.*.generated` + sanity review (or unified validates GO) | Set `ready_for_implementation: true` → **end orchestration** |
+| 実装 | `/sdd-validate-impl` GO + `/sdd-verify-completion` (`FEATURE_GO`) VERIFIED | **End orchestration** — reached only via explicit `実装のみ` |
 
 Requirements validate: single `/sdd-validate-requirements` (unified). Design validate: single `/sdd-validate-design-qa` (unified).
 
-## Phase terminal（人間ゲート後）
+## Phase terminal（要求 / 設計）
 
-| 用語 | 意味 |
-|------|------|
-| **Phase terminal** | 要求 or 設計の人間承認直後。`approvals.<phase>.approved: true` を書いたら、**同一 invocation では次フェーズのスキルを dispatch しない**。Phase Handoff を出して終了する |
-| **Resume** | ユーザーが**同じ Git checkout（worktree）**を開いたまま**新しいチャット**で `/sdd-orchestrate <feature>` を実行。Entry Contract / Spec State Hints が次フェーズを選ぶ。**Artifact-only resume**: handoff・`spec.json`・`docs/specs/<feature>/` 成果物（および steering）だけを信頼し、前チャット履歴・口頭合意・未書き込みの決定は前提にしない。フェーズごとに新しい worktree を作らない |
-| **Terminal auto-approve** | 現行どおり（タスク / 仕様一式）。変更しない |
+After unified Phase Gate `VERIFIED`, **do not** wait for `go` and **do not** dispatch the next phase in this conversation:
 
-**実装ゲート（`[GATE] 実装`）は Phase terminal にしない**（`実装のみ` フロー内の承認のまま）。
+1. `approvals.<phase>.generated` is already set by the generation skill
+2. Emit **Phase Handoff**（below）
+3. **Stop dispatching** — wait for the human, or end if they start a new chat
 
-## Human Approval Gate
+**Human review (no approval command):** The mechanical gate is not a substitute for a human reading the artifacts. After Handoff:
 
-Open only for **要求** / **設計** / **実装** — after requirements/design unified Phase Gate `VERIFIED`, or `/sdd-verify-completion` returns verified (`FEATURE_GO` at **[GATE] 実装** only). Do **not** open for タスク or 仕様一式 (those use **Terminal auto-approve** below). Report:
+| User action | Meaning | Orchestrator action |
+|-------------|---------|---------------------|
+| Same chat: correction notes (natural language) | 問題あり | Stay in this phase. Apply notes → regenerate / re-validate. Do **not** start the next phase. No `fix` keyword required |
+| New chat: `/sdd-orchestrate <feature>` | 問題なし（成果物を受け入れて次へ） | Resume next incomplete phase from disk (`routing.md`) |
+| Same chat: asks to continue to the next phase | 拒否 | Tell them to open a **new** chat with `/sdd-orchestrate <feature>` (token hygiene) |
 
-1. Current phase + completed validates
-2. Key artifact paths
-3. **決定事項サマリー** — summarize each report's `## Decisions` as: 何を決めたか / なぜ / 承認で固定されること。承認で固定する内容は成果物／review に既に書かれているものに限る。チャットだけの決定を承認対象にしない（あるなら先に成果物へ落とす）。
+Do **not** prompt `Reply: go | fix`. Proceeding is the new-chat invoke; correcting is a same-chat reply.
 
-   要求 / 設計 gates: the unified report (`reviews/requirements-review.md` / `reviews/design-review.md`) already contains the 承認ゲートサマリ (検証済み観点 / 自己修復 / 残リスク / 未決事項) — present it as the primary gate content and ask the user to accept the listed residual risks; do not re-summarize the specialist summaries beyond it.
+Reason for the new chat: drop prior-phase conversation tokens. Same Git checkout. Do not create a new worktree per phase.
 
-   Topics to cover when present:
-
-   | Topic | Examples |
-   | ----- | -------- |
-   | Scope | in/out of scope, implicit assumptions |
-   | Requirements validates | PO defaults, resolved ambiguity, testability fixes (`reviews/requirements-review.md`) |
-   | Security validates | adopted controls, deferred risks |
-   | Supplements | glossary/boundary interpretation |
-   | Design | architecture choices, threat-model assumptions (`reviews/design-review.md`) |
-
-   Detail lives in `reviews/*.md` where present; gate report stays concise.
-4. Open issues (if any)
-5. Approval request — always include: `Reply: go (approve & end) | fix <notes>`
-   - **要求 / 設計**: `go` = approve & Phase terminal (handoff → end)
-   - **実装**: `go` = approve & continue / end the `実装のみ` flow（**not** Phase terminal; input vocabulary is the same）
-
-### Gate commands (`go` / `fix`)
-
-Latin-letter phrases only (IME-free). Japanese phrases are **not** canonical commands.
-
-| User input | Meaning | Action |
-|------------|---------|--------|
-| **`go`** | Approve this phase | **要求 / 設計:** `approvals.<phase>.approved: true` → Phase Handoff → **end**. **実装:** set approval per existing convention → continue / end per flow（**not** Phase terminal） |
-| **`fix`** | Reject / continue editing | Do **not** set `approved`. Follow notes in the same or following message; stay in the same phase |
-
-**Normalization** (apply to 要求 / 設計 / 実装 gates):
-
-- Case-insensitive: `go` / `GO` / `Go` are the same
-- Trim surrounding whitespace. Accept when the whole message is the command, or when the leading token is the command (e.g. `go` / `fix: AC-3 を明確化` / `fix\n...`)
-- **No aliases** (`ok` / `yes` / `承認` / Japanese approval phrases are not commands). On invalid input, prompt: `go` または `fix` を送ってください
-- Gate prompt must include: `Reply: go (approve & end) | fix <notes>`
-
-### On `go` (要求 / 設計)
-
-1. Set `approvals.<phase>.approved: true`（要求 → `requirements`, 設計 → `design`）
-2. Update existing meta such as `phase` if the current convention already does（no new required `spec.json` fields）
-3. Emit **Phase Handoff**（below）
-4. **End orchestration** — do **not** dispatch the next `/sdd-spec-*` in the same conversation
-
-### On `fix` (要求 / 設計 / 実装)
-
-Do not approve. Process correction notes in the same phase (same as today's edit loop).
-
-### Rules
-
-- **No next phase without `go`.** For 要求 / 設計: after `go`, also **do not** continue to the next phase in the **same session** — resume in a new chat. (`-y` fast-track only if user explicitly requests; see § Exceptions.)
-- **設計 → タスク** is Phase terminal the same way as 要求 → 設計. Do **not** keep design→tasks in one conversation while cutting only requirements.
-- Path B: no `spec.json` gates — user confirmation at end only.
-- Terminal タスク / 仕様一式: use **Terminal auto-approve** — never open a human `go`/`fix` prompt for these steps.
+Path B: no `spec.json` gates — report changes at end only.
 
 ### Phase Handoff（必須フォーマット）
 
-After `go` on 要求 or 設計, emit one copy-friendly block in the chat. Language follows the spec (default ja). Distinct from **PR Summary Output** (tasks terminal).
+Emit one copy-friendly block. Language follows the spec (default ja). Distinct from **PR Summary Output** (tasks terminal).
 
 **Required items:**
 
 1. **終了したフェーズ** — `requirements` | `design`
 2. **feature** — `<feature>`
-3. **次にやること** — **同じ Git checkout（worktree）**で新しいチャットを開き、次を実行: `/sdd-orchestrate <feature>`
-4. **routing が選ぶ次フロー**（例）:
-   - 要求承認後 → 設計フェーズ（`設計更新` or 要求新規作成の設計ステップ相当）
-   - 設計承認後 → タスク生成（`/sdd-spec-tasks` まで）
-5. **読む成果物**（パス列挙）:
-   - 要求終了時: `docs/specs/<feature>/spec.json`, `requirements.md`, `reviews/requirements-review.md`（あれば `brief.md`）
-   - 設計終了時: 上記 + `design.md`, `reviews/design-review.md`（あれば `research.md`）
+3. **次にやること** — 成果物を確認する。問題があれば**このチャット**で修正指示。問題がなければ **同じ Git checkout** の新しいチャットで `/sdd-orchestrate <feature>`
+4. **routing が選ぶ次フロー**:
+   - 要求終了後 → 設計フェーズ
+   - 設計終了後 → タスク生成
+5. **読む成果物**（パス列挙）
 6. **残リスク 1〜3 行** — 当該 unified review の受容残リスクから要約（再分析しない）
-7. **禁止** — 「このチャットの続きで設計／タスクを続けないでください。次フェーズ用に新しい worktree を作らないでください」
+7. **禁止** — 「問題がない限り、このチャットの続きで次フェーズを続けないでください。次フェーズ用に新しい worktree を作らないでください」
 
-**Template** — emit as a single fenced ` ```markdown ` block (fill paths for the ended phase; omit N/A lines):
+**Template:**
 
 ````markdown
 ```markdown
@@ -148,7 +98,7 @@ After `go` on 要求 or 設計, emit one copy-friendly block in the chat. Langua
 
 - **終了したフェーズ**: <requirements|design>
 - **feature**: <feature>
-- **次にやること**: 同じ checkout の新しいチャットで `/sdd-orchestrate <feature>`
+- **次にやること**: 成果物を確認 → 問題があればこのチャットで修正指示 / 問題がなければ同じ checkout の新しいチャットで `/sdd-orchestrate <feature>`
 - **routing が選ぶ次フロー**: <設計フェーズ | タスク生成>
 - **読む成果物**:
   - `docs/specs/<feature>/spec.json`
@@ -160,7 +110,7 @@ After `go` on 要求 or 設計, emit one copy-friendly block in the chat. Langua
   - （設計終了時・あれば）`docs/specs/<feature>/research.md`
 - **残リスク**:
   - <1〜3 lines from unified review>
-- **禁止**: このチャットの続きで設計／タスクを続けないでください。次フェーズ用に新しい worktree を作らないでください
+- **禁止**: 問題がない限り、このチャットの続きで次フェーズを続けないでください。次フェーズ用に新しい worktree を作らないでください
 ```
 ````
 
@@ -168,57 +118,57 @@ After `go` on 要求 or 設計, emit one copy-friendly block in the chat. Langua
 
 | ケース | 振る舞い |
 |--------|----------|
-| **S / quick-path** | 現行どおり 1 dispatch で要求+設計+タスク → Terminal auto-approve。Phase terminal なし |
-| **`-y` fast-track** | ユーザー明示時のみ、要求→設計→タスクを**同一会話で連鎖してよい**（コストより速度）。handoff 省略可 |
-| **フェーズ内**（例: requirements 生成 → validate → ゲート前の修正往復） | **同一会話のまま**（切らない） |
+| **S / quick-path** | 1 dispatch で要求+設計+タスク → Terminal auto-approve。Phase terminal なし |
+| **フェーズ内**（生成 → validate → 機械ゲート前の修正往復） | **同一会話のまま** |
+| **Phase Handoff 後の修正指示** | **同一会話のまま**（次フェーズへは進まない） |
 | **validate NO-GO → rollback 再生成** | 同一フェーズ内。切らない |
-| **`[GATE] 実装`** | Phase terminal にしない。入力語彙だけ `go`/`fix` |
 
-### Terminal auto-approve (タスク / 仕様一式)
+## Resume
 
-After mechanical readiness (below), the orchestrator **auto-approves** without opening a human approval prompt:
+A new chat with `/sdd-orchestrate <feature>` on the **same Git checkout** means the human accepted the previous phase artifacts and wants the next incomplete phase (`routing.md` § Spec State Hints). **Artifact-only resume**: `spec.json` + `docs/specs/<feature>/` artifacts (and steering) only — not chat history or unwritten decisions. Same-chat correction notes after Handoff are **not** resume — stay in the current phase.
+
+## Terminal auto-approve (タスク / 仕様一式)
+
+After mechanical readiness (below), the orchestrator **auto-approves**:
 
 **M/L — after tasks:**
 1. `/sdd-spec-tasks` completed; `approvals.tasks.generated === true`
 2. `/sdd-verify-phase-gate <feature> tasks` → `STATUS: VERIFIED`
-3. **[調整者]** set `approvals.tasks.approved: true`, `ready_for_implementation: true`, `phase: tasks-approved`
+3. **[調整者]** set `ready_for_implementation: true`, `phase: tasks-approved`
 4. Emit **PR Summary Output**
 5. End orchestration (do **not** dispatch `/sdd-impl`). After the PR Summary fence, emit the chat-only next-step line from § [AUTO] 仕様一式.
 
 **S — after quick-path:**
 1. `/sdd-spec-quick --auto --from-orchestrate` succeeded; all three `approvals.*.generated === true`
 2. Sanity review (and optional unified validates) GO as required by quick-path contract
-3. **[調整者]** set all three `approvals.*.approved: true`, `ready_for_implementation: true`, `phase: tasks-approved`
+3. **[調整者]** set `ready_for_implementation: true`, `phase: tasks-approved`
 4. Emit **PR Summary Output**
 5. End orchestration (do **not** dispatch `/sdd-impl`). After the PR Summary fence, emit the chat-only next-step line from § [AUTO] 仕様一式.
 
-Do **not** open a human `go`/`fix` prompt for these terminal steps. User can still edit `tasks.md` / re-orchestrate later if needed.
+User can still edit `tasks.md` / re-orchestrate later if needed. After PR Summary the same human review applies: same-chat correction notes stay in this phase; a new `/sdd-orchestrate <feature> 実装のみ` (or `/sdd-impl`) means they accepted the spec.
 
-### Complexity tier gate counts
+### Complexity tier (session)
 
-| Tier | Human gates | Notes |
-| ---- | ----------- | ----- |
-| **S** | **0** | quick-path success → Terminal auto-approve (S) + PR Summary |
-| **M** | **2**（要求・設計） | タスクは再開後に自動; 各ゲート後は Phase terminal |
-| **L** | **2**（要求・設計） | タスクは再開後に自動; 各ゲート後は Phase terminal |
-| missing `complexity_tier` | **2** | Treat as L (backward compatible). |
+| Tier | Notes |
+| ---- | ----- |
+| **S** | quick-path success → Terminal auto-approve (S) + PR Summary。Phase terminal なし |
+| **M** | 要求 / 設計は各 Phase terminal; タスクは再開後に自動 |
+| **L** | same as M |
+| missing `complexity_tier` | Treat as L (backward compatible). |
 
-`実装のみ` is unchanged by tier (one **[GATE] 実装** human gate only; not Phase terminal).
+`実装のみ`: end after `/sdd-verify-completion` (`FEATURE_GO`) VERIFIED.
 
 ## [AUTO] 仕様一式 (S-tier only)
 
-Terminal auto-approve checklist covering requirements, design, and tasks (no human prompt).
+Terminal auto-approve checklist covering requirements, design, and tasks.
 
 Precondition:
 
 - `spec.json` `approvals.*.generated === true` for all three phases
 - Sanity review or unified validate reports `VERDICT: GO`
 
-On auto-approve (**[調整者]**):
+On terminal (**[調整者]**):
 
-- `approvals.requirements.approved: true`
-- `approvals.design.approved: true`
-- `approvals.tasks.approved: true`
 - `ready_for_implementation: true`
 - `phase: tasks-approved`
 
@@ -226,7 +176,7 @@ Then: PR Summary Output → orchestration ends. Do **not** dispatch `/sdd-impl`.
 
 ## PR Summary Output (タスク生成完了時)
 
-After **terminal auto-approve** (`approvals.tasks.approved: true`, `ready_for_implementation: true`), and **before** ending the orchestration, emit a Pull Request-ready summary so the user can copy & paste it directly into a PR (title + description).
+After **terminal auto-approve** (`ready_for_implementation: true`), and **before** ending the orchestration, emit a Pull Request-ready summary so the user can copy & paste it directly into a PR (title + description).
 
 **Format rules**
 

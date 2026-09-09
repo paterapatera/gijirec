@@ -171,13 +171,13 @@ Provide output in the language specified in spec.json with:
 
 ### Next Phase: Design Generation
 
-**If Requirements Approved**:
+**If Requirements generated**:
 - Review generated requirements at `docs/specs/$1/requirements.md`
 - **Optional Gap Analysis** (for existing codebases):
   - Gap analysis runs automatically inside `/sdd-spec-design` on brownfield
   - Identifies existing components, integration points, and implementation strategy
   - Greenfield: skipped — do not dispatch a standalone gap step
-- Then `/sdd-spec-design $1 -y` to proceed to design phase
+- Then `/sdd-spec-design $1` to proceed to design phase
 
 **If Modifications Needed**:
 - Provide feedback and re-run `/sdd-spec-requirements $1`
