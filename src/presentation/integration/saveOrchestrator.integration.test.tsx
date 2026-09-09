@@ -20,6 +20,7 @@ import type { TranscriptBlockAppended } from "../hooks/transcript-blocks";
 import { BLOCK_APPENDED_EVENT } from "../hooks/transcript-blocks";
 import { useEditorSettings } from "../hooks/useEditorSettings";
 import { useSaveTranscript } from "../hooks/useSaveTranscript";
+import { handleCommonTranscribeInvokeCommands } from "../testInvokeHelpers";
 
 beforeAll(() => {
   setupTestDom();
@@ -88,6 +89,10 @@ function createStatefulMockInvoke(
 
   const invokeFn = async (cmd: string, args?: Record<string, unknown>) => {
     calls.push({ cmd, args });
+    const transcribe = handleCommonTranscribeInvokeCommands(cmd);
+    if (transcribe !== undefined) {
+      return transcribe;
+    }
     switch (cmd) {
       case "get_editor_settings":
         return { ...persisted };

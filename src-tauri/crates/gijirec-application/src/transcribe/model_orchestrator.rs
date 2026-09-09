@@ -2,9 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use gijirec_domain::transcribe::{
-    ModelVariantCatalog, TranscribeError, WhisperModelVariant,
-};
+use gijirec_domain::transcribe::{ModelVariantCatalog, TranscribeError, WhisperModelVariant};
 
 use super::ports::{
     ModelDownloadProgress, ModelDownloadStatus, ModelDownloaderPort, ModelStorePort,
@@ -82,7 +80,12 @@ impl<S: ModelStorePort, D> ModelOrchestrator<S, D> {
     pub fn local_availability(&self) -> std::collections::HashMap<WhisperModelVariant, bool> {
         ModelVariantCatalog::all()
             .iter()
-            .map(|descriptor| (descriptor.variant, self.store.file_exists(descriptor.variant)))
+            .map(|descriptor| {
+                (
+                    descriptor.variant,
+                    self.store.file_exists(descriptor.variant),
+                )
+            })
             .collect()
     }
 }
@@ -166,7 +169,9 @@ impl<S: ModelStorePort, D: ModelDownloaderPort> ModelOrchestrator<S, D> {
     /// Applies a staged `pending_variant` at a batch cycle boundary.
     ///
     /// Returns the verified model path when a pending switch was committed.
-    pub fn try_apply_pending_variant(&mut self) -> Result<Option<ApplyVariantOutcome>, TranscribeError> {
+    pub fn try_apply_pending_variant(
+        &mut self,
+    ) -> Result<Option<ApplyVariantOutcome>, TranscribeError> {
         let pending = match self.pending_variant {
             Some(variant) => variant,
             None => return Ok(None),
@@ -229,7 +234,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use gijirec_domain::transcribe::{ModelVariantCatalog, TranscribeErrorCode, WhisperModelVariant};
+    use gijirec_domain::transcribe::{
+        ModelVariantCatalog, TranscribeErrorCode, WhisperModelVariant,
+    };
 
     use super::*;
     use crate::transcribe::ports::ModelDownloadProgress;
@@ -587,8 +594,14 @@ mod tests {
                 path: q8_path.clone(),
             }
         );
-        assert_eq!(orchestrator.active_variant(), Some(WhisperModelVariant::Fp16));
-        assert_eq!(orchestrator.pending_variant(), Some(WhisperModelVariant::Q8_0));
+        assert_eq!(
+            orchestrator.active_variant(),
+            Some(WhisperModelVariant::Fp16)
+        );
+        assert_eq!(
+            orchestrator.pending_variant(),
+            Some(WhisperModelVariant::Q8_0)
+        );
 
         let applied = orchestrator
             .try_apply_pending_variant()
@@ -600,7 +613,10 @@ mod tests {
                 path: q8_path.clone(),
             }
         );
-        assert_eq!(orchestrator.active_variant(), Some(WhisperModelVariant::Q8_0));
+        assert_eq!(
+            orchestrator.active_variant(),
+            Some(WhisperModelVariant::Q8_0)
+        );
         assert_eq!(orchestrator.pending_variant(), None);
     }
 

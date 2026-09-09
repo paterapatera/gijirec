@@ -1,16 +1,16 @@
 //! Integration tests for whisper-model-selection (design Testing Strategy — Integration).
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+use gijirec_presentation::application::transcribe::TranscribeSettingsService;
 use gijirec_presentation::application::transcribe::model_orchestrator::{
     ApplyVariantOutcome, ModelOrchestrator, ModelOrchestratorConfig,
 };
 use gijirec_presentation::application::transcribe::ports::{
     ModelDownloadProgress, ModelDownloadStatus, ModelDownloaderPort, ModelStorePort,
 };
-use gijirec_presentation::application::transcribe::TranscribeSettingsService;
 use gijirec_presentation::domain::transcribe::{
     TranscribeError, TranscribeSettings, WhisperModelVariant,
 };
@@ -136,8 +136,8 @@ fn set_variant_persists_and_downloads_when_local_model_missing() {
         ModelOrchestratorConfig::fp16_from_catalog(),
     );
 
-    let settings = persist_transcribe_model_variant(&service, WhisperModelVariant::Q5_0)
-        .expect("persist");
+    let settings =
+        persist_transcribe_model_variant(&service, WhisperModelVariant::Q5_0).expect("persist");
     assert_eq!(settings.model_variant, WhisperModelVariant::Q5_0);
 
     let progress = Mutex::new(Vec::<ModelDownloadProgress>::new());

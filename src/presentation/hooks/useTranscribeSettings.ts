@@ -4,15 +4,14 @@ import { toast } from "sonner";
 import {
   DEFAULT_TRANSCRIBE_SETTINGS,
   type GetTranscribeSettingsResponse,
+  getTranscribeSettings,
   type LocalAvailability,
+  setTranscribeModelVariant,
   type TranscribeSettings,
   type TranscribeSettingsUserError,
   type WhisperModelVariant,
-  getTranscribeSettings,
-  setTranscribeModelVariant,
 } from "../../infrastructure/tauri/transcribeSettingsCommands";
-
-export type { TranscribeSettings, WhisperModelVariant, LocalAvailability };
+import { coerceLocalAvailability } from "../testInvokeHelpers";
 
 export interface UseTranscribeSettingsOptions {
   invokeFn?: typeof invoke;
@@ -31,6 +30,17 @@ const DEFAULT_LOCAL_AVAILABILITY: LocalAvailability = {
   fp16: false,
 };
 
+function isWhisperModelVariant(value: unknown): value is WhisperModelVariant {
+  return value === "q5_0" || value === "q8_0" || value === "fp16";
+}
+
+function coerceTranscribeSettings(settings: TranscribeSettings | undefined): TranscribeSettings {
+  if (settings !== undefined && isWhisperModelVariant(settings.model_variant)) {
+    return settings;
+  }
+  return DEFAULT_TRANSCRIBE_SETTINGS;
+}
+
 function isTranscribeSettingsUserError(error: unknown): error is TranscribeSettingsUserError {
   if (typeof error !== "object" || error === null) {
     return false;
@@ -46,8 +56,8 @@ async function loadTranscribeSettings(
 ): Promise<void> {
   try {
     const response: GetTranscribeSettingsResponse = await getTranscribeSettings({ invokeFn });
-    setSettings(response.settings ?? DEFAULT_TRANSCRIBE_SETTINGS);
-    setLocalAvailability(response.local_availability ?? DEFAULT_LOCAL_AVAILABILITY);
+    setSettings(coerceTranscribeSettings(response.settings));
+    setLocalAvailability(coerceLocalAvailability(response.local_availability));
   } catch {
     setSettings(DEFAULT_TRANSCRIBE_SETTINGS);
     setLocalAvailability(DEFAULT_LOCAL_AVAILABILITY);
@@ -64,8 +74,9 @@ export function useTranscribeSettings(
 ): UseTranscribeSettingsResult {
   const { invokeFn = invoke } = options;
   const [settings, setSettings] = useState<TranscribeSettings>(DEFAULT_TRANSCRIBE_SETTINGS);
-  const [localAvailability, setLocalAvailability] =
-    useState<LocalAvailability>(DEFAULT_LOCAL_AVAILABILITY);
+  const [localAvailability, setLocalAvailability] = useState<LocalAvailability>(
+    DEFAULT_LOCAL_AVAILABILITY,
+  );
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -76,7 +87,7 @@ export function useTranscribeSettings(
     async (variant: WhisperModelVariant) => {
       try {
         const response = await setTranscribeModelVariant({ model_variant: variant }, { invokeFn });
-        setSettings(response.settings ?? DEFAULT_TRANSCRIBE_SETTINGS);
+        setSettings(coerceTranscribeSettings(response.settings));
       } catch (error) {
         const userError = isTranscribeSettingsUserError(error) ? error : null;
         toast.error(userError?.message_ja ?? "モデル設定の保存に失敗しました", {

@@ -4,6 +4,7 @@ use gijirec_domain::transcribe::{TranscribeError, TranscribePhase, WhisperModelV
 use std::sync::{OnceLock, RwLock};
 
 /// Structured transcribe observability hooks.
+#[allow(clippy::too_many_arguments)]
 pub trait TranscribeObservability: Send + Sync {
     fn log_phase_transition(&self, phase: TranscribePhase);
     fn log_pcm_sequence_gaps(&self, from: u64, to: u64);
@@ -186,11 +187,7 @@ pub fn log_batch_cycle_completed(
 }
 
 /// Logs whisper.cpp input window level (RMS in `[-1, 1]` f32 scale).
-pub fn log_inference_window_level(
-    window_rms: f32,
-    samples_count: usize,
-    inference_skipped: bool,
-) {
+pub fn log_inference_window_level(window_rms: f32, samples_count: usize, inference_skipped: bool) {
     transcribe_observability()
         .read()
         .expect("lock")
@@ -198,12 +195,7 @@ pub fn log_inference_window_level(
 }
 
 /// Logs aggregated PCM ingest RMS over a capture interval (default: 5 s).
-pub fn log_pcm_ingest_rms_summary(
-    min_rms: f32,
-    max_rms: f32,
-    mean_rms: f32,
-    chunk_count: u64,
-) {
+pub fn log_pcm_ingest_rms_summary(min_rms: f32, max_rms: f32, mean_rms: f32, chunk_count: u64) {
     transcribe_observability()
         .read()
         .expect("lock")

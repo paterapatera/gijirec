@@ -106,7 +106,7 @@ capture と transcribe で同パターンを踏襲:
 | presentation | Tauri event / command の emit。変換は domain に委譲 |
 | `src/presentation` hooks | 契約型ミラー + 購読。ビジネスロジックなし |
 
-**Transcribe 固有**: `TranscribeError::to_user_facing()` → `whisper-transcribe://error`。上流キャプチャ `error` は `UPSTREAM_CAPTURE_ERROR` で伝播。
+**Transcribe 固有**: `TranscribeError::to_user_facing()` → `whisper-transcribe://error`。上流キャプチャ `error` は `UPSTREAM_CAPTURE_ERROR` で伝播。転写設定の読み込み失敗（欠落・破損 JSON）は FP16 既定で起動継続（ログ＋利用者通知、invoke エラーにしない）。保存失敗は `SETTINGS_PERSIST_FAILED` を invoke エラーとして返す。
 
 **Editor 固有**: `EditorError::to_user_facing()`。保存／設定失敗はイベントではなく command 結果の `error` フィールド。UI は `SaveResultToast`（Sonner）で `message_ja` / `action_ja` を出す。
 
@@ -135,5 +135,5 @@ capture と transcribe で同パターンを踏襲:
 - 境界（外部送信なし）: `docs/architecture/boundaries.md`
 
 ---
-_updated_at: 2026-09-07（Sync: デバイス選択エラー・gijirec_device tracing を反映）_
+_updated_at: 2026-09-10（transcribe-settings 読み書きエラー方針を追記）_
 _Focus on patterns and decisions, not every error variant._

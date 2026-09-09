@@ -11,6 +11,7 @@ import { SELECTION_CHANGED_EVENT } from "./hooks/audio-device-types";
 import type { CaptureEventListenFn, CaptureUserError } from "./hooks/capture-status";
 import { ERROR_EVENT, PHASE_CHANGED_EVENT } from "./hooks/capture-status";
 import type { TranscribeEventListenFn } from "./hooks/transcribe-status";
+import { handleCommonTranscribeInvokeCommands } from "./testInvokeHelpers";
 
 beforeAll(() => {
   setupTestDom();
@@ -93,6 +94,10 @@ function createDeviceSelectionInvoke(
 
   const invokeFn = async (cmd: string, args?: Record<string, unknown>) => {
     calls.push({ cmd, args });
+    const transcribe = handleCommonTranscribeInvokeCommands(cmd);
+    if (transcribe !== undefined) {
+      return transcribe;
+    }
     switch (cmd) {
       case "list_audio_devices":
         return devices;

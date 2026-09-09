@@ -45,9 +45,7 @@ pub fn persist_transcribe_model_variant(
     settings_service: &TranscribeSettingsService,
     model_variant: WhisperModelVariant,
 ) -> Result<TranscribeSettings, TranscribeSettingsUserError> {
-    let settings = TranscribeSettings {
-        model_variant,
-    };
+    let settings = TranscribeSettings { model_variant };
     settings_service
         .save(&settings)
         .map_err(|err| err.to_user_facing())?;
@@ -66,7 +64,9 @@ where
     D: gijirec_application::transcribe::ModelDownloaderPort,
 {
     let defer_to_cycle_boundary = {
-        let orch = transcribe_orchestrator.lock().expect("lock transcribe orchestrator");
+        let orch = transcribe_orchestrator
+            .lock()
+            .expect("lock transcribe orchestrator");
         orch.phase() == TranscribePhase::Transcribing
     };
 
@@ -97,7 +97,9 @@ fn prepare_worker_path(
     transcribe_orchestrator: &Arc<Mutex<dyn TranscribeOrchestrator>>,
     path: &Path,
 ) -> Result<(), TranscribeError> {
-    let mut orch = transcribe_orchestrator.lock().expect("lock transcribe orchestrator");
+    let mut orch = transcribe_orchestrator
+        .lock()
+        .expect("lock transcribe orchestrator");
     orch.begin_model_loading()?;
     orch.finish_model_loading(path)
 }

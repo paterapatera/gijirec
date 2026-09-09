@@ -22,10 +22,8 @@ export interface SetTranscribeModelVariantResponse {
   settings: TranscribeSettings;
 }
 
-export type TranscribeSettingsErrorCode = "SETTINGS_PERSIST_FAILED" | "INVALID_MODEL_VARIANT";
-
 export interface TranscribeSettingsUserError {
-  code: TranscribeSettingsErrorCode;
+  code: "SETTINGS_PERSIST_FAILED" | "INVALID_MODEL_VARIANT";
   message_ja: string;
   action_ja: string;
 }

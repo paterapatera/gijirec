@@ -27,12 +27,12 @@
 **Layers**（dependency-cruiser で強制）:
 - `src/domain/` — ドメインモデル（外レイヤに依存しない）。転写は `domain/transcript/`（型・Markdown/JSONL エクスポート）
 - `src/application/` — ユースケース（domain のみ）。転写は `application/transcript/`（blockReducer、Slate プラグイン、saveOrchestrator）
-- `src/infrastructure/` — 外部アダプタ（domain のみ）。`infrastructure/tauri/editorCommands.ts` が保存／設定 invoke をラップ。`infrastructure/tauri/audioDeviceCommands.ts` がデバイス一覧・選択 invoke をラップ
-- `src/presentation/` — UI・composition root（`App.tsx`、hooks、`components/` の二重エディタ・`DeviceSelectorPanel` と chrome）
+- `src/infrastructure/` — 外部アダプタ（domain のみ）。`infrastructure/tauri/editorCommands.ts` が保存／設定 invoke をラップ。`infrastructure/tauri/audioDeviceCommands.ts` がデバイス一覧・選択 invoke をラップ。`infrastructure/tauri/transcribeSettingsCommands.ts` が転写設定 invoke をラップ
+- `src/presentation/` — UI・composition root（`App.tsx`、hooks、`components/` の二重エディタ・`DeviceSelectorPanel`・`ModelVariantSelector` と chrome）
 
 **二重エディタ再描画分離**: `TranscriptEditorView` は block 購読を持たず、`AiTranscriptPanel` 内で `useTranscriptBlocks` を局所化する。`block-appended` 更新は AI 側のみ再描画し、手入力 `HandwritingEditor` へ波及しない。`HandwritingEditor` は `React.memo` + IME `composition` イベントガード。親からの ref は `useCallback` + `externalHandwritingRef` で安定化（`exactOptionalPropertyTypes` 対応のため `AiTranscriptPanel` への ref は条件付き spread）。
 
-**Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_phase` / `get_transcribe_status` / `get_editor_settings` / `get_device_selection` で同期。テスト時は `listenFn` / `invokeFn` を注入。command ミラーは hooks ではなく `infrastructure/tauri/{editorCommands,audioDeviceCommands}.ts`。
+**Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_phase` / `get_transcribe_status` / `get_transcribe_settings` / `get_editor_settings` / `get_device_selection` で同期。テスト時は `listenFn` / `invokeFn` を注入。command ミラーは hooks ではなく `infrastructure/tauri/{editorCommands,audioDeviceCommands,transcribeSettingsCommands}.ts`。
 
 ### Rust Backend
 **Location**: `src-tauri/crates/`  
@@ -41,8 +41,8 @@
 
 | Crate | 依存可能 | 主なモジュール |
 |-------|----------|----------------|
-| `gijirec-domain` | なし（最内層） | `audio/`（`device.rs` 含む）、`transcribe/`、`editor/`（EditorSettings, Save リクエスト, EditorError） |
-| `gijirec-application` | domain | `capture/`、`device_selection/`（DeviceSelectionStore, DeviceSelectionService）、`transcribe/`、`editor/`（SettingsService, SaveService — ファイル I/O はここ。infrastructure には editor アダプタを置かない） |
+| `gijirec-domain` | なし（最内層） | `audio/`（`device.rs` 含む）、`transcribe/`（`WhisperModelVariant`、`ModelVariantCatalog`）、`editor/`（EditorSettings, Save リクエスト, EditorError） |
+| `gijirec-application` | domain | `capture/`、`device_selection/`（DeviceSelectionStore, DeviceSelectionService）、`transcribe/`（`TranscribeSettingsService`、`ModelOrchestrator`）、`editor/`（SettingsService, SaveService — ファイル I/O はここ。infrastructure には editor アダプタを置かない） |
 | `gijirec-infrastructure` | domain | `audio/`（`device_enumerator`、マイク／ループバックのデバイス ID 指定。editor なし）、`transcribe/`（Whisper / モデル取得） |
 | `gijirec-presentation` | domain, application, infrastructure | `tauri/`（capture、`device_selection`）、`transcribe/`、`editor/`（command 実装・observability） |
 
@@ -50,13 +50,13 @@
 
 **ホスト横断**: `src-tauri/src/logging/` がリリース診断ログ（`--log`、ADR-0007）。レイヤ crate 外の composition 専用。
 
-**IPC 同期パターン**: モデル取得など長時間処理中に orchestrator ロックを避けるため、`TranscribeStatusCache` がフェーズ／進捗スナップショットを保持し、`get_transcribe_phase` / `get_transcribe_status` でマウント時同期する。エディタ設定は `get_editor_settings` / `set_editor_settings`（`app_data_dir/editor-settings.json`）。デバイス選択は `get_device_selection` / `list_audio_devices`（セッション内のみ永続化なし）。保存は command 往復（イベントではない）。
+**IPC 同期パターン**: モデル取得など長時間処理中に orchestrator ロックを避けるため、`TranscribeStatusCache` がフェーズ／進捗スナップショットを保持し、`get_transcribe_phase` / `get_transcribe_status` でマウント時同期する。転写バリアントは `get_transcribe_settings` / `set_transcribe_model_variant`（`app_data_dir/transcribe-settings.json`）。設定読み込み失敗時は FP16 既定で起動継続（invoke エラーにしない）。エディタ設定は `get_editor_settings` / `set_editor_settings`（`app_data_dir/editor-settings.json`）。デバイス選択は `get_device_selection` / `list_audio_devices`（セッション内のみ永続化なし）。保存は command 往復（イベントではない）。
 
 **キャプチャパイプライン（composition）**: `CapturePipelineState`（mixer / `ChunkEmitter` / `PcmChunkBus`）を Tauri state に保持。アダプタの rtrb consumer はポート内にあり、処理スレッド結線は `CaptureProcessingHook`（start 後起動）。リサンプラは入力レートが open 後まで不明なため processing スレッド起動時に構築。macOS SCK は 48 kHz 固定。可観測性は presentation の `CaptureObservability` トレイト経由（host が tracing 実装）。`capture_rt_callback_max_us` は処理スレッド drain レイテンシの代理。Linux 非対応は `on_app_setup` でダイアログ。`RunEvent::Exit` 停止は `handle_capture_run_event` を `app.run` から呼ぶ。
 
 **デバイス再選択**: 再キャプチャ時は `ChunkEmitter` を再生成せず `discard_partial_buffer` のみ行い `sequence` を継続する（`audio-capture-pcm` の単調増加・欠番なし）。
 
-**転写ワーカー（バッチ）**: `TranscribeWorker` は `take_batch_window` で先頭 480k samples を非破棄切り出し、`BATCH_INTERVAL`（30 s）起点でサイクル実行。停止時 flush・推論失敗時は次サイクル継続。可観測性は worker コールバック → presentation `observability` → host tracing。
+**転写ワーカー（バッチ）**: `TranscribeWorker` は `take_batch_window` で先頭 480k samples を非破棄切り出し、`BATCH_INTERVAL`（30 s）起点でサイクル実行。停止時 flush・推論失敗時は次サイクル継続。転写中のバリアント切替は `on_batch_cycle_started` で `try_apply_pending_variant`。可観測性は worker コールバック → presentation `observability` → host tracing。
 
 **転写エディタ（上流同期）**: AI 転写ブロックの上流同期は `editor.applyUpstream(op)` 必須。直接 `Editor.apply` では locked 範囲保護されない（`withLockedRanges`）。末尾判定は `Editor.end` ベース（`withStableSelection`）。
 
@@ -144,5 +144,5 @@ feature 完了後、spec ディレクトリを削除する前に次を行う（�
 | Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-09（二重エディタ再描画分離・バッチ転写ワーカーを追記）_
+_updated_at: 2026-09-10（transcribe-volume-normalize / ingest ゲイン境界を反映）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_

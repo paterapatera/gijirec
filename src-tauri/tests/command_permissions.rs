@@ -15,6 +15,41 @@ fn push_command_token(allowed: &mut HashSet<String>, token: &str) {
     }
 }
 
+fn collect_inline_commands(allowed: &mut HashSet<String>, inline: &str) {
+    let rest = inline.trim_end_matches(']');
+    for token in rest.split(',') {
+        push_command_token(allowed, token);
+    }
+}
+
+fn process_permission_line(
+    allowed: &mut HashSet<String>,
+    in_commands_allow: &mut bool,
+    line: &str,
+) {
+    let trimmed = line.trim();
+    if let Some(inline) = trimmed.strip_prefix("commands.allow = [") {
+        if trimmed.ends_with(']') && !inline.is_empty() {
+            collect_inline_commands(allowed, inline);
+            return;
+        }
+        *in_commands_allow = true;
+        return;
+    }
+    if trimmed.starts_with("commands.allow") {
+        *in_commands_allow = true;
+        return;
+    }
+    if !*in_commands_allow {
+        return;
+    }
+    if trimmed == "]" {
+        *in_commands_allow = false;
+        return;
+    }
+    push_command_token(allowed, trimmed.trim_end_matches(','));
+}
+
 fn read_allowed_commands() -> HashSet<String> {
     let permissions_dir = manifest_dir().join("permissions");
     let mut allowed = HashSet::new();
@@ -27,29 +62,7 @@ fn read_allowed_commands() -> HashSet<String> {
         let contents = fs::read_to_string(&path).expect("read permission toml");
         let mut in_commands_allow = false;
         for line in contents.lines() {
-            let trimmed = line.trim();
-            if let Some(inline) = trimmed.strip_prefix("commands.allow = [") {
-                if trimmed.ends_with(']') && inline.len() > 0 {
-                    let rest = inline.trim_end_matches(']');
-                    for token in rest.split(',') {
-                        push_command_token(&mut allowed, token);
-                    }
-                } else {
-                    in_commands_allow = true;
-                }
-                continue;
-            }
-            if trimmed.starts_with("commands.allow") {
-                in_commands_allow = true;
-                continue;
-            }
-            if in_commands_allow {
-                if trimmed == "]" {
-                    in_commands_allow = false;
-                    continue;
-                }
-                push_command_token(&mut allowed, trimmed.trim_end_matches(','));
-            }
+            process_permission_line(&mut allowed, &mut in_commands_allow, line);
         }
     }
 

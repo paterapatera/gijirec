@@ -37,7 +37,9 @@ pub enum TranscribeSettingsLoadIssue {
 impl TranscribeSettingsLoadIssue {
     pub fn message_ja(&self) -> &'static str {
         match self {
-            Self::FileMissing => "文字起こし設定ファイルが見つかりません。既定のモデルを使用します。",
+            Self::FileMissing => {
+                "文字起こし設定ファイルが見つかりません。既定のモデルを使用します。"
+            }
             Self::ParseError { .. } => {
                 "文字起こし設定の読み込みに失敗しました。既定のモデルを使用します。"
             }

@@ -25,6 +25,7 @@ import { DEFAULT_EDITOR_SETTINGS } from "./hooks/editor-settings";
 import type { TranscribeEventListenFn } from "./hooks/transcribe-status";
 import type { TranscriptBlockAppended } from "./hooks/transcript-blocks";
 import { BLOCK_APPENDED_EVENT } from "./hooks/transcript-blocks";
+import { handleCommonTranscribeInvokeCommands } from "./testInvokeHelpers";
 
 const mockToastSuccess = mock(() => {});
 const mockToastError = mock(() => {});
@@ -86,6 +87,10 @@ function createStatefulMockInvoke(
 
   const invokeFn = async (cmd: string, args?: Record<string, unknown>) => {
     calls.push({ cmd, args });
+    const transcribe = handleCommonTranscribeInvokeCommands(cmd);
+    if (transcribe !== undefined) {
+      return transcribe;
+    }
     switch (cmd) {
       case "get_editor_settings":
         return { ...persisted };

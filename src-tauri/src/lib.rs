@@ -43,21 +43,21 @@ use commands::device_selection::{
 use commands::editor::{
     get_editor_settings, pick_save_directory, save_transcript_session, set_editor_settings,
 };
-use commands::transcribe_settings::{
-    get_transcribe_settings, set_transcribe_model_variant,
+use commands::transcribe_settings::{get_transcribe_settings, set_transcribe_model_variant};
+use commands::{
+    EditorState, TranscribeSettingsState, get_capture_phase, get_transcribe_phase,
+    get_transcribe_status,
 };
-use commands::{EditorState, TranscribeSettingsState, get_capture_phase, get_transcribe_phase, get_transcribe_status};
 use compose::{SharedModelOrchestrator, build_capture_stack, inject_model_stack_shared};
 use editor_observability::TracingEditorObservability;
 use gijirec_presentation::application::editor::SettingsService;
 use gijirec_presentation::application::transcribe::TranscribeSettingsService;
 use gijirec_presentation::application::transcribe::orchestrator::TranscribeOrchestrator;
-use gijirec_presentation::domain::transcribe::WhisperModelVariant;
-use gijirec_presentation::transcribe::apply_transcribe_model_variant_impl;
 use gijirec_presentation::application::transcribe::ports::{
     ModelDownloadProgress, ModelDownloadStatus,
 };
 use gijirec_presentation::domain::audio::CapturePhase;
+use gijirec_presentation::domain::transcribe::WhisperModelVariant;
 use gijirec_presentation::domain::transcribe::{TranscribeError, TranscribePhase};
 use gijirec_presentation::editor::set_editor_observability;
 use gijirec_presentation::tauri::lifecycle::{
@@ -68,6 +68,7 @@ use gijirec_presentation::tauri::lifecycle::{
 use gijirec_presentation::tauri::observability::{init_session_id, session_id, set_observability};
 use gijirec_presentation::transcribe::TranscribeEventEmitter;
 use gijirec_presentation::transcribe::TranscribeStatusCache;
+use gijirec_presentation::transcribe::apply_transcribe_model_variant_impl;
 use gijirec_presentation::transcribe::observability::set_transcribe_observability;
 use logging::{
     ReleaseLogConfig, install_global_subscriber, parse_release_log_config_from_env, run_session_id,
@@ -276,6 +277,7 @@ fn start_model_load_thread(
     });
 }
 
+#[allow(clippy::too_many_arguments)] // background apply wires orchestrator, cache, and emitter.
 pub(crate) fn spawn_transcribe_model_variant_apply(
     model_orchestrator: SharedModelOrchestrator,
     transcribe_orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
@@ -363,8 +365,7 @@ pub fn run() {
 
         inject_model_stack_shared(&model_orchestrator, app_data_dir.clone());
 
-        let transcribe_settings_service =
-            Arc::new(TranscribeSettingsService::new(app_data_dir));
+        let transcribe_settings_service = Arc::new(TranscribeSettingsService::new(app_data_dir));
         let settings_load = transcribe_settings_service.load();
         if let Some(issue) = settings_load.issue {
             tracing::warn!(

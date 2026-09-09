@@ -125,6 +125,7 @@ pub mod transcribe_settings {
     }
 
     #[tauri::command(rename_all = "snake_case")]
+    #[allow(clippy::too_many_arguments)] // Tauri IPC injects orchestrator, cache, and emitter state.
     pub fn set_transcribe_model_variant(
         state: State<'_, TranscribeSettingsState>,
         transcribe_orchestrator: State<'_, Arc<Mutex<dyn TranscribeOrchestrator>>>,

@@ -928,7 +928,10 @@ mod tests {
             ) -> Result<std::path::PathBuf, TranscribeError> {
                 self.verify(expected)
             }
-            fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
+            fn file_exists(
+                &self,
+                _variant: gijirec_domain::transcribe::WhisperModelVariant,
+            ) -> bool {
                 true
             }
         }
@@ -1059,7 +1062,10 @@ mod tests {
             ) -> Result<std::path::PathBuf, TranscribeError> {
                 self.verify(expected)
             }
-            fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
+            fn file_exists(
+                &self,
+                _variant: gijirec_domain::transcribe::WhisperModelVariant,
+            ) -> bool {
                 true
             }
         }

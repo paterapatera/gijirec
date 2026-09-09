@@ -204,7 +204,7 @@ describe("useSaveTranscript", () => {
       }),
     );
 
-    let firstSavePromise!: Promise<SaveTranscriptSessionResult | void>;
+    let firstSavePromise!: Promise<SaveTranscriptSessionResult | undefined>;
     act(() => {
       firstSavePromise = result.current.onSave();
     });
@@ -213,7 +213,7 @@ describe("useSaveTranscript", () => {
       expect(result.current.isSaving).toBe(true);
     });
 
-    let secondSavePromise!: Promise<SaveTranscriptSessionResult | void>;
+    let secondSavePromise!: Promise<SaveTranscriptSessionResult | undefined>;
     act(() => {
       secondSavePromise = result.current.onSave();
     });

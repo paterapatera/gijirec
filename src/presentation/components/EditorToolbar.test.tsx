@@ -78,7 +78,7 @@ function renderToolbarWithSettings(
   mock: ReturnType<typeof createMockInvoke>,
   options: {
     isSaving?: boolean;
-    onSave?: () => Promise<SaveTranscriptSessionResult | void>;
+    onSave?: () => Promise<SaveTranscriptSessionResult | undefined>;
   } = {},
 ) {
   function Harness() {

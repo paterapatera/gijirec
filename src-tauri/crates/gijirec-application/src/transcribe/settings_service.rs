@@ -61,7 +61,8 @@ impl TranscribeSettingsService {
     pub fn save(&self, settings: &TranscribeSettings) -> Result<(), TranscribeSettingsError> {
         let path = self.settings_path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| persist_error("create settings directory", err))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|err| persist_error("create settings directory", err))?;
         }
 
         let json = serde_json::to_string_pretty(settings)
@@ -87,7 +88,8 @@ mod tests {
     use uuid::Uuid;
 
     fn temp_data_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("gijirec-transcribe-settings-{}", Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("gijirec-transcribe-settings-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create temp data dir");
         dir
     }
@@ -141,7 +143,10 @@ mod tests {
             .save(&TranscribeSettings::default())
             .expect_err("save must fail");
 
-        assert!(matches!(err, TranscribeSettingsError::SettingsPersistFailed { .. }));
+        assert!(matches!(
+            err,
+            TranscribeSettingsError::SettingsPersistFailed { .. }
+        ));
         assert_eq!(
             err.to_user_facing().code,
             TranscribeSettingsErrorCode::SettingsPersistFailed

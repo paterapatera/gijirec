@@ -63,8 +63,8 @@ describe("showSaveResult", () => {
 
     const args = mockToastError.mock.calls[0]!;
     const payload = stringifyToastArgs(args);
-    expect(args[0]).toBe(result.error!.message_ja);
-    expect(payload).toContain(result.error!.action_ja);
+    expect(args[0]).toBe(result.error?.message_ja);
+    expect(payload).toContain(result.error?.action_ja);
   });
 
   test("does not display error code as user-facing toast text", () => {
@@ -82,8 +82,8 @@ describe("showSaveResult", () => {
 
     const payload = stringifyToastArgs(mockToastError.mock.calls[0]!);
     expect(payload).not.toContain("SAVE_FILE_WRITE_FAILED");
-    expect(payload).toContain(result.error!.message_ja);
-    expect(payload).toContain(result.error!.action_ja);
+    expect(payload).toContain(result.error?.message_ja);
+    expect(payload).toContain(result.error?.action_ja);
   });
 
   test("does not include transcript file contents in toast payload", () => {

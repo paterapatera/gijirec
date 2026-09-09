@@ -4,8 +4,8 @@ import type { SaveTranscriptSessionResult } from "../infrastructure/tauri/editor
 import type { AiTranscriptEditorRef } from "./components/AiTranscriptEditor";
 import { AppStatusPanels } from "./components/AppStatusPanels";
 import { DeviceSelectorPanel } from "./components/DeviceSelectorPanel";
-import { ModelVariantSelector } from "./components/ModelVariantSelector";
 import type { HandwritingEditorRef } from "./components/HandwritingEditor";
+import { ModelVariantSelector } from "./components/ModelVariantSelector";
 import { TranscriptEditorView } from "./components/TranscriptEditorView";
 import { Toaster } from "./components/ui/sonner";
 import type { CaptureEventListenFn } from "./hooks/capture-status";
@@ -109,10 +109,7 @@ export function App({
         invokeFn={invokeFn}
         {...(listenFn !== undefined ? { listenFn, captureListenFn: listenFn } : {})}
       />
-      <ModelVariantSelector
-        invokeFn={invokeFn}
-        {...(listenFn !== undefined ? { listenFn } : {})}
-      />
+      <ModelVariantSelector invokeFn={invokeFn} {...(listenFn !== undefined ? { listenFn } : {})} />
       <TranscriptEditorView
         onSave={onSave}
         isSaving={isSaving}

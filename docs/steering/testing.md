@@ -22,7 +22,7 @@ gijirec のテスト方針。何をどこで検証し、何を CI に載せな�
 | TS infrastructure | `src/infrastructure/**/*.test.ts` | invoke ラッパ（editor / audio device） |
 | アーキテクチャ検証 | `scripts/*.test.ts` | レイヤルールの fixture テスト |
 | Rust ユニット | 各 crate の `#[cfg(test)] mod tests` | モジュール内 |
-| Rust 統合 | `src-tauri/crates/*/tests/*.rs`、`src-tauri/tests/*.rs` | crate 外統合テスト（device selection 性能・observability・バッチ transcribe パイプライン含む） |
+| Rust 統合 | `src-tauri/crates/*/tests/*.rs`、`src-tauri/tests/*.rs` | crate 外統合テスト（device selection 性能・observability・バッチ transcribe パイプライン・モデルバリアント切替含む） |
 
 `src/**/*.test.*` は `tsconfig.json` の `exclude` に入れ、型チェック対象外とする（本番ビルドに含めない）。
 
@@ -61,7 +61,7 @@ bun run rust:test      # cargo test --workspace
 
 ### Component / Hook（TypeScript presentation）
 
-- **対象**: キャプチャ／文字起こしフックと `App` のフェーズ表示。エディタは二重エディタ・ツールバー・保存トースト・プラグイン
+- **対象**: キャプチャ／文字起こしフックと `App` のフェーズ表示。エディタは二重エディタ・ツールバー・保存トースト・プラグイン。`ModelVariantSelector` は 3 選択肢・`loading_model` 中 disabled
 - **依存**: Tauri を起動しない。`listenFn` / `invokeFn` を注入
 - **DOM**: `happy-dom` + `@testing-library/react`（`src/test-setup.ts` で一度だけ登録。全レイヤのテストから import 可）
 
@@ -87,6 +87,7 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 | 性能 | 30 分連続キャプチャ、CPU / メモリ / バッファドロップ | `docs/manual/audio-capture/performance-results.md` |
 | 性能（デバイス選択） | 選択変更 → capturing 復帰 < 2 s | `docs/manual/audio-device-selection/performance-results.md`（自動: `src-tauri/tests/device_selection_performance.rs`） |
 | 性能（転写） | 10 分転写 latency・バッチ間隔（30 s）・停止後 flush 完全性 | `docs/manual/whisper-transcribe/performance-results.md` |
+| 転写音量（ingest ゲイン） | 快適 OS 音量で `transcribe_window_rms_dbfs` が −18〜−17 dBFS 付近・転写精度の主観改善 | `docs/manual/whisper-transcribe/performance-results.md`（ingest ゲイン節） |
 | 性能（エディタ） | 500 ブロック追記 p95、保存 100 KB、ログ本文除外 | `docs/manual/transcript-editor/validation-checklist.md` |
 | 並走 | Zoom / Teams との同時実行 | `docs/manual/audio-capture/manual-concurrency-checklist.md` |
 | リリース smoke | release EXE でキャプチャ→文字起こし→ブロック表示 | `docs/manual/fix-release-transcribe/smoke-checklist.md` |
@@ -109,6 +110,7 @@ release で文字起こししないとき、**コード変更前に**次を確�
 - **モックする**: Tauri `listen` / `invoke`、OS 音声 API、Whisper 推論、ディレクトリ選択ダイアログ
 - **モックしない**: テスト対象の hook / コンポーネント / domain 変換ロジック
 - **ファクトリ**: 契約型（`CapturePhaseChanged`, `CaptureUserError`）はインラインで最小構成
+- **共有 invoke モック**: App 配線テスト向けに `src/presentation/testInvokeHelpers.ts`（`get_transcribe_settings` / `get_transcribe_status` 等）。エディタ統合は `components/transcriptEditorTestHelpers.ts`
 - **クリーンアップ**: `afterEach(cleanup)`、hook テストは unmount で unlisten を検証
 
 ## Assertion Conventions
@@ -131,5 +133,5 @@ release で文字起こししないとき、**コード変更前に**次を確�
 - 品質ゲート一覧: `docs/steering/tech.md`
 
 ---
-_updated_at: 2026-09-09（バッチ転写手動検証・compose テストコマンドを追記）_
+_updated_at: 2026-09-10（ingest ゲイン手動検証・共有テストヘルパを追記）_
 _Focus on patterns and decisions. Tool-specific config lives in package.json / Cargo.toml._

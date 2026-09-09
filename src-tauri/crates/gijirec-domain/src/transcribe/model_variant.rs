@@ -5,18 +5,13 @@
 use serde::{Deserialize, Serialize};
 
 /// kotoba-whisper-v2.2 の 3 バリアントのみ（要件 1.3–1.4）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WhisperModelVariant {
     Q5_0,
     Q8_0,
+    #[default]
     Fp16,
-}
-
-impl Default for WhisperModelVariant {
-    fn default() -> Self {
-        Self::Fp16
-    }
 }
 
 /// Single catalog row: filename, distribution URL, and SHA-256 for verification.
@@ -138,10 +133,10 @@ mod tests {
         let catalog = ModelVariantCatalog::all();
         assert_eq!(catalog.len(), CONTRACT_ROWS.len());
 
-        for (descriptor, (serde_key, filename, url, sha)) in catalog.iter().zip(CONTRACT_ROWS.iter())
+        for (descriptor, (serde_key, filename, url, sha)) in
+            catalog.iter().zip(CONTRACT_ROWS.iter())
         {
-            let serialized =
-                serde_json::to_value(descriptor.variant).expect("serialize variant");
+            let serialized = serde_json::to_value(descriptor.variant).expect("serialize variant");
             assert_eq!(serialized, Value::String(serde_key.to_string()));
             assert_eq!(descriptor.filename, *filename);
             assert_eq!(descriptor.url, *url);

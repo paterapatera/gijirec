@@ -3,18 +3,10 @@
 use super::model_variant::WhisperModelVariant;
 
 /// Persisted transcribe settings (`transcribe-settings.json`).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TranscribeSettings {
     #[serde(default)]
     pub model_variant: WhisperModelVariant,
-}
-
-impl Default for TranscribeSettings {
-    fn default() -> Self {
-        Self {
-            model_variant: WhisperModelVariant::default(),
-        }
-    }
 }
 
 #[cfg(test)]

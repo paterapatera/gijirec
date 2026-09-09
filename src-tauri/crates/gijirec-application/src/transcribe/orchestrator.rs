@@ -433,7 +433,10 @@ mod tests {
             self.model_path.clone()
         }
 
-        fn model_path_for(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> PathBuf {
+        fn model_path_for(
+            &self,
+            _variant: gijirec_domain::transcribe::WhisperModelVariant,
+        ) -> PathBuf {
             self.model_path()
         }
 

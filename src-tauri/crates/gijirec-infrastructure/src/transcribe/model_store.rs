@@ -466,7 +466,10 @@ mod tests {
         let path = store
             .verify_variant(WhisperModelVariant::Fp16, Some(&expected))
             .expect("fp16 verify");
-        assert_eq!(path.file_name().map(|n| n.to_string_lossy()), Some(ModelVariantCatalog::fp16().filename.into()));
+        assert_eq!(
+            path.file_name().map(|n| n.to_string_lossy()),
+            Some(ModelVariantCatalog::fp16().filename.into())
+        );
         assert!(store.file_exists(WhisperModelVariant::Fp16));
         assert!(!store.file_exists(WhisperModelVariant::Q5_0));
 

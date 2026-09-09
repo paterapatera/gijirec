@@ -1,11 +1,11 @@
 import { afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { setupTestDom } from "../../test-setup";
 import {
   DEFAULT_TRANSCRIBE_SETTINGS,
   type LocalAvailability,
   type TranscribeSettings,
 } from "../../infrastructure/tauri/transcribeSettingsCommands";
+import { setupTestDom } from "../../test-setup";
 import { useTranscribeSettings } from "./useTranscribeSettings";
 
 mock.module("sonner", () => ({
@@ -26,10 +26,7 @@ afterEach(() => {
 type InvokeCall = { cmd: string; args?: Record<string, unknown> };
 
 function createMockInvoke(
-  options: {
-    initial?: TranscribeSettings;
-    localAvailability?: LocalAvailability;
-  } = {},
+  options: { initial?: TranscribeSettings; localAvailability?: LocalAvailability } = {},
 ) {
   let persisted: TranscribeSettings = { ...(options.initial ?? DEFAULT_TRANSCRIBE_SETTINGS) };
   const localAvailability: LocalAvailability = options.localAvailability ?? {

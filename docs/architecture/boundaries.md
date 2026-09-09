@@ -117,7 +117,7 @@
 
 | 領域 | コンポーネント / 成果物 |
 |------|-------------------------|
-| PCM 消費と推論ウィンドウ蓄積 | `PcmIngestConsumer`、`rtrb::RingBuffer`、`transcribe_worker.rs` 内 `VecDeque`（非破棄） |
+| PCM 消費と推論ウィンドウ蓄積 | `PcmIngestConsumer`（転写 ingest 固定ゲイン ×1.25 + ソフトリミット 0.95）、`rtrb::RingBuffer`、`transcribe_worker.rs` 内 `VecDeque`（非破棄） |
 | バッチ推論スケジュール | `transcribe_worker.rs` 内 30 秒固定サイクル（前サイクル完了起点） |
 | ローカル Whisper 推論 | `WhisperCppAdapter`（`whisper_adapter.rs`）、`TranscribeWorker` |
 | テキストブロック生成と下流供給 | `TranscriptBlock`、`BlockEmitter`、`TranscriptBlockBus`（契約: `whisper-transcribe-blocks.md`） |
@@ -178,7 +178,7 @@
 |------|------|
 | フェーズ列挙・`model-progress` イベント形状 | `whisper-transcribe-status.md` が所有（変更しない） |
 | 転写ブロック生成・30 s バッチスケジュール | whisper-transcribe が所有 |
-| 音量正規化 | `transcribe-volume-normalize` が独立 spec |
+| 転写 ingest 以外の音量正規化 | ミキサー（`mixer.rs`）の −20 dBFS 目標は audio-capture が所有。ingest ゲインは whisper-transcribe の `PcmIngestConsumer` に実装済み |
 | ハードウェア自動推奨・他モデルファミリ | product / brief スコープ外 |
 | 転写中即時ホットスワップ | v1 スコープ外（次サイクル適用のみ） |
 

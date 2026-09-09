@@ -11,7 +11,7 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 - **Frontend**: TypeScript（strict）、React 19、Vite 8、Tauri 2 IPC（`@tauri-apps/api`）
 - **Backend**: Rust（edition 2024、stable toolchain）
 - **Desktop Shell**: Tauri 2（`cargo tauri` CLI）
-- **STT**: `whisper-cpp-plus` 0.1（ADR-0003）+ デフォルトモデル `kotoba-whisper-v2.2-ggml.bin`（ADR-0011、kenrouse 配布）
+- **STT**: `whisper-cpp-plus` 0.1（ADR-0003）+ kotoba-whisper-v2.2 の Q5_0 / Q8_0 / FP16 選択（ADR-0013。論理既定 FP16 / ADR-0011）
 - **Audio**: cpal（マイク / Windows ループバック）、screencapturekit（macOS システム音声）、rubato（リサンプル）、rtrb（スレッド間バッファ）— ADR-0001 準拠
 - **Runtime**: Bun >= 1.2（フロントエンドパッケージマネージャ・スクリプト実行。npm 非前提）
 
@@ -24,6 +24,7 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 | 音声キャプチャ | cpal、screencapturekit（macOS）、WASAPI loopback（Windows）、rubato、rtrb | マイク＋システム音声の二重取り込み・16 kHz ミックス |
 | キャプチャ配信 | `PcmChunkBus`（presentation） | 100 ms チャンクの下流 consumer 向けバックプレッシャー付き配信 |
 | 文字起こし | `whisper-cpp-plus`（`WhisperCppAdapter`） | 30 秒固定バッチ推論（ADR-0012）。専用ワーカースレッド + rtrb。推論中も PCM 非破棄蓄積 |
+| モデルバリアント | `ModelVariantCatalog` + `ModelOrchestrator` | Q5_0 / Q8_0 / FP16 の path / URL / SHA-256 正本。`transcribe-settings.json` で永続化（ADR-0013） |
 | 転写ブロック配信 | `TranscriptBlockBus`（presentation） | `whisper-transcribe://block-appended` で追記のみ配信 |
 | マウント同期 | `TranscribeStatusCache`（presentation） | モデル取得中でもブロックしないフェーズ／進捗スナップショット |
 | エディタ | Slate.js（編集面）+ shadcn/ui + Sonner | 部分ロック付き二重エディタ（ADR-0005 / ADR-0006） |
@@ -36,7 +37,10 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 
 - スケジュール: 前サイクル完了から **30 秒**（`BATCH_INTERVAL`）。未処理 PCM ≥ 480k samples でも起動。バックログ残存時は連続サイクル（ADR-0012）
 - 窓長: `MAX_INFERENCE_WINDOW_SAMPLES = 480_000`（30 s @ 16 kHz）。停止時は残 PCM を最終バッチ flush
-- デフォルトモデル: `kotoba-whisper-v2.2-ggml.bin`（FP16、ADR-0011）
+- **転写 ingest ゲイン**: `PcmIngestConsumer` で `TRANSCRIBE_INGEST_GAIN = 1.25` + `TRANSCRIBE_SOFT_LIMIT = 0.95`（ミキサー非変更。推論窓 −18〜−17 dBFS 目標）。定数は `pcm_ingest_consumer.rs` に単一定義（1.45 から実機ログで調整済み）
+- **RMS 可観測性**: `transcribe_window_rms_dbfs` / ingest サマリ RMS はゲイン後 PCM（rtrb 上 f32）を反映。worker の window RMS 計測も ingest 後サンプルに対して行う
+- 選択バリアント: `q5_0` / `q8_0` / `fp16`（契約: `whisper-transcribe-settings.md`）。論理既定は FP16（既存 `kotoba-whisper-v2.2-ggml.bin` を追加 DL なしで互換）
+- 転写中切替: `pending_variant` を次バッチサイクル（`on_batch_cycle_started`）で適用。同一バリアント再選択は no-op（永続化のみ）
 - 可観測性: `batch_cycle_started` / `batch_cycle_completed`、`transcribe_pcm_backlog_seconds`、`transcribe_rtrb_overflow_count`（ingest 共有 `AtomicU64` を worker がサイクル開始時に読む。PCM 全文・転写全文はログに出さない）
 - スレッド数: CPU コア数に応じた動的設定、**上限 4**
 - VAD 区切り定数（`TRAILING_SILENCE_FRAMES` 等）はユニットテスト用レガシー経路に残存。本番は `take_batch_window` 経路
@@ -132,10 +136,11 @@ bun run rust:typecheck
 | 仮想デバイス不使用 | ユーザー設定コストと環境依存を排除 |
 | Mac / Windows のみ | 各 OS のループバック API を直接利用（Linux は Out） |
 | Bun（npm 非前提） | Tauri 2 公式サポート、単一フロントツールチェーン（ADR-0002） |
-| ModelStore は `app_data_dir`（ADR-0008） | モデル・editor 設定・release ログの保存先を Tauri 配下に統一 |
+| ModelStore は `app_data_dir`（ADR-0008） | モデル・editor / transcribe 設定・release ログの保存先を Tauri 配下に統一 |
+| 3 バリアントユーザー選択（ADR-0013） | 精度・速度・メモリのトレードオフを利用者が選択。フェーズイベント形状は変更しない |
 
 永続的な技術判断は `docs/architecture/adr/` に ADR として記録する。
 
 ---
-_updated_at: 2026-09-09（30 秒バッチ推論・compose テスト・契約テスト配置を追記）_
+_updated_at: 2026-09-10（transcribe-volume-normalize / ingest ゲインを反映）_
 _Document standards and patterns, not every dependency_

@@ -1,8 +1,8 @@
 import type { invoke } from "@tauri-apps/api/core";
 import type { ChangeEvent } from "react";
 import {
-  WHISPER_MODEL_VARIANTS,
   WHISPER_MODEL_VARIANT_LABELS,
+  WHISPER_MODEL_VARIANTS,
   type WhisperModelVariant,
 } from "../../infrastructure/tauri/transcribeSettingsCommands";
 import type { TranscribeEventListenFn, TranscribePhase } from "../hooks/transcribe-status";
@@ -24,7 +24,7 @@ interface ModelVariantSelectorRuntimeProps {
 export type ModelVariantSelectorProps = Partial<ModelVariantSelectorInjectedProps> &
   ModelVariantSelectorRuntimeProps;
 
-interface ModelVariantSelectorViewProps extends ModelVariantSelectorInjectedProps {}
+type ModelVariantSelectorViewProps = ModelVariantSelectorInjectedProps;
 
 function ModelVariantSelectorView({
   selectedVariant,

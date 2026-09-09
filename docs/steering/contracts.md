@@ -16,7 +16,7 @@
 | Event | `audio-capture://phase-changed` | audio-capture |
 | Data | `PcmChunk` 形状・供給規約 | audio-capture |
 | Data | `TranscriptBlock` 形状・追記供給規約（30 秒バッチ遅延目標。ADR-0012） | whisper-transcribe |
-| Command | `get_capture_phase`、`get_transcribe_phase`、`get_transcribe_status`、`list_audio_devices`、`get_device_selection`、`set_device_selection`、`set_audio_device_ui_visible`、`save_transcript_session`、`get_editor_settings`、`set_editor_settings`、`pick_save_directory` | audio-capture / whisper-transcribe / audio-device-selection / transcript-editor |
+| Command | `get_capture_phase`、`get_transcribe_phase`、`get_transcribe_status`、`get_transcribe_settings`、`set_transcribe_model_variant`、`list_audio_devices`、`get_device_selection`、`set_device_selection`、`set_audio_device_ui_visible`、`save_transcript_session`、`get_editor_settings`、`set_editor_settings`、`pick_save_directory` | audio-capture / whisper-transcribe / whisper-model-selection / audio-device-selection / transcript-editor |
 | Data | リリース診断ログの保存場所・セッション ID・禁止フィールド | release-logging |
 
 **入れないもの**: 実装手順、タスク分解、ADR 全文、UI モック、一時的な spike メモ。
@@ -28,6 +28,8 @@
   - `audio-capture-pcm.md` — データ所有
   - `transcript-editor-save.md` / `transcript-editor-settings.md` / `transcript-editor-status.md` — 保存・設定 command とエラー形状
   - `audio-device-selection.md` — デバイス一覧・セッション選択 command / イベント
+  - `whisper-transcribe-settings.md` — kotoba バリアント選択の永続化・Tauri command（ADR-0013）
+  - `whisper-transcribe-status.md` — フェーズ・モデル進捗・利用者向けエラーイベント
   - `release-logging-persistence.md` — リリース診断ログの永続化規約（cross-cutting）
 - **イベント名**: `<domain>://<verb-or-noun>`（例: `audio-capture://error`）
 - **index 必須**: 新規契約追加時は `docs/contracts/README.md` の Entries 行を更新（欠落禁止）
@@ -80,7 +82,8 @@ pub struct UserFacingError { ... }
 ### TypeScript（読み取り専用ミラー）
 
 - **イベント／状態**: `src/presentation/hooks/{domain}-status.ts`（例: `capture-status.ts`、`transcribe-status.ts`、`transcript-blocks.ts`、`editor-settings.ts`）
-- **Command 面**: `src/infrastructure/tauri/editorCommands.ts`（save / settings / pick directory）、`src/infrastructure/tauri/audioDeviceCommands.ts`（デバイス一覧・選択）。イベント購読ではなく invoke ラップ
+- **Command 面**: `src/infrastructure/tauri/editorCommands.ts`（save / settings / pick directory）、`src/infrastructure/tauri/audioDeviceCommands.ts`（デバイス一覧・選択）、`src/infrastructure/tauri/transcribeSettingsCommands.ts`（転写バリアント設定）。イベント購読ではなく invoke ラップ
+- **転写設定 hook**: `src/presentation/hooks/useTranscribeSettings.ts`（起動時取得・`set_transcribe_model_variant`・`local_availability`）
 - **内容**: イベント名定数 + interface（契約と同一フィールド名）
 - **変換なし**: snake_case フィールド（`timestamp_ms`）は契約どおり維持。hook 内で camelCase に変換する場合は state 型のみ
 
@@ -131,5 +134,5 @@ export const PHASE_CHANGED_EVENT = "audio-capture://phase-changed" as const;
 | `docs/manual/` | 手動検証チェックリスト・運用手順（spec 削除後も維持） |
 
 ---
-_updated_at: 2026-09-09（whisper-transcribe-blocks バッチ遅延目標を索引に追記）_
+_updated_at: 2026-09-10（whisper-transcribe-settings コマンド・ミラーを索引に反映）_
 _Document contract lifecycle and mirroring, not every field of every contract._

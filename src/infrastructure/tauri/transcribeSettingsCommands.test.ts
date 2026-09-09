@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_TRANSCRIBE_SETTINGS,
-  WHISPER_MODEL_VARIANT_LABELS,
   getTranscribeSettings,
   setTranscribeModelVariant,
+  WHISPER_MODEL_VARIANT_LABELS,
 } from "./transcribeSettingsCommands";
 
 describe("transcribeSettingsCommands", () => {

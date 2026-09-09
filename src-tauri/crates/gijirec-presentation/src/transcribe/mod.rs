@@ -33,12 +33,12 @@ pub use observability::{
     TRANSCRIBE_LOG_TARGET, TranscribeObservability, log_model_variant_applied,
     log_model_variant_selected, set_transcribe_observability,
 };
+pub use pcm_ingest_consumer::{PcmIngestConsumer, SequenceGapCallback};
 pub use settings_commands::{
     GetTranscribeSettingsResponse, SetTranscribeModelVariantResponse,
-    apply_transcribe_model_variant_impl, get_transcribe_settings_impl,
-    invalid_model_variant_error, persist_transcribe_model_variant,
+    apply_transcribe_model_variant_impl, get_transcribe_settings_impl, invalid_model_variant_error,
+    persist_transcribe_model_variant,
 };
-pub use pcm_ingest_consumer::{PcmIngestConsumer, SequenceGapCallback};
 pub use stall_watchdog::{
     BATCH_INTERVAL, OrchestratorStallAdapter, SILENCE_RMS_THRESHOLD, STALL_POLL_INTERVAL,
     STALL_THRESHOLD, SharedTranscribeEmitter, StallClock, StallWatchdogRuntime,
