@@ -151,7 +151,7 @@
   - _Requirements: 1.1, 1.6, 2.3, 3.1, 3.5, 4.1, 4.3, 4.4, 5.2_
   - _Wave: 4_
 
-- [ ]* 10.3 オプション: UI スナップショットと E2E スモークを追加する
+- [x] 10.3 オプション: UI スナップショットと E2E スモークを追加する
   - `CaptureAudioControlsRow` の capturing / non-capturing 表示差分のスナップショットまたは E2E スモークを追加する（MVP 後 defer 可）
   - テストが dBFS ラベル表示とメーター非活性表示を要件 2.3 / 2.4 に照合する
   - _Depends: 10.2_
