@@ -633,6 +633,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // Integration-style test: full recapture + emitter sequence assertions.
     fn recapture_processing_preserves_chunk_emitter_sequence() {
         use crate::capture_ports::{CaptureStreamHandles, SyntheticMicPort, SyntheticSystemPort};
         use std::sync::atomic::{AtomicUsize, Ordering};

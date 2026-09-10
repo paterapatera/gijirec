@@ -312,6 +312,7 @@ pub(crate) fn spawn_transcribe_model_variant_apply(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[allow(clippy::too_many_lines)] // Tauri builder: plugin, state, and command registration in one entry.
 pub fn run() {
     let release_log_config = parse_release_log_config_from_env();
     init_tracing(&release_log_config);

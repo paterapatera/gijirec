@@ -1,32 +1,11 @@
-import {
-  type AiTranscriptionJsonlRecord,
-  toAiMarkdown,
-  toJsonlRecords,
-} from "../../domain/transcript/export";
+import { toAiMarkdown, toJsonlRecords } from "../../domain/transcript/export";
+import type {
+  SaveTranscriptSessionRequest,
+  SaveTranscriptSessionResult,
+} from "../../domain/transcript/saveSession";
 import type { EditorSettings, TranscriptBlockView } from "../../domain/transcript/types";
 
-/** transcript-editor-save.md / transcript-editor-status.md contract mirrors. */
-interface EditorUserError {
-  code: string;
-  message_ja: string;
-  action_ja: string;
-  recoverable: boolean;
-}
-
-export interface SaveTranscriptSessionRequest {
-  session_id: string;
-  handwriting_markdown: string;
-  ai_transcription_markdown: string;
-  ai_transcription_jsonl?: AiTranscriptionJsonlRecord[];
-}
-
-export interface SaveTranscriptSessionResult {
-  success: boolean;
-  output_directory?: string;
-  files_written?: string[];
-  files_failed?: Array<{ path: string; reason_ja: string }>;
-  error?: EditorUserError;
-}
+export type { SaveTranscriptSessionRequest, SaveTranscriptSessionResult };
 
 /** Snapshot port for handwriting editor plain-text export. */
 export interface HandwritingEditorSnapshotPort {

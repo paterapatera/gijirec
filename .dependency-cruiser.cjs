@@ -21,13 +21,13 @@ module.exports = {
     },
     {
       name: "application-no-infra-deep",
-      severity: "warn",
+      severity: "error",
       from: { path: "^src/application" },
       to: { path: "^src/infrastructure" },
     },
     {
       name: "scripts-isolated",
-      severity: "warn",
+      severity: "error",
       from: { path: "^src" },
       to: { path: "^scripts" },
     },

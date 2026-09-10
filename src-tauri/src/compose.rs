@@ -518,6 +518,7 @@ impl PcmIngestRmsAccumulator {
     }
 }
 
+#[allow(clippy::too_many_lines)] // Tauri wiring: capture + transcribe lifecycle in one composition root.
 fn compose_with_ports_and_model_orchestrator<M, S>(
     mic: M,
     system: S,

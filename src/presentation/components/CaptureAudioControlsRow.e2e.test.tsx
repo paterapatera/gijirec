@@ -181,11 +181,7 @@ describe("CaptureAudioControlsRow E2E/UI", () => {
   test("shows inactive meter when ingest_level is null even if not disabled", () => {
     const snapshot = readUiSnapshot(
       render(
-        <CaptureAudioControlsRow
-          controls={defaultControls}
-          ingest_level={null}
-          disabled={false}
-        />,
+        <CaptureAudioControlsRow controls={defaultControls} ingest_level={null} disabled={false} />,
       ),
     );
 
@@ -203,9 +199,9 @@ describe("CaptureAudioControlsRow E2E/UI", () => {
       />,
     );
 
-    expect(getByTestId("capture-audio-controls-row").classList.contains("capture-audio-controls-row")).toBe(
-      true,
-    );
+    expect(
+      getByTestId("capture-audio-controls-row").classList.contains("capture-audio-controls-row"),
+    ).toBe(true);
     expect(getByTestId("ingest-level-meter").classList.contains("capture-audio-meter")).toBe(true);
   });
 
