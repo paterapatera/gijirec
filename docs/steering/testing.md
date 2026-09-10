@@ -22,7 +22,7 @@ gijirec のテスト方針。何をどこで検証し、何を CI に載せな�
 | TS infrastructure | `src/infrastructure/**/*.test.ts` | invoke ラッパ（editor / audio device） |
 | アーキテクチャ検証 | `scripts/*.test.ts` | レイヤルールの fixture テスト |
 | Rust ユニット | 各 crate の `#[cfg(test)] mod tests` | モジュール内 |
-| Rust 統合 | `src-tauri/crates/*/tests/*.rs`、`src-tauri/tests/*.rs` | crate 外統合テスト（device selection 性能・observability・バッチ transcribe パイプライン・モデルバリアント切替含む） |
+| Rust 統合 | `src-tauri/crates/*/tests/*.rs`、`src-tauri/tests/*.rs` | crate 外統合テスト（device selection 性能・observability・バッチ transcribe パイプライン・モデルバリアント切替・`capture_audio_controls_integration.rs` 含む） |
 
 `src/**/*.test.*` は `tsconfig.json` の `exclude` に入れ、型チェック対象外とする（本番ビルドに含めない）。
 
@@ -61,7 +61,7 @@ bun run rust:test      # cargo test --workspace
 
 ### Component / Hook（TypeScript presentation）
 
-- **対象**: キャプチャ／文字起こしフックと `App` のフェーズ表示。エディタは二重エディタ・ツールバー・保存トースト・プラグイン。`ModelVariantSelector` は 3 選択肢・`loading_model` 中 disabled
+- **対象**: キャプチャ／文字起こしフックと `App` のフェーズ表示。エディタは二重エディタ・ツールバー・保存トースト・プラグイン。`ModelVariantSelector` は 3 選択肢・`loading_model` 中 disabled。`CaptureAudioControlsRow` は capturing / non-capturing の disabled・dBFS ラベル・invoke 呼び出し（`CaptureAudioControlsRow.e2e.test.tsx`）
 - **依存**: Tauri を起動しない。`listenFn` / `invokeFn` を注入
 - **DOM**: `happy-dom` + `@testing-library/react`（`src/test-setup.ts` で一度だけ登録。全レイヤのテストから import 可）
 
@@ -133,5 +133,5 @@ release で文字起こししないとき、**コード変更前に**次を確�
 - 品質ゲート一覧: `docs/steering/tech.md`
 
 ---
-_updated_at: 2026-09-10（ingest ゲイン手動検証・共有テストヘルパを追記）_
+_updated_at: 2026-09-10（capture-audio-controls テスト参照を追記）_
 _Focus on patterns and decisions. Tool-specific config lives in package.json / Cargo.toml._

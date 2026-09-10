@@ -103,8 +103,18 @@ Convention defaults; project steering overrides if defined:
 |------------|--------|
 | **0** | Report "no deletion candidates". **Do not ask the user for confirmation** |
 | **≥ 1** | List each candidate: feature name, path (`docs/specs/<feature>/`), one-line completion rationale. **Ask the user whether to delete** |
-| User approves | Delete only approved `docs/specs/<feature>/` directories; report results |
+| User approves | Delete only approved `docs/specs/<feature>/` directories; **then** remove that name from `roadmap.md` (§ Roadmap prune); report results |
 | User declines or no answer | Do not delete; report candidates and pending/declined status |
+
+### Roadmap prune (post-deletion)
+
+After approved deletion of `docs/specs/<feature>/`, if `docs/steering/roadmap.md` exists:
+
+1. Remove that feature's line from `## Specs (dependency order)` and `## Existing Spec Updates` (checkbox form or `{name}[完了]：…`).
+2. Remove the name from other specs' `Dependencies:`. If none remain, set `Dependencies: none`.
+3. Do not leave a stub (`[x]`, `[完了]`) for the deleted spec.
+
+Also drop any other roadmap names that have no `docs/specs/<name>/` (already-deleted leftovers). Preserve all other lines and sections.
 
 ### Do NOT
 
@@ -112,3 +122,4 @@ Convention defaults; project steering overrides if defined:
 - Delete before user approval
 - Include features with incomplete retention in the candidate list
 - Delete paths outside `docs/specs/<feature>/`
+- Keep deleted spec names in `roadmap.md`

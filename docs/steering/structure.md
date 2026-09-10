@@ -27,12 +27,12 @@
 **Layers**（dependency-cruiser で強制）:
 - `src/domain/` — ドメインモデル（外レイヤに依存しない）。転写は `domain/transcript/`（型・Markdown/JSONL エクスポート）
 - `src/application/` — ユースケース（domain のみ）。転写は `application/transcript/`（blockReducer、Slate プラグイン、saveOrchestrator）
-- `src/infrastructure/` — 外部アダプタ（domain のみ）。`infrastructure/tauri/editorCommands.ts` が保存／設定 invoke をラップ。`infrastructure/tauri/audioDeviceCommands.ts` がデバイス一覧・選択 invoke をラップ。`infrastructure/tauri/transcribeSettingsCommands.ts` が転写設定 invoke をラップ
-- `src/presentation/` — UI・composition root（`App.tsx`、hooks、`components/` の二重エディタ・`DeviceSelectorPanel`・`ModelVariantSelector` と chrome）
+- `src/infrastructure/` — 外部アダプタ（domain のみ）。`infrastructure/tauri/editorCommands.ts` が保存／設定 invoke をラップ。`infrastructure/tauri/audioDeviceCommands.ts` がデバイス一覧・選択 invoke をラップ。`infrastructure/tauri/transcribeSettingsCommands.ts` が転写設定 invoke をラップ。`infrastructure/tauri/captureAudioControlsCommands.ts` が音声制御 invoke をラップ
+- `src/presentation/` — UI・composition root（`App.tsx`、hooks、`components/` の二重エディタ・`DeviceSelectorPanel`（内包 `CaptureAudioControlsRow`）・`ModelVariantSelector` と chrome）
 
 **二重エディタ再描画分離**: `TranscriptEditorView` は block 購読を持たず、`AiTranscriptPanel` 内で `useTranscriptBlocks` を局所化する。`block-appended` 更新は AI 側のみ再描画し、手入力 `HandwritingEditor` へ波及しない。`HandwritingEditor` は `React.memo` + IME `composition` イベントガード。親からの ref は `useCallback` + `externalHandwritingRef` で安定化（`exactOptionalPropertyTypes` 対応のため `AiTranscriptPanel` への ref は条件付き spread）。
 
-**Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_phase` / `get_transcribe_status` / `get_transcribe_settings` / `get_editor_settings` / `get_device_selection` で同期。テスト時は `listenFn` / `invokeFn` を注入。command ミラーは hooks ではなく `infrastructure/tauri/{editorCommands,audioDeviceCommands,transcribeSettingsCommands}.ts`。
+**Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_phase` / `get_transcribe_status` / `get_transcribe_settings` / `get_editor_settings` / `get_device_selection` / `get_capture_audio_controls` で同期。テスト時は `listenFn` / `invokeFn` を注入。command ミラーは hooks ではなく `infrastructure/tauri/{editorCommands,audioDeviceCommands,transcribeSettingsCommands,captureAudioControlsCommands}.ts`。音声制御は `useCaptureAudioControls` が `controls-changed` / `ingest-level` を購読し、`capturePhase !== 'capturing'` 時は disabled。
 
 ### Rust Backend
 **Location**: `src-tauri/crates/`  
@@ -41,10 +41,10 @@
 
 | Crate | 依存可能 | 主なモジュール |
 |-------|----------|----------------|
-| `gijirec-domain` | なし（最内層） | `audio/`（`device.rs` 含む）、`transcribe/`（`WhisperModelVariant`、`ModelVariantCatalog`）、`editor/`（EditorSettings, Save リクエスト, EditorError） |
-| `gijirec-application` | domain | `capture/`、`device_selection/`（DeviceSelectionStore, DeviceSelectionService）、`transcribe/`（`TranscribeSettingsService`、`ModelOrchestrator`）、`editor/`（SettingsService, SaveService — ファイル I/O はここ。infrastructure には editor アダプタを置かない） |
+| `gijirec-domain` | なし（最内層） | `audio/`（`device.rs`、`CaptureAudioControls`、ingest ゲイン定数含む）、`transcribe/`（`WhisperModelVariant`、`ModelVariantCatalog`）、`editor/`（EditorSettings, Save リクエスト, EditorError） |
+| `gijirec-application` | domain | `capture/`、`capture_audio_controls/`（`CaptureAudioControlsStore`、`CaptureAudioControlsService`）、`device_selection/`（DeviceSelectionStore, DeviceSelectionService）、`transcribe/`（`TranscribeSettingsService`、`ModelOrchestrator`）、`editor/`（SettingsService, SaveService — ファイル I/O はここ。infrastructure には editor アダプタを置かない） |
 | `gijirec-infrastructure` | domain | `audio/`（`device_enumerator`、マイク／ループバックのデバイス ID 指定。editor なし）、`transcribe/`（Whisper / モデル取得） |
-| `gijirec-presentation` | domain, application, infrastructure | `tauri/`（capture、`device_selection`）、`transcribe/`、`editor/`（command 実装・observability） |
+| `gijirec-presentation` | domain, application, infrastructure | `tauri/`（capture、`device_selection`、`capture_audio_controls`）、`transcribe/`（`PcmIngestConsumer`、`IngestLevelEmitter` 含む）、`editor/`（command 実装・observability） |
 
 **Presentation パターン**: `gijirec-presentation` が composition root。`tauri/`（capture / device_selection）/ `transcribe/` / `editor/` が各ドメインの Tauri 境界。`src-tauri/src/compose.rs` と `commands.rs` がホスト側で結線。契約イベント（`audio-capture://…`、`whisper-transcribe://…`、`audio-device-selection://…`）と editor / device command でフロントと同期。
 
@@ -54,7 +54,9 @@
 
 **キャプチャパイプライン（composition）**: `CapturePipelineState`（mixer / `ChunkEmitter` / `PcmChunkBus`）を Tauri state に保持。アダプタの rtrb consumer はポート内にあり、処理スレッド結線は `CaptureProcessingHook`（start 後起動）。リサンプラは入力レートが open 後まで不明なため processing スレッド起動時に構築。macOS SCK は 48 kHz 固定。可観測性は presentation の `CaptureObservability` トレイト経由（host が tracing 実装）。`capture_rt_callback_max_us` は処理スレッド drain レイテンシの代理。Linux 非対応は `on_app_setup` でダイアログ。`RunEvent::Exit` 停止は `handle_capture_run_event` を `app.run` から呼ぶ。
 
-**デバイス再選択**: 再キャプチャ時は `ChunkEmitter` を再生成せず `discard_partial_buffer` のみ行い `sequence` を継続する（`audio-capture-pcm` の単調増加・欠番なし）。
+**デバイス再選択**: 再キャプチャ時は `ChunkEmitter` を再生成せず `discard_partial_buffer` のみ行い `sequence` を継続する（`audio-capture-pcm` の単調増加・欠番なし）。`CaptureAudioControlsStore` はデバイス再開でもリセットしない（マイク ON/OFF・手動ゲインを保持）。
+
+**セッション音声制御（composition）**: `CaptureAudioControlsService` が store 更新と live apply を仲介。`capturing` 時は `CaptureProcessingGate`（mic ingest）・`PcmIngestConsumer`（ゲイン乗数）・`IngestLevelEmitter`（dBFS）へ反映。非 `capturing` 時は store 更新と `controls-changed` emit のみ（デバイス選択の選択保持パターンと同型）。mic OFF 後に ingest 可能な音声源がない場合は `TRANSCRIBE_INGEST_NO_AUDIO_SOURCE` を `audio-capture://error` で発火。
 
 **転写ワーカー（バッチ）**: `TranscribeWorker` は `take_batch_window` で先頭 480k samples を非破棄切り出し、`BATCH_INTERVAL`（30 s）起点でサイクル実行。停止時 flush・推論失敗時は次サイクル継続。転写中のバリアント切替は `on_batch_cycle_started` で `try_apply_pending_variant`。可観測性は worker コールバック → presentation `observability` → host tracing。
 
@@ -144,5 +146,5 @@ feature 完了後、spec ディレクトリを削除する前に次を行う（�
 | Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-10（transcribe-volume-normalize / ingest ゲイン境界を反映）_
+_updated_at: 2026-09-10（capture-audio-controls / セッション音声制御境界を反映）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_

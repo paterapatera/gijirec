@@ -112,6 +112,8 @@ capture と transcribe で同パターンを踏襲:
 
 **Device selection 固有**: 選択デバイス不可は `audio-capture://error` 経由（`SELECTED_MIC_UNAVAILABLE` / `SELECTED_SYSTEM_AUDIO_UNAVAILABLE` / `MACOS_OUTPUT_NOT_DEFAULT`）。command 側の `INVALID_DEVICE` は `set_device_selection` 失敗時。サイレントフォールバック禁止（別デバイスへ自動切替しない）。
 
+**Capture audio controls 固有**: マイク ingest OFF 後に ingest 可能な音声源がない場合は `TRANSCRIBE_INGEST_NO_AUDIO_SOURCE` → `audio-capture://error`（既存エラーパネル表示）。ゲイン範囲外・NaN/Inf は invoke エラー `INVALID_GAIN`（`set_capture_audio_controls`）。非 `capturing` 時の store 更新は invoke 成功とするが live ingest 適用は行わない。
+
 ## Retry
 
 - **音声キャプチャ**: リアルタイムコールバック内での自動リトライなし。失敗は phase `error` + イベント
@@ -135,5 +137,5 @@ capture と transcribe で同パターンを踏襲:
 - 境界（外部送信なし）: `docs/architecture/boundaries.md`
 
 ---
-_updated_at: 2026-09-10（transcribe-settings 読み書きエラー方針を追記）_
+_updated_at: 2026-09-10（capture-audio-controls エラー方針を追記）_
 _Focus on patterns and decisions, not every error variant._

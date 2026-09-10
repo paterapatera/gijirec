@@ -80,7 +80,7 @@ After all parallel research completes, synthesize patterns for steering files.
    - Completion metadata ↔ `docs/specs/<feature>/tasks.md` when specs exist (use Completion Status Rules + Task hierarchy completion)
 6. Apply updates (additive, preserve user content)
 7. **Spec knowledge retention** (§ Spec knowledge retention) — completed features only; skip when `--steering-only`
-8. **Completed spec cleanup** (§ Completed spec cleanup) — list deletion candidates, confirm with user if any, delete on approval; skip when `--steering-only`
+8. **Completed spec cleanup** (§ Completed spec cleanup) — list deletion candidates, confirm with user if any, delete on approval, then **prune those names from `roadmap.md`**; skip when `--steering-only`
 9. Report per § Sync report (below)
 
 **Update Philosophy**: Add, don't replace. Preserve user sections.
@@ -90,6 +90,7 @@ After all parallel research completes, synthesize patterns for steering files.
 - Extended Sync scope: project steering Close / doc sync sections first, then convention fallback in sync-extensions
 - Spec deletion: `docs/specs/<feature>/` only; never without user approval when candidates ≥ 1; never prompt when candidates = 0
 - Retention before deletion: features with pending Implementation Notes migration are not deletion candidates
+- After approved spec deletion, remove that name from `docs/steering/roadmap.md` (own line and other specs' `Dependencies:`)
 
 ---
 
@@ -151,6 +152,7 @@ Review and approve as Source of Truth.
   - [if N > 0] Listed: `<feature>` (`docs/specs/<feature>/`), …
   - User confirmation: approved | declined | pending | n/a (0 candidates)
   - Deleted: `<feature>`, … | none
+  - Roadmap prune: removed `<feature>` lines and `Dependencies:` refs | n/a (no roadmap / no deletions)
 
 ## Code Drift:
 - Components not following import conventions
@@ -167,7 +169,7 @@ Review and approve as Source of Truth.
 
 ### Sync (full)
 **Input**: Existing steering, completed feature with Implementation Notes, user did not pass `--steering-only`  
-**Output**: Extended Sync summary, notes migrated to tech.md, one deletion candidate listed → user confirms → `docs/specs/<feature>/` removed
+**Output**: Extended Sync summary, notes migrated to tech.md, one deletion candidate listed → user confirms → `docs/specs/<feature>/` removed and that name stripped from `roadmap.md`
 
 ### Sync (steering-only)
 **Input**: `/sdd-steering --steering-only`  
@@ -182,7 +184,7 @@ Review and approve as Source of Truth.
 - **Security**: Never include keys, passwords, secrets (see principles)
 - **Uncertainty**: Report both states, ask user
 - **Preservation**: Add rather than replace when in doubt
-- **Spec deletion**: Never delete without user approval when there is at least one candidate; never delete outside `docs/specs/<feature>/`
+- **Spec deletion**: Never delete without user approval when there is at least one candidate; never delete outside `docs/specs/<feature>/`; after delete, remove that name from `roadmap.md`
 
 ## Notes
 
