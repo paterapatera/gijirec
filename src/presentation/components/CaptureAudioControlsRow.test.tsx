@@ -105,7 +105,7 @@ function createConnectedInvoke(
 }
 
 describe("CaptureAudioControlsRow", () => {
-  test("renders mic switch, dBFS meter, and gain slider", () => {
+  test("renders mic switch, dBFS meter, gain slider, and gain value", () => {
     const { getByTestId } = renderRow({
       ingest_level: activeLevel,
     });
@@ -113,6 +113,46 @@ describe("CaptureAudioControlsRow", () => {
     expect(getByTestId("mic-ingest-switch")).toBeTruthy();
     expect(getByTestId("ingest-level-meter")).toBeTruthy();
     expect(getByTestId("ingest-gain-slider")).toBeTruthy();
+    expect(getByTestId("ingest-gain-value")).toBeTruthy();
+  });
+
+  test("shows default linear gain value", () => {
+    const { getByTestId } = renderRow();
+
+    expect(getByTestId("ingest-gain-value").textContent).toBe("1.25");
+  });
+
+  test("updates gain value when manual_ingest_gain changes", () => {
+    const { getByTestId, rerender } = renderRow({
+      controls: { ...defaultControls, manual_ingest_gain: 2.5 },
+    });
+
+    expect(getByTestId("ingest-gain-value").textContent).toBe("2.50");
+
+    rerender(
+      <CaptureAudioControlsRow
+        controls={{ ...defaultControls, manual_ingest_gain: 3.75 }}
+        ingest_level={null}
+        disabled={false}
+      />,
+    );
+
+    expect(getByTestId("ingest-gain-value").textContent).toBe("3.75");
+  });
+
+  test("shows em dash gain value when disabled", () => {
+    const { getByTestId } = renderRow({ disabled: true });
+
+    expect(getByTestId("ingest-gain-value").textContent).toBe("—");
+    expect(getByTestId("ingest-gain-value").getAttribute("aria-hidden")).toBe("true");
+  });
+
+  test("gain value has fixed-width class to prevent layout shift", () => {
+    const { getByTestId } = renderRow();
+
+    expect(getByTestId("ingest-gain-value").classList.contains("capture-audio-gain-value")).toBe(
+      true,
+    );
   });
 
   test("shows formatted dBFS label when capturing with ingest_level", () => {

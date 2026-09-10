@@ -28,7 +28,7 @@
 - `src/domain/` — ドメインモデル（外レイヤに依存しない）。転写は `domain/transcript/`（型・Markdown/JSONL エクスポート）
 - `src/application/` — ユースケース（domain のみ）。転写は `application/transcript/`（blockReducer、Slate プラグイン、saveOrchestrator）
 - `src/infrastructure/` — 外部アダプタ（domain のみ）。`infrastructure/tauri/editorCommands.ts` が保存／設定 invoke をラップ。`infrastructure/tauri/audioDeviceCommands.ts` がデバイス一覧・選択 invoke をラップ。`infrastructure/tauri/transcribeSettingsCommands.ts` が転写設定 invoke をラップ。`infrastructure/tauri/captureAudioControlsCommands.ts` が音声制御 invoke をラップ
-- `src/presentation/` — UI・composition root（`App.tsx`、hooks、`components/` の二重エディタ・`DeviceSelectorPanel`（内包 `CaptureAudioControlsRow`）・`ModelVariantSelector` と chrome）
+- `src/presentation/` — UI・composition root（`App.tsx`、hooks、`components/` の `AppStatusPanels`（フェーズ横並び `.phase-panels-row`）・二重エディタ・`DeviceSelectorPanel`（内包 `CaptureAudioControlsRow` — ゲイン数値 `ingest-gain-value` 含む）・`ModelVariantSelector` と chrome）
 
 **二重エディタ再描画分離**: `TranscriptEditorView` は block 購読を持たず、`AiTranscriptPanel` 内で `useTranscriptBlocks` を局所化する。`block-appended` 更新は AI 側のみ再描画し、手入力 `HandwritingEditor` へ波及しない。`HandwritingEditor` は `React.memo` + IME `composition` イベントガード。親からの ref は `useCallback` + `externalHandwritingRef` で安定化（`exactOptionalPropertyTypes` 対応のため `AiTranscriptPanel` への ref は条件付き spread）。
 
@@ -146,5 +146,5 @@ feature 完了後、spec ディレクトリを削除する前に次を行う（�
 | Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-10（capture-audio-controls / セッション音声制御境界を反映）_
+_updated_at: 2026-09-10（status-panels-horizontal / capture-gain-value-display の presentation パターンを反映）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_

@@ -74,8 +74,10 @@ export function AppStatusPanels({
 }: AppStatusPanelsProps) {
   return (
     <>
-      <PhaseStatusPanel label="キャプチャ状態" phase={capturePhase} testId="capture-phase" />
-      <PhaseStatusPanel label="文字起こし状態" phase={transcribePhase} testId="transcribe-phase" />
+      <div className="phase-panels-row">
+        <PhaseStatusPanel label="キャプチャ状態" phase={capturePhase} testId="capture-phase" />
+        <PhaseStatusPanel label="文字起こし状態" phase={transcribePhase} testId="transcribe-phase" />
+      </div>
       {transcribePhase === "loading_model" && modelProgress !== null ? (
         <ModelProgressPanel progress={modelProgress} />
       ) : null}

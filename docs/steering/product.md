@@ -55,9 +55,11 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 | whisper-model-selection | 完了 | kotoba Q5_0 / Q8_0 / FP16 選択・`transcribe-settings.json` 永続化・次バッチ境界切替（ADR-0013） |
 | transcribe-volume-normalize | 完了 | 転写 ingest 固定ゲイン ×1.25 + ソフトリミット 0.95（推論窓 −18〜−17 dBFS 目標） |
 | capture-audio-controls | 完了 | マイク ingest トグル・ingest 直前 dBFS メーター・手動ゲイン（0.25–4.0、既定 1.25）。ADR-0014 |
+| status-panels-horizontal | 完了 | `AppStatusPanels` — キャプチャ／文字起こしフェーズを `.phase-panels-row` で横並び。進捗・エラーは下段維持 |
+| capture-gain-value-display | 完了 | `CaptureAudioControlsRow` — ゲインスライダー横に `ingest-gain-value`（`toFixed(2)`、`tabular-nums`）。非 capturing 時は `—` |
 
-**現 UI の範囲**: キャプチャ／文字起こしフェーズ、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、マイク／スピーカー選択パネル（`CaptureAudioControlsRow` — マイク ON/OFF・dBFS メーター・ゲインスライダー）、Whisper バリアント選択（`ModelVariantSelector` — Q5_0 / Q8_0 / FP16）、手書き＋AI 転写の二重エディタ（`AiTranscriptPanel` で block 購読を局所化）、保存ツールバー・結果トースト。起動時ウィンドウは 1000×800。非 `capturing` 時は音声制御を disabled。
+**現 UI の範囲**: キャプチャ／文字起こしフェーズ（`AppStatusPanels` — 横並び `.phase-panels-row`）、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、マイク／スピーカー選択パネル（`CaptureAudioControlsRow` — マイク ON/OFF・dBFS メーター・ゲインスライダー・数値表示 `ingest-gain-value`）、Whisper バリアント選択（`ModelVariantSelector` — Q5_0 / Q8_0 / FP16）、手書き＋AI 転写の二重エディタ（`AiTranscriptPanel` で block 購読を局所化）、保存ツールバー・結果トースト。起動時ウィンドウは 1000×800。非 `capturing` 時は音声制御を disabled。
 
 ---
-_updated_at: 2026-09-10（capture-audio-controls 完了を反映）_
+_updated_at: 2026-09-10（status-panels-horizontal / capture-gain-value-display 完了を反映）_
 _Focus on patterns and purpose, not exhaustive feature lists_

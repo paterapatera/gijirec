@@ -47,6 +47,10 @@ function formatDbfs(levelDbfs: number): string {
   return `${withMinus} dBFS`;
 }
 
+function formatGain(gain: number): string {
+  return gain.toFixed(2);
+}
+
 function resolveMeterText(disabled: boolean, ingestLevel: IngestLevelSnapshot | null): string {
   if (disabled || ingestLevel === null) {
     return INACTIVE_METER_TEXT;
@@ -74,6 +78,7 @@ function CaptureAudioControlsRowView({
   invokeFn,
 }: CaptureAudioControlsRowViewProps) {
   const meterText = resolveMeterText(disabled, ingest_level);
+  const gainText = disabled ? INACTIVE_METER_TEXT : formatGain(controls.manual_ingest_gain);
   const gainHint = resolveGainLimitHint(controls.manual_ingest_gain, disabled);
 
   const applyControls = (patch: Partial<CaptureAudioControls>): void => {
@@ -132,6 +137,13 @@ function CaptureAudioControlsRowView({
           disabled={disabled}
           onInput={handleGainChange}
         />
+        <span
+          className="capture-audio-gain-value"
+          data-testid="ingest-gain-value"
+          aria-hidden="true"
+        >
+          {gainText}
+        </span>
         <div className="capture-audio-gain-hint" data-testid="gain-limit-hint" aria-live="polite">
           {gainHint ?? ""}
         </div>

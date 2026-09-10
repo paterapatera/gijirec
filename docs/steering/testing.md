@@ -61,7 +61,7 @@ bun run rust:test      # cargo test --workspace
 
 ### Component / Hook（TypeScript presentation）
 
-- **対象**: キャプチャ／文字起こしフックと `App` のフェーズ表示。エディタは二重エディタ・ツールバー・保存トースト・プラグイン。`ModelVariantSelector` は 3 選択肢・`loading_model` 中 disabled。`CaptureAudioControlsRow` は capturing / non-capturing の disabled・dBFS ラベル・invoke 呼び出し（`CaptureAudioControlsRow.e2e.test.tsx`）
+- **対象**: キャプチャ／文字起こしフックと `App` のフェーズ表示。`AppStatusPanels` は `.phase-panels-row` 内の `capture-phase` / `transcribe-phase` と進捗・エラーの分離（`AppStatusPanels.test.tsx`）。エディタは二重エディタ・ツールバー・保存トースト・プラグイン。`ModelVariantSelector` は 3 選択肢・`loading_model` 中 disabled。`CaptureAudioControlsRow` は capturing / non-capturing の disabled・dBFS ラベル・`ingest-gain-value` 数値表示・invoke 呼び出し（`CaptureAudioControlsRow.test.tsx` / `CaptureAudioControlsRow.e2e.test.tsx`）
 - **依存**: Tauri を起動しない。`listenFn` / `invokeFn` を注入
 - **DOM**: `happy-dom` + `@testing-library/react`（`src/test-setup.ts` で一度だけ登録。全レイヤのテストから import 可）
 
@@ -133,5 +133,5 @@ release で文字起こししないとき、**コード変更前に**次を確�
 - 品質ゲート一覧: `docs/steering/tech.md`
 
 ---
-_updated_at: 2026-09-10（capture-audio-controls テスト参照を追記）_
+_updated_at: 2026-09-10（AppStatusPanels / capture-gain-value-display テスト参照を追記）_
 _Focus on patterns and decisions. Tool-specific config lives in package.json / Cargo.toml._

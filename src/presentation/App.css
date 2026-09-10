@@ -18,6 +18,19 @@
   margin-bottom: 1rem;
 }
 
+.phase-panels-row {
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.phase-panels-row .status-panel {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
 .status-label {
   font-size: 0.875rem;
   color: #555;
@@ -132,6 +145,14 @@ progress {
 .capture-audio-gain-slider {
   width: 8rem;
   max-width: 100%;
+}
+
+.capture-audio-gain-value {
+  display: inline-block;
+  min-width: 3rem;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  color: #333;
 }
 
 .capture-audio-gain-hint {
