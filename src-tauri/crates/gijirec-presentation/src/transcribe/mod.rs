@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub mod event_emitter;
+pub mod ingest_level_emitter;
 pub mod lifecycle_hook;
 pub mod observability;
 pub mod pcm_ingest_consumer;
@@ -25,6 +26,11 @@ pub use gijirec_application::transcribe::{
 pub use gijirec_domain::transcribe::{TranscribeError, TranscriptSegmentSink, WhisperModelVariant};
 pub use gijirec_infrastructure::transcribe::{
     ModelDownloader, ModelStore, TranscribeWorker, WhisperCppAdapter,
+};
+pub use ingest_level_emitter::{
+    AGGREGATION_WINDOW, DBFS_FLOOR, INGEST_LEVEL_EVENT, IngestLevelChangedPayload,
+    IngestLevelEmitter, IngestLevelEventEmitter, MAX_EMIT_INTERVAL, MIN_EMIT_INTERVAL,
+    TauriIngestLevelEventEmitter, aggregate_window_rms, rms_to_dbfs,
 };
 pub use lifecycle_hook::{
     DEFAULT_TRANSCRIBE_STOP_TIMEOUT, TRANSCRIBE_STOP_INFERENCE_MARGIN, TranscribeLifecycleHook,

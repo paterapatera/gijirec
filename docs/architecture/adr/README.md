@@ -55,6 +55,7 @@ Architecture Decision Records。重要な設計判断を永続化する。contra
 | `ADR-0008-model-store-app-data-dir.md` | Whisper ModelStore の保存先を Tauri app_data_dir に統一 | fix-release-transcribe | Accepted |
 | `ADR-0009-macos-speaker-selection-strategy.md` | macOS スピーカー選択と SCK システムミックスの整合 | audio-device-selection | Accepted |
 | `ADR-0013-whisper-model-variant-selection.md` | kotoba-whisper Q5_0 / Q8_0 / FP16 のユーザー選択 | whisper-model-selection | Accepted |
+| `ADR-0014-capture-audio-controls-ingest-boundary.md` | マイク ingest ゲート・手動ゲイン・dBFS メーターの境界 | capture-audio-controls | Accepted |
 
 ## 命名・採番
 

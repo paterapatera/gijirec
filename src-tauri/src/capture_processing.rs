@@ -19,6 +19,28 @@ const DRAIN_BUFFER_SAMPLES: usize = 1_024;
 const LOOP_SLEEP: Duration = Duration::from_millis(5);
 const RT_METRICS_LOG_INTERVAL: u64 = 20;
 
+/// Shared mic ingest gate readable from the capture processing thread.
+#[derive(Debug, Clone)]
+pub(crate) struct CaptureProcessingGate {
+    mic_ingest_enabled: Arc<AtomicBool>,
+}
+
+impl CaptureProcessingGate {
+    pub(crate) fn new() -> Self {
+        Self {
+            mic_ingest_enabled: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    pub(crate) fn mic_ingest_enabled(&self) -> bool {
+        self.mic_ingest_enabled.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn set_mic_ingest_enabled(&self, enabled: bool) {
+        self.mic_ingest_enabled.store(enabled, Ordering::SeqCst);
+    }
+}
+
 fn drain_with_timing(source: &mut dyn F32SampleSource, scratch: &mut [f32]) -> (usize, u64) {
     let start = Instant::now();
     let count = source.drain_into(scratch);
@@ -75,6 +97,7 @@ impl ResampledStream {
 
 struct ProcessingContext {
     stop: Arc<AtomicBool>,
+    mic_gate: CaptureProcessingGate,
     mixer: DefaultAudioMixer,
     chunk_emitter: Arc<Mutex<ChunkEmitter>>,
     pcm_bus: Arc<PcmChunkBus>,
@@ -90,6 +113,7 @@ impl ProcessingContext {
     fn run(self) {
         let ProcessingContext {
             stop,
+            mic_gate,
             mut mixer,
             chunk_emitter,
             pcm_bus,
@@ -111,6 +135,8 @@ impl ProcessingContext {
             let (mic_count, mic_us) = drain_with_timing(mic.as_mut(), &mut scratch);
             if mic_count > 0 {
                 rt_drain_max_us = rt_drain_max_us.max(mic_us);
+            }
+            if mic_count > 0 && mic_gate.mic_ingest_enabled() {
                 push_drained_samples(
                     &scratch[..mic_count],
                     mic_rate_hz,
@@ -218,6 +244,7 @@ pub(crate) struct ProcessingSpawnParams {
     pub mixer: DefaultAudioMixer,
     pub chunk_emitter: Arc<Mutex<ChunkEmitter>>,
     pub pcm_bus: Arc<PcmChunkBus>,
+    pub mic_gate: CaptureProcessingGate,
 }
 
 /// Handle to the dedicated capture processing thread.
@@ -231,6 +258,7 @@ impl CaptureProcessingHandle {
         let stop = Arc::new(AtomicBool::new(false));
         let ctx = ProcessingContext {
             stop: Arc::clone(&stop),
+            mic_gate: params.mic_gate,
             mixer: params.mixer,
             chunk_emitter: params.chunk_emitter,
             pcm_bus: params.pcm_bus,
@@ -265,6 +293,7 @@ pub struct CapturePipelineState {
     pub chunk_emitter: Arc<Mutex<ChunkEmitter>>,
     pub pcm_bus: Arc<PcmChunkBus>,
     pub streams: CaptureStreamHandles,
+    mic_gate: CaptureProcessingGate,
     processing: Mutex<Option<CaptureProcessingHandle>>,
 }
 
@@ -281,8 +310,13 @@ impl CapturePipelineState {
             chunk_emitter: Arc::new(Mutex::new(ChunkEmitter::new())),
             pcm_bus: Arc::new(PcmChunkBus::new()),
             streams,
+            mic_gate: CaptureProcessingGate::new(),
             processing: Mutex::new(None),
         }
+    }
+
+    pub(crate) fn mic_gate(&self) -> &CaptureProcessingGate {
+        &self.mic_gate
     }
 
     pub fn set_stream_disconnect_handler(
@@ -328,6 +362,7 @@ impl CapturePipelineState {
             mixer,
             chunk_emitter,
             pcm_bus,
+            mic_gate: self.mic_gate.clone(),
         }));
         Ok(())
     }
@@ -487,6 +522,7 @@ mod tests {
             mixer: DefaultAudioMixer::new(),
             chunk_emitter: Arc::new(Mutex::new(ChunkEmitter::new())),
             pcm_bus: Arc::clone(&bus),
+            mic_gate: CaptureProcessingGate::new(),
         });
 
         let frame_batch = (rate_hz / 100) as usize; // 10 ms
@@ -551,6 +587,7 @@ mod tests {
             mixer: DefaultAudioMixer::new(),
             chunk_emitter: Arc::new(Mutex::new(ChunkEmitter::new())),
             pcm_bus: Arc::clone(&bus),
+            mic_gate: CaptureProcessingGate::new(),
         });
 
         let pump = thread::spawn(move || {
@@ -717,5 +754,197 @@ mod tests {
             let _ = mic.push(sample);
             let _ = sys.push(sample * 0.5);
         }
+    }
+
+    fn chunk_rms(chunk: &PcmChunk) -> f64 {
+        let sum_sq = chunk
+            .samples()
+            .iter()
+            .map(|s| {
+                let v = *s as f64 / 32_768.0;
+                v * v
+            })
+            .sum::<f64>();
+        (sum_sq / chunk.samples().len() as f64).sqrt()
+    }
+
+    fn max_audible_chunk_rms(recorder: &RecordingChunkConsumer) -> f64 {
+        recorder
+            .chunks()
+            .iter()
+            .map(chunk_rms)
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or(0.0)
+    }
+
+    struct MicSystemPump {
+        mic_amplitude: f32,
+        system_amplitude: f32,
+    }
+
+    fn run_gate_scenario(
+        gate: &CaptureProcessingGate,
+        pump: MicSystemPump,
+        pump_ticks: usize,
+    ) -> f64 {
+        let rate_hz = SAMPLE_RATE_HZ;
+        let (mut producers, mic, system) = spawn_synthetic_sources(rate_hz);
+        let bus = Arc::new(PcmChunkBus::new());
+        let recorder = Arc::new(RecordingChunkConsumer::new());
+        bus.register(Arc::clone(&recorder) as Arc<dyn PcmChunkConsumer>);
+
+        let handle = CaptureProcessingHandle::spawn(ProcessingSpawnParams {
+            mic,
+            system,
+            mic_rate_hz: rate_hz,
+            system_rate_hz: rate_hz,
+            mixer: DefaultAudioMixer::new(),
+            chunk_emitter: Arc::new(Mutex::new(ChunkEmitter::new())),
+            pcm_bus: Arc::clone(&bus),
+            mic_gate: gate.clone(),
+        });
+
+        let frame_batch = (rate_hz / 100) as usize;
+        for tick in 0..pump_ticks {
+            for i in 0..frame_batch {
+                let n = (tick * frame_batch + i) as f32;
+                let _ = producers.mic.push(pump.mic_amplitude * (n * 0.13).sin());
+                let _ = producers
+                    .system
+                    .push(pump.system_amplitude * (n * 0.17).sin());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        thread::sleep(Duration::from_millis(150));
+        handle.stop();
+
+        max_audible_chunk_rms(&recorder)
+    }
+
+    #[test]
+    fn mic_ingest_gate_off_supplies_system_only() {
+        let gate_off = CaptureProcessingGate::new();
+        gate_off.set_mic_ingest_enabled(false);
+
+        let gate_on = CaptureProcessingGate::new();
+        let rms_gate_off = run_gate_scenario(
+            &gate_off,
+            MicSystemPump {
+                mic_amplitude: 0.6,
+                system_amplitude: 0.25,
+            },
+            80,
+        );
+        let rms_system_only = run_gate_scenario(
+            &gate_on,
+            MicSystemPump {
+                mic_amplitude: 0.0,
+                system_amplitude: 0.25,
+            },
+            80,
+        );
+
+        assert!(
+            rms_gate_off > 0.02,
+            "system audio must reach mixed output when mic gate is off: rms={rms_gate_off}"
+        );
+        assert!(
+            (rms_gate_off - rms_system_only).abs() < 0.03,
+            "gate off must match system-only mix (off={rms_gate_off}, system_only={rms_system_only})"
+        );
+    }
+
+    #[test]
+    fn mic_ingest_gate_on_includes_mic_in_mixer() {
+        let gate_on = CaptureProcessingGate::new();
+
+        let rms_dual = run_gate_scenario(
+            &gate_on,
+            MicSystemPump {
+                mic_amplitude: 0.6,
+                system_amplitude: 0.25,
+            },
+            80,
+        );
+        let rms_system_only = run_gate_scenario(
+            &gate_on,
+            MicSystemPump {
+                mic_amplitude: 0.0,
+                system_amplitude: 0.25,
+            },
+            80,
+        );
+
+        assert!(
+            rms_dual > rms_system_only + 0.02,
+            "gate on must mix mic with system (dual={rms_dual}, system_only={rms_system_only})"
+        );
+    }
+
+    #[test]
+    fn mic_ingest_gate_toggle_reflects_on_next_chunk() {
+        let rate_hz = SAMPLE_RATE_HZ;
+        let gate = CaptureProcessingGate::new();
+        let (mut producers, mic, system) = spawn_synthetic_sources(rate_hz);
+        let bus = Arc::new(PcmChunkBus::new());
+        let recorder = Arc::new(RecordingChunkConsumer::new());
+        bus.register(Arc::clone(&recorder) as Arc<dyn PcmChunkConsumer>);
+
+        let handle = CaptureProcessingHandle::spawn(ProcessingSpawnParams {
+            mic,
+            system,
+            mic_rate_hz: rate_hz,
+            system_rate_hz: rate_hz,
+            mixer: DefaultAudioMixer::new(),
+            chunk_emitter: Arc::new(Mutex::new(ChunkEmitter::new())),
+            pcm_bus: Arc::clone(&bus),
+            mic_gate: gate.clone(),
+        });
+
+        let frame_batch = (rate_hz / 100) as usize;
+        for tick in 0..40 {
+            for i in 0..frame_batch {
+                let n = (tick * frame_batch + i) as f32;
+                let _ = producers.mic.push(0.6 * (n * 0.13).sin());
+                let _ = producers.system.push(0.25 * (n * 0.17).sin());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let rms_before_toggle = max_audible_chunk_rms(&recorder);
+        gate.set_mic_ingest_enabled(false);
+
+        for tick in 40..80 {
+            for i in 0..frame_batch {
+                let n = (tick * frame_batch + i) as f32;
+                let _ = producers.mic.push(0.6 * (n * 0.13).sin());
+                let _ = producers.system.push(0.25 * (n * 0.17).sin());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        thread::sleep(Duration::from_millis(150));
+        handle.stop();
+
+        let chunks = recorder.chunks();
+        assert!(
+            chunks.len() >= 4,
+            "expected several chunks, got {}",
+            chunks.len()
+        );
+        let late = &chunks[chunks.len() - 2..];
+        let rms_after_toggle = late
+            .iter()
+            .map(chunk_rms)
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or(0.0);
+
+        assert!(
+            rms_before_toggle > rms_after_toggle + 0.02,
+            "toggle off must reduce mix level on subsequent chunks (before={rms_before_toggle}, after={rms_after_toggle})"
+        );
+        assert!(
+            rms_after_toggle > 0.02,
+            "system audio must remain after mic gate off: rms={rms_after_toggle}"
+        );
     }
 }

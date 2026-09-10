@@ -1,6 +1,6 @@
 //! PcmIngestConsumer implementing PcmChunkConsumer to ingest PCM into rtrb.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -9,8 +9,12 @@ use gijirec_domain::audio::pcm_chunk::{PcmChunk, PcmChunkConsumer, PcmConsumerEr
 /// Max spin wait for rtrb space before signaling backpressure (bus re-queues chunk).
 const RTRB_PUSH_SPIN_BUDGET: Duration = Duration::from_millis(5);
 
-/// Fixed transcribe-path gain targeting ~−18 to −17 dBFS window RMS (v1).
-const TRANSCRIBE_INGEST_GAIN: f32 = 1.25;
+/// Default ingest gain multiplier (~−18 to −17 dBFS window RMS; `transcribe-volume-normalize` equivalent).
+const DEFAULT_INGEST_GAIN_MULTIPLIER: f32 = 1.25;
+/// Minimum session ingest gain multiplier.
+const MIN_INGEST_GAIN_MULTIPLIER: f32 = 0.25;
+/// Maximum session ingest gain multiplier.
+const MAX_INGEST_GAIN_MULTIPLIER: f32 = 4.0;
 /// Soft limit ceiling after gain to prevent clipping (matches mixer `SOFT_LIMIT`).
 const TRANSCRIBE_SOFT_LIMIT: f32 = 0.95;
 
@@ -18,8 +22,8 @@ fn soft_limit(sample: f32) -> f32 {
     sample.clamp(-TRANSCRIBE_SOFT_LIMIT, TRANSCRIBE_SOFT_LIMIT)
 }
 
-fn apply_transcribe_ingest_gain(sample: f32) -> f32 {
-    soft_limit(sample * TRANSCRIBE_INGEST_GAIN)
+fn apply_ingest_gain(sample: f32, multiplier: f32) -> f32 {
+    soft_limit(sample * multiplier)
 }
 
 /// Metrics hook for recording sequence gaps.
@@ -33,6 +37,7 @@ pub type PcmChunkRmsCallback = Arc<dyn Fn(f32) + Send + Sync>;
 /// [`PcmConsumerError::Disconnected`] so the bus can re-queue the chunk without sample loss.
 pub struct PcmIngestConsumer {
     producer: Mutex<rtrb::Producer<f32>>,
+    ingest_gain_multiplier: AtomicU32,
     last_sequence: AtomicU64,
     has_seen_first_chunk: AtomicBool,
     sequence_gaps_total: AtomicU64,
@@ -46,6 +51,7 @@ impl PcmIngestConsumer {
     pub fn new(producer: rtrb::Producer<f32>) -> Self {
         Self {
             producer: Mutex::new(producer),
+            ingest_gain_multiplier: AtomicU32::new(DEFAULT_INGEST_GAIN_MULTIPLIER.to_bits()),
             last_sequence: AtomicU64::new(0),
             has_seen_first_chunk: AtomicBool::new(false),
             sequence_gaps_total: AtomicU64::new(0),
@@ -53,6 +59,21 @@ impl PcmIngestConsumer {
             on_sequence_gap: None,
             on_pcm_rms: None,
         }
+    }
+
+    /// Sets the ingest gain multiplier (clamped to 0.25–4.0). Applied from the next PCM chunk.
+    pub fn set_ingest_gain_multiplier(&self, gain: f32) {
+        if !gain.is_finite() {
+            return;
+        }
+        let clamped = gain.clamp(MIN_INGEST_GAIN_MULTIPLIER, MAX_INGEST_GAIN_MULTIPLIER);
+        self.ingest_gain_multiplier
+            .store(clamped.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Returns the current ingest gain multiplier.
+    pub fn ingest_gain_multiplier(&self) -> f32 {
+        f32::from_bits(self.ingest_gain_multiplier.load(Ordering::Relaxed))
     }
 
     /// Sets an optional callback invoked with RMS for each ingested chunk.
@@ -136,11 +157,12 @@ impl PcmChunkConsumer for PcmIngestConsumer {
             .lock()
             .map_err(|e| PcmConsumerError::Internal(format!("poisoned producer lock: {e}")))?;
 
+        let gain = self.ingest_gain_multiplier();
         let samples = chunk.samples();
         let mut normalized = Vec::with_capacity(samples.len());
         let mut sum_sq = 0.0f32;
         for &sample in samples {
-            let value = apply_transcribe_ingest_gain((sample as f32) / 32768.0);
+            let value = apply_ingest_gain((sample as f32) / 32768.0, gain);
             sum_sq += value * value;
             normalized.push(value);
         }
@@ -201,7 +223,7 @@ mod tests {
 
         assert_eq!(cons.slots(), CHUNK_FRAME_COUNT as usize);
         let first = cons.pop().expect("pop");
-        let expected = apply_transcribe_ingest_gain(0.5);
+        let expected = apply_ingest_gain(0.5, DEFAULT_INGEST_GAIN_MULTIPLIER);
         assert!((first - expected).abs() < 1e-4);
     }
 
@@ -273,7 +295,7 @@ mod tests {
             .expect("retry after drain");
         assert_eq!(cons.slots(), CHUNK_FRAME_COUNT as usize);
         let first = cons.pop().expect("pop");
-        let expected = apply_transcribe_ingest_gain(300.0 / 32768.0);
+        let expected = apply_ingest_gain(300.0 / 32768.0, DEFAULT_INGEST_GAIN_MULTIPLIER);
         assert!((first - expected).abs() < 1e-4);
     }
 
@@ -366,5 +388,83 @@ mod tests {
                 "sample {sample} exceeded soft limit {TRANSCRIBE_SOFT_LIMIT}"
             );
         }
+    }
+
+    #[test]
+    fn default_ingest_gain_multiplier_is_transcribe_volume_normalize_equivalent() {
+        let (prod, _cons) = rtrb::RingBuffer::<f32>::new(4096);
+        let consumer = PcmIngestConsumer::new(prod);
+
+        assert!((consumer.ingest_gain_multiplier() - 1.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn set_ingest_gain_multiplier_applies_from_next_chunk() {
+        let (prod, mut cons) = rtrb::RingBuffer::<f32>::new(8192);
+        let consumer = PcmIngestConsumer::new(prod);
+
+        consumer
+            .on_pcm_chunk(constant_amplitude_chunk(1, 0.10))
+            .expect("first chunk at default gain");
+        while cons.pop().is_ok() {}
+
+        consumer.set_ingest_gain_multiplier(2.0);
+        consumer
+            .on_pcm_chunk(constant_amplitude_chunk(2, 0.10))
+            .expect("second chunk at raised gain");
+
+        let mut gained = Vec::with_capacity(CHUNK_FRAME_COUNT as usize);
+        while cons.slots() > 0 {
+            gained.push(cons.pop().expect("pop"));
+        }
+
+        let rms = chunk_rms(&gained);
+        let expected = apply_ingest_gain(0.10, 2.0);
+        assert!(
+            (rms - expected).abs() < 1e-4,
+            "expected post-gain RMS {expected}, got {rms}"
+        );
+    }
+
+    #[test]
+    fn set_ingest_gain_multiplier_clamps_to_valid_range() {
+        let (prod, _cons) = rtrb::RingBuffer::<f32>::new(4096);
+        let consumer = PcmIngestConsumer::new(prod);
+
+        consumer.set_ingest_gain_multiplier(0.1);
+        assert!(
+            (consumer.ingest_gain_multiplier() - MIN_INGEST_GAIN_MULTIPLIER).abs() < f32::EPSILON
+        );
+
+        consumer.set_ingest_gain_multiplier(10.0);
+        assert!(
+            (consumer.ingest_gain_multiplier() - MAX_INGEST_GAIN_MULTIPLIER).abs() < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn on_pcm_rms_uses_post_gain_signal() {
+        let (prod, _cons) = rtrb::RingBuffer::<f32>::new(4096);
+        let mut consumer = PcmIngestConsumer::new(prod);
+
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_clone = Arc::clone(&observed);
+        consumer.set_pcm_rms_callback(Arc::new(move |rms| {
+            observed_clone.lock().unwrap().push(rms);
+        }));
+
+        consumer.set_ingest_gain_multiplier(2.0);
+        consumer
+            .on_pcm_chunk(constant_amplitude_chunk(1, 0.10))
+            .expect("ingest");
+
+        let rms_values = observed.lock().unwrap();
+        assert_eq!(rms_values.len(), 1);
+        let expected = apply_ingest_gain(0.10, 2.0);
+        assert!(
+            (rms_values[0] - expected).abs() < 1e-4,
+            "on_pcm_rms must reflect post-gain RMS: expected {expected}, got {}",
+            rms_values[0]
+        );
     }
 }

@@ -22,6 +22,7 @@
 | `transcript-editor-settings.md` | 保存先ディレクトリ・JSONL 出力設定の永続化 | transcript-editor |
 | `transcript-editor-status.md` | 保存・設定操作の利用者向けエラー形状 | transcript-editor |
 | `release-logging-persistence.md` | リリースビルド診断ログの保存場所・セッション ID・禁止フィールド | release-logging |
+| `capture-audio-controls.md` | マイク ingest トグル・手動ゲイン・ingest 直前 dBFS メーター Tauri command / イベント | capture-audio-controls |
 
 <!-- 例:
 | contracts/billing-api.md | Billing HTTP API shape | billing |

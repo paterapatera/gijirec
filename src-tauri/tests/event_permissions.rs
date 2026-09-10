@@ -40,6 +40,8 @@ const FRONTEND_LISTEN_EVENTS: &[&str] = &[
     "whisper-transcribe://block-appended",
     "audio-device-selection://devices-changed",
     "audio-device-selection://selection-changed",
+    "capture-audio-controls://controls-changed",
+    "capture-audio-controls://ingest-level",
 ];
 
 #[test]

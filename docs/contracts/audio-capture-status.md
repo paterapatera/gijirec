@@ -44,6 +44,7 @@ interface CaptureUserError {
     | "SELECTED_MIC_UNAVAILABLE"
     | "SELECTED_SYSTEM_AUDIO_UNAVAILABLE"
     | "MACOS_OUTPUT_NOT_DEFAULT"
+    | "TRANSCRIBE_INGEST_NO_AUDIO_SOURCE"
     | "INTERNAL";
   message_ja: string;       // 利用者向け短文
   action_ja: string;      // 次に取れる行動（5.4）
@@ -61,6 +62,7 @@ interface CaptureUserError {
 | `SELECTED_MIC_UNAVAILABLE` | 選択マイクが利用不能（audio-device-selection 4.1） | 別のマイクを選ぶか、接続とマイク権限を確認してください |
 | `SELECTED_SYSTEM_AUDIO_UNAVAILABLE` | 選択スピーカー（ループバック）が利用不能（4.2） | 別のスピーカーを選ぶか、出力デバイスと権限を確認してください |
 | `MACOS_OUTPUT_NOT_DEFAULT` | macOS で選択スピーカー ≠ OS 既定出力（ADR-0009） | システム設定 → サウンドで出力先を変更するか、現在の出力先を選んでください |
+| `TRANSCRIBE_INGEST_NO_AUDIO_SOURCE` | マイク ingest OFF かつスピーカー／システム音声が ingest に供給できない（capture-audio-controls 1.5） | スピーカー出力を確認するか、マイク ingest を ON にしてください |
 | `INTERNAL` | 想定外（ログに詳細） | アプリを再起動してください。改善しない場合はログを共有してください |
 
 ### 禁止事項
@@ -77,6 +79,7 @@ interface CaptureUserError {
 
 | Date | Change | ADR / rationale |
 |------|--------|-----------------|
+| 2026-09-10 | `TRANSCRIBE_INGEST_NO_AUDIO_SOURCE` 追加 | capture-audio-controls 要件 1.5 |
 | 2026-09-06 | 選択デバイス文脈のエラーコード追加 | audio-device-selection / ADR-0009 |
 | 2026-09-05 | 初版 — フェーズと利用者向けエラー | 要件 5, 7 |
 

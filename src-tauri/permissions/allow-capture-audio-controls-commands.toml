@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-capture-audio-controls-commands"
+description = "Allows capture audio controls IPC (mic ingest toggle and manual gain)."
+commands.allow = [
+  "get_capture_audio_controls",
+  "set_capture_audio_controls",
+]

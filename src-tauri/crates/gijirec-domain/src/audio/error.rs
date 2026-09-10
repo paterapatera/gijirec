@@ -13,6 +13,7 @@ pub enum UserFacingErrorCode {
     SelectedMicUnavailable,
     SelectedSystemAudioUnavailable,
     MacosOutputNotDefault,
+    TranscribeIngestNoAudioSource,
     Internal,
 }
 
@@ -27,6 +28,7 @@ impl UserFacingErrorCode {
             Self::SelectedMicUnavailable => "SELECTED_MIC_UNAVAILABLE",
             Self::SelectedSystemAudioUnavailable => "SELECTED_SYSTEM_AUDIO_UNAVAILABLE",
             Self::MacosOutputNotDefault => "MACOS_OUTPUT_NOT_DEFAULT",
+            Self::TranscribeIngestNoAudioSource => "TRANSCRIBE_INGEST_NO_AUDIO_SOURCE",
             Self::Internal => "INTERNAL",
         }
     }
@@ -58,6 +60,7 @@ pub enum CaptureError {
     SelectedMicUnavailable,
     SelectedSystemAudioUnavailable,
     MacosOutputNotDefault,
+    TranscribeIngestNoAudioSource,
     Internal { detail: String },
 }
 
@@ -117,6 +120,13 @@ impl CaptureError {
                         .to_string(),
                 recoverable: true,
             },
+            Self::TranscribeIngestNoAudioSource => UserFacingError {
+                code: UserFacingErrorCode::TranscribeIngestNoAudioSource,
+                message_ja: "転写に利用できる音声源がありません。".to_string(),
+                action_ja: "スピーカー出力を確認するか、マイク ingest を ON にしてください"
+                    .to_string(),
+                recoverable: true,
+            },
             Self::Internal { detail: _ } => UserFacingError {
                 code: UserFacingErrorCode::Internal,
                 message_ja: "予期しないエラーが発生しました。".to_string(),
@@ -143,6 +153,9 @@ impl fmt::Display for CaptureError {
             Self::MacosOutputNotDefault => {
                 write!(f, "macos selected output is not system default")
             }
+            Self::TranscribeIngestNoAudioSource => {
+                write!(f, "no audio source available for transcribe ingest")
+            }
             Self::Internal { detail } => write!(f, "internal capture error: {detail}"),
         }
     }
@@ -164,6 +177,7 @@ mod tests {
             CaptureError::SelectedMicUnavailable,
             CaptureError::SelectedSystemAudioUnavailable,
             CaptureError::MacosOutputNotDefault,
+            CaptureError::TranscribeIngestNoAudioSource,
             CaptureError::Internal {
                 detail: "test".to_string(),
             },
@@ -182,6 +196,7 @@ mod tests {
             "SELECTED_MIC_UNAVAILABLE",
             "SELECTED_SYSTEM_AUDIO_UNAVAILABLE",
             "MACOS_OUTPUT_NOT_DEFAULT",
+            "TRANSCRIBE_INGEST_NO_AUDIO_SOURCE",
             "INTERNAL",
         ];
 

@@ -84,6 +84,8 @@ const FRONTEND_INVOKE_COMMANDS: &[&str] = &[
     "get_device_selection",
     "set_device_selection",
     "set_audio_device_ui_visible",
+    "get_capture_audio_controls",
+    "set_capture_audio_controls",
 ];
 
 #[test]

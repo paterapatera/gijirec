@@ -33,7 +33,7 @@
 - `transcribe-volume-normalize`（完了）: 固定ゲイン ×1.25 + ソフトリミット 0.95、UI なし
 
 ## Upstream / Downstream
-- **Upstream**: `transcribe-volume-normalize`（完了・ingest 固定ゲインの置換／拡張）
+- **Upstream**: none（`transcribe-volume-normalize` は `product.md` で完了済み。ingest 固定ゲインは既存実装を前提に UI 制御を追加）
 - **Downstream**: なし（想定）
 
 ## Constraints

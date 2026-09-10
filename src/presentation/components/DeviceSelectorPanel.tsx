@@ -7,9 +7,15 @@ import type {
   AudioDeviceList,
   DeviceSelection,
 } from "../hooks/audio-device-types";
-import type { CaptureEventListenFn, CaptureUserError } from "../hooks/capture-status";
+import type { CaptureAudioControlsEventListenFn } from "../hooks/capture-audio-controls-types";
+import type {
+  CaptureEventListenFn,
+  CapturePhaseChanged,
+  CaptureUserError,
+} from "../hooks/capture-status";
 import { useAudioDevices } from "../hooks/useAudioDevices";
 import { useCaptureStatus } from "../hooks/useCaptureStatus";
+import { CaptureAudioControlsRow } from "./CaptureAudioControlsRow";
 import { detectMacos as defaultDetectMacos } from "./detectMacos";
 
 const OS_DEFAULT_VALUE = "";
@@ -117,8 +123,12 @@ function CaptureErrorDisplay({ error }: CaptureErrorDisplayProps) {
   );
 }
 
+type CapturePhase = CapturePhaseChanged["phase"];
+
 interface DeviceSelectorPanelViewProps extends DeviceSelectorPanelInjectedProps {
+  readonly capturePhase?: CapturePhase;
   readonly invokeFn?: typeof invoke;
+  readonly captureAudioControlsListenFn?: CaptureAudioControlsEventListenFn;
 }
 
 function DeviceSelectorPanelView({
@@ -127,7 +137,9 @@ function DeviceSelectorPanelView({
   captureError,
   onSelectionChange,
   isMacos,
+  capturePhase,
   invokeFn,
+  captureAudioControlsListenFn,
 }: DeviceSelectorPanelViewProps) {
   const applySelection = (next: DeviceSelection): void => {
     if (onSelectionChange !== undefined) {
@@ -170,6 +182,13 @@ function DeviceSelectorPanelView({
         onChange={handleSpeakerChange}
         {...(isMacos ? { helpText: MACOS_SPEAKER_HELP, helpTestId: "speaker-macos-help" } : {})}
       />
+      <CaptureAudioControlsRow
+        {...(capturePhase !== undefined ? { capturePhase } : {})}
+        {...(invokeFn !== undefined ? { invokeFn } : {})}
+        {...(captureAudioControlsListenFn !== undefined
+          ? { listenFn: captureAudioControlsListenFn }
+          : {})}
+      />
       {captureError !== null ? <CaptureErrorDisplay error={captureError} /> : null}
     </section>
   );
@@ -196,11 +215,17 @@ function DeviceSelectorPanelConnected(props: DeviceSelectorPanelProps) {
     devices: props.devices ?? audioDevices.devices,
     selection: props.selection ?? audioDevices.selection,
     captureError: props.captureError !== undefined ? props.captureError : captureStatus.error,
+    capturePhase: captureStatus.phase,
     isMacos: resolveIsMacos(props.isMacos, detectMacosFn),
     ...(props.onSelectionChange !== undefined
       ? { onSelectionChange: props.onSelectionChange }
       : {}),
     ...(props.invokeFn !== undefined ? { invokeFn: props.invokeFn } : {}),
+    ...(props.listenFn !== undefined
+      ? {
+          captureAudioControlsListenFn: props.listenFn as CaptureAudioControlsEventListenFn,
+        }
+      : {}),
   };
 
   return <DeviceSelectorPanelView {...viewProps} />;
@@ -219,6 +244,11 @@ export function DeviceSelectorPanel(props: DeviceSelectorPanelProps = {}) {
         ? { onSelectionChange: props.onSelectionChange }
         : {}),
       ...(props.invokeFn !== undefined ? { invokeFn: props.invokeFn } : {}),
+      ...(props.listenFn !== undefined
+        ? {
+            captureAudioControlsListenFn: props.listenFn as CaptureAudioControlsEventListenFn,
+          }
+        : {}),
     };
     return <DeviceSelectorPanelView {...viewProps} />;
   }

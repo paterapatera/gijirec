@@ -71,6 +71,10 @@ progress {
 }
 
 .device-selector-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
   margin-bottom: 1.5rem;
 }
 
@@ -102,4 +106,36 @@ progress {
   font-size: 0.8125rem;
   line-height: 1.5;
   color: #555;
+}
+
+.capture-audio-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+}
+
+.capture-audio-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.capture-audio-meter {
+  display: inline-block;
+  min-width: 6.5rem;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  color: #333;
+}
+
+.capture-audio-gain-slider {
+  width: 8rem;
+  max-width: 100%;
+}
+
+.capture-audio-gain-hint {
+  min-height: 1.25rem;
+  font-size: 0.75rem;
+  color: #666;
 }

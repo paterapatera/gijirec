@@ -164,6 +164,18 @@ mod tests {
     }
 
     #[test]
+    fn transcribe_ingest_no_audio_source_error_payload_matches_contract() {
+        let payload = build_error_payload(CaptureError::TranscribeIngestNoAudioSource);
+        assert_eq!(payload.code, "TRANSCRIBE_INGEST_NO_AUDIO_SOURCE");
+        assert_eq!(payload.message_ja, "転写に利用できる音声源がありません。");
+        assert_eq!(
+            payload.action_ja,
+            "スピーカー出力を確認するか、マイク ingest を ON にしてください"
+        );
+        assert!(payload.recoverable);
+    }
+
+    #[test]
     fn recording_emitter_captures_phase_and_error() {
         let emitter = RecordingEventEmitter::new();
         emitter

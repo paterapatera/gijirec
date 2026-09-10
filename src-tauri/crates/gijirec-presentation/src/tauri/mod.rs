@@ -1,4 +1,5 @@
 //! Tauri presentation adapters.
+pub mod capture_audio_controls;
 pub mod device_selection;
 pub mod events;
 pub mod lifecycle;

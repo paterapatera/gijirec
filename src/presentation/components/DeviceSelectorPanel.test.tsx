@@ -62,6 +62,25 @@ const sampleError: CaptureUserError = {
   recoverable: true,
 };
 
+const defaultListenFn = async () => () => {};
+
+async function defaultInvokeFn(command: string): Promise<unknown> {
+  if (command === "get_capture_phase") {
+    return { phase: "idle", timestamp_ms: 0 };
+  }
+  if (command === "get_capture_audio_controls") {
+    return {
+      controls: {
+        mic_ingest_enabled: true,
+        manual_ingest_gain: 1.25,
+        gain_user_adjusted: false,
+      },
+      ingest_level: null,
+    };
+  }
+  return null;
+}
+
 function renderPanel(
   overrides: {
     devices?: AudioDeviceList;
@@ -71,12 +90,18 @@ function renderPanel(
     isMacos?: boolean;
     detectMacos?: () => boolean;
     invokeFn?: (command: string, args?: unknown) => Promise<unknown>;
+    listenFn?: (
+      event: string,
+      handler: (event: { payload: unknown }) => void,
+    ) => Promise<() => void>;
   } = {},
 ) {
   const props: Record<string, unknown> = {
     devices: overrides.devices ?? sampleDevices,
     selection: overrides.selection ?? nullSelection,
     captureError: overrides.captureError ?? null,
+    invokeFn: overrides.invokeFn ?? defaultInvokeFn,
+    listenFn: overrides.listenFn ?? defaultListenFn,
   };
   if (overrides.onSelectionChange !== undefined) {
     props.onSelectionChange = overrides.onSelectionChange;
@@ -86,9 +111,6 @@ function renderPanel(
   }
   if (overrides.detectMacos !== undefined) {
     props.detectMacos = overrides.detectMacos;
-  }
-  if (overrides.invokeFn !== undefined) {
-    props.invokeFn = overrides.invokeFn;
   }
   return render(<DeviceSelectorPanel {...props} />);
 }
@@ -220,7 +242,10 @@ describe("DeviceSelectorPanel", () => {
     const calls: { command: string; args?: unknown }[] = [];
     const invokeFn = async (command: string, args?: unknown) => {
       calls.push({ command, args });
-      return args;
+      if (command === "set_device_selection") {
+        return args;
+      }
+      return defaultInvokeFn(command);
     };
 
     const { getByTestId } = renderPanel({
@@ -272,6 +297,118 @@ describe("DeviceSelectorPanel", () => {
     });
 
     expect(changes).toEqual([{ microphone_id: null, speaker_id: hdmiSpeaker.id }]);
+  });
+
+  test("disables capture audio controls when capture phase is idle", async () => {
+    const invokeFn = async (command: string) => {
+      if (command === "get_capture_phase") {
+        return { phase: "idle", timestamp_ms: 0 };
+      }
+      if (command === "get_capture_audio_controls") {
+        return {
+          controls: {
+            mic_ingest_enabled: true,
+            manual_ingest_gain: 1.25,
+            gain_user_adjusted: false,
+          },
+          ingest_level: null,
+        };
+      }
+      return null;
+    };
+
+    const { getByTestId } = renderPanel({
+      detectMacos: () => false,
+      invokeFn,
+    });
+
+    await waitFor(() => {
+      expect(getByTestId("mic-ingest-switch").hasAttribute("disabled")).toBe(true);
+    });
+    expect((getByTestId("ingest-gain-slider") as HTMLInputElement).disabled).toBe(true);
+    expect(getByTestId("ingest-level-meter").textContent).toBe("—");
+  });
+
+  test("calls set_capture_audio_controls when mic switch toggled while capturing", async () => {
+    const calls: { command: string; args?: unknown }[] = [];
+    const invokeFn = async (command: string, args?: unknown) => {
+      calls.push({ command, args });
+      if (command === "get_capture_phase") {
+        return { phase: "capturing", timestamp_ms: 0 };
+      }
+      if (command === "get_capture_audio_controls") {
+        return {
+          controls: {
+            mic_ingest_enabled: true,
+            manual_ingest_gain: 1.25,
+            gain_user_adjusted: false,
+          },
+          ingest_level: { level_dbfs: -18.2, timestamp_ms: 0 },
+        };
+      }
+      if (command === "set_capture_audio_controls") {
+        return {
+          controls: {
+            mic_ingest_enabled: false,
+            manual_ingest_gain: 1.25,
+            gain_user_adjusted: false,
+          },
+          ingest_level: { level_dbfs: -18.2, timestamp_ms: 0 },
+        };
+      }
+      return null;
+    };
+
+    const { getByTestId } = renderPanel({
+      detectMacos: () => false,
+      invokeFn,
+    });
+
+    await waitFor(() => {
+      expect(getByTestId("mic-ingest-switch").hasAttribute("disabled")).toBe(false);
+    });
+
+    fireEvent.click(getByTestId("mic-ingest-switch"));
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.command === "set_capture_audio_controls")).toBe(true);
+    });
+    expect(calls).toContainEqual({
+      command: "set_capture_audio_controls",
+      args: { mic_ingest_enabled: false },
+    });
+  });
+
+  test("renders capture audio controls row in device selector panel", async () => {
+    const invokeFn = async (command: string) => {
+      if (command === "get_capture_audio_controls") {
+        return {
+          controls: {
+            mic_ingest_enabled: true,
+            manual_ingest_gain: 1.25,
+            gain_user_adjusted: false,
+          },
+          ingest_level: null,
+        };
+      }
+      if (command === "get_capture_phase") {
+        return { phase: "idle", timestamp_ms: 0 };
+      }
+      return null;
+    };
+    const listenFn = async () => () => {};
+
+    const { getByTestId } = renderPanel({
+      detectMacos: () => false,
+      invokeFn,
+      listenFn,
+    });
+
+    await waitFor(() => {
+      expect(getByTestId("capture-audio-controls-row")).toBeTruthy();
+    });
+    expect(getByTestId("mic-ingest-switch")).toBeTruthy();
+    expect(getByTestId("ingest-gain-slider")).toBeTruthy();
   });
 
   test("calls onSelectionChange when speaker selection changes", () => {

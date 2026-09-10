@@ -14,7 +14,7 @@
 
 新規 spec は `/sdd-discovery` 経由で起票し、依存順でここに `[ ]` として追記する。完了済み feature の履歴は `docs/steering/product.md` の Implementation Phasing 表を参照。
 
-- [ ] capture-audio-controls -- マイクトグル・dB メーター・手動ゲイン調整（−18〜−17 dBFS 目標）。Dependencies: transcribe-volume-normalize
+- [ ] capture-audio-controls -- マイクトグル・dB メーター・手動ゲイン調整（−18〜−17 dBFS 目標）。Dependencies: none
 
 ## 完了状態のルール
 

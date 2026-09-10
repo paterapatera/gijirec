@@ -7,6 +7,11 @@ use crate::device_selection_observability::TracingDeviceSelectionObservability;
 use gijirec_presentation::application::capture::orchestrator::{
     CaptureOrchestrator, DefaultCaptureOrchestrator, MicCapturePort, SystemAudioCapturePort,
 };
+use gijirec_presentation::application::capture_audio_controls::{
+    CaptureAudioControlsApplyPort, CaptureAudioControlsEvents, CaptureAudioControlsService,
+    CaptureAudioControlsStore, CapturePhasePort, DefaultCaptureAudioControlsService,
+    IngestSourcePort,
+};
 #[cfg(target_os = "macos")]
 use gijirec_presentation::application::device_selection::MacosSpeakerPreflight;
 use gijirec_presentation::application::device_selection::{
@@ -21,7 +26,9 @@ use gijirec_presentation::application::transcribe::model_orchestrator::{
 use gijirec_presentation::application::transcribe::orchestrator::{
     DefaultTranscribeOrchestrator, TranscribeOrchestrator,
 };
-use gijirec_presentation::domain::audio::{AudioDeviceList, CaptureError, DeviceSelection};
+use gijirec_presentation::domain::audio::{
+    AudioDeviceList, CaptureError, CapturePhase, DeviceSelection,
+};
 use gijirec_presentation::domain::transcribe::{TranscribeError, TranscriptSegmentSink};
 use gijirec_presentation::infrastructure::audio::device_enumerator::{
     AudioDeviceEnumerator, EnumeratorError,
@@ -29,15 +36,18 @@ use gijirec_presentation::infrastructure::audio::device_enumerator::{
 use gijirec_presentation::infrastructure::transcribe::{
     ModelDownloader, ModelStore, TranscribeWorker,
 };
+use gijirec_presentation::tauri::capture_audio_controls::IngestLevelSnapshotCache;
+use gijirec_presentation::tauri::lifecycle::CaptureProcessingHook;
 use gijirec_presentation::transcribe::lifecycle_hook::DEFAULT_TRANSCRIBE_STOP_TIMEOUT;
 use gijirec_presentation::transcribe::{
+    IngestLevelChangedPayload, IngestLevelEmitter, IngestLevelEventEmitter,
     ModelDownloaderPortAdapter, ModelStorePortAdapter, PcmIngestConsumer, StallClock,
     TranscribeEventEmitter, TranscribeLifecycleHook, TranscribeWorkerPortAdapter,
     TranscriptBlockBus, WhisperContextPortAdapter,
 };
 
 use crate::capture_ports::CaptureStreamHandles;
-use crate::capture_processing::CapturePipelineState;
+use crate::capture_processing::{CapturePipelineState, CaptureProcessingGate};
 use gijirec_presentation::application::device_selection::DeviceSelectionStore;
 
 /// Shared model acquisition handle used without holding the transcribe orchestrator lock.
@@ -85,6 +95,169 @@ impl DeviceSelectionEvents for DeviceSelectionEventsProxy {
 
     fn emit_devices_changed(&self, devices: &AudioDeviceList, timestamp_ms: u64) {
         self.0.emit_devices_changed(devices, timestamp_ms);
+    }
+}
+
+/// Late-bound [`CaptureAudioControlsEvents`] emitter (attached in Tauri `setup`).
+pub(crate) struct LateBoundCaptureAudioControlsEvents {
+    emitter: Mutex<Option<Arc<dyn CaptureAudioControlsEvents>>>,
+}
+
+impl LateBoundCaptureAudioControlsEvents {
+    pub(crate) fn new() -> Self {
+        Self {
+            emitter: Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn set_emitter(&self, emitter: Arc<dyn CaptureAudioControlsEvents>) {
+        *self.emitter.lock().expect("lock") = Some(emitter);
+    }
+}
+
+impl CaptureAudioControlsEvents for LateBoundCaptureAudioControlsEvents {
+    fn emit_controls_changed(
+        &self,
+        controls: &gijirec_presentation::domain::audio::CaptureAudioControls,
+    ) {
+        if let Some(emitter) = self.emitter.lock().expect("lock").as_ref() {
+            emitter.emit_controls_changed(controls);
+        }
+    }
+
+    fn emit_capture_error(&self, error: CaptureError) {
+        if let Some(emitter) = self.emitter.lock().expect("lock").as_ref() {
+            emitter.emit_capture_error(error);
+        }
+    }
+}
+
+struct CaptureAudioControlsEventsProxy(Arc<LateBoundCaptureAudioControlsEvents>);
+
+impl CaptureAudioControlsEvents for CaptureAudioControlsEventsProxy {
+    fn emit_controls_changed(
+        &self,
+        controls: &gijirec_presentation::domain::audio::CaptureAudioControls,
+    ) {
+        self.0.emit_controls_changed(controls);
+    }
+
+    fn emit_capture_error(&self, error: CaptureError) {
+        self.0.emit_capture_error(error);
+    }
+}
+
+struct OrchestratorCapturePhasePort {
+    orchestrator: Arc<Mutex<dyn CaptureOrchestrator>>,
+}
+
+impl CapturePhasePort for OrchestratorCapturePhasePort {
+    fn capture_phase(&self) -> CapturePhase {
+        self.orchestrator
+            .lock()
+            .expect("lock capture orchestrator")
+            .phase()
+    }
+}
+
+struct CaptureAudioControlsApplyPortAdapter {
+    mic_gate: CaptureProcessingGate,
+    pcm_ingest: Arc<PcmIngestConsumer>,
+}
+
+impl CaptureAudioControlsApplyPort for CaptureAudioControlsApplyPortAdapter {
+    fn set_mic_ingest_enabled(&self, enabled: bool) {
+        self.mic_gate.set_mic_ingest_enabled(enabled);
+    }
+
+    fn set_ingest_gain_multiplier(&self, gain: f32) {
+        self.pcm_ingest.set_ingest_gain_multiplier(gain);
+    }
+}
+
+struct ComposeIngestSourcePort {
+    orchestrator: Arc<Mutex<dyn CaptureOrchestrator>>,
+    pipeline: Arc<CapturePipelineState>,
+}
+
+impl IngestSourcePort for ComposeIngestSourcePort {
+    fn has_ingestable_audio_source(&self, mic_enabled: bool) -> bool {
+        if mic_enabled {
+            return true;
+        }
+        self.orchestrator.lock().expect("lock").phase() == CapturePhase::Capturing
+            && self.pipeline.processing_is_active()
+    }
+}
+
+pub(crate) struct CachingIngestLevelEventEmitter {
+    inner: Mutex<Option<Arc<dyn IngestLevelEventEmitter>>>,
+    cache: IngestLevelSnapshotCache,
+}
+
+impl CachingIngestLevelEventEmitter {
+    pub(crate) fn new(cache: IngestLevelSnapshotCache) -> Self {
+        Self {
+            inner: Mutex::new(None),
+            cache,
+        }
+    }
+
+    pub(crate) fn set_emitter(&self, emitter: Arc<dyn IngestLevelEventEmitter>) {
+        *self.inner.lock().expect("lock") = Some(emitter);
+    }
+}
+
+impl IngestLevelEventEmitter for CachingIngestLevelEventEmitter {
+    fn emit_ingest_level(&self, payload: IngestLevelChangedPayload) -> Result<(), String> {
+        *self.cache.lock().expect("lock ingest level cache") = Some(
+            gijirec_presentation::tauri::capture_audio_controls::IngestLevelSnapshot {
+                level_dbfs: payload.level_dbfs,
+                timestamp_ms: payload.timestamp_ms,
+            },
+        );
+        if let Some(emitter) = self.inner.lock().expect("lock").as_ref() {
+            emitter.emit_ingest_level(payload)?;
+        }
+        Ok(())
+    }
+}
+
+/// Applies stored session controls and ingest meter supply on capture lifecycle transitions.
+pub(crate) struct CaptureAudioControlsProcessingHook {
+    service: Arc<dyn CaptureAudioControlsService>,
+    mic_gate: CaptureProcessingGate,
+    pcm_ingest: Arc<PcmIngestConsumer>,
+    ingest_level_emitter: Arc<IngestLevelEmitter>,
+    ingest_level_cache: IngestLevelSnapshotCache,
+    ingest_source: ComposeIngestSourcePort,
+}
+
+impl CaptureAudioControlsProcessingHook {
+    fn sync_live_controls(&self) {
+        let controls = self.service.get_state().controls;
+        self.mic_gate
+            .set_mic_ingest_enabled(controls.mic_ingest_enabled);
+        self.pcm_ingest
+            .set_ingest_gain_multiplier(controls.manual_ingest_gain);
+        let supplying = self
+            .ingest_source
+            .has_ingestable_audio_source(controls.mic_ingest_enabled);
+        self.ingest_level_emitter.set_supplying(supplying);
+    }
+}
+
+impl CaptureProcessingHook for CaptureAudioControlsProcessingHook {
+    fn on_capture_started(&self) {
+        self.sync_live_controls();
+    }
+
+    fn on_capture_stopping(&self) {
+        self.ingest_level_emitter.set_supplying(false);
+        *self
+            .ingest_level_cache
+            .lock()
+            .expect("lock ingest level cache") = None;
     }
 }
 
@@ -148,6 +321,13 @@ pub(crate) struct ComposedCapture {
     pub device_selection: Arc<dyn DeviceSelectionService>,
     pub device_selection_events: Arc<LateBoundDeviceSelectionEvents>,
     pub pipeline: Arc<CapturePipelineState>,
+    pub capture_audio_controls: Arc<dyn CaptureAudioControlsService>,
+    pub capture_audio_controls_events: Arc<LateBoundCaptureAudioControlsEvents>,
+    pub capture_audio_controls_hook: Arc<CaptureAudioControlsProcessingHook>,
+    pub pcm_ingest: Arc<PcmIngestConsumer>,
+    pub ingest_level_emitter: Arc<IngestLevelEmitter>,
+    pub ingest_level_events: Arc<CachingIngestLevelEventEmitter>,
+    pub ingest_level_cache: IngestLevelSnapshotCache,
     pub transcribe_lifecycle: Arc<TranscribeLifecycleHook>,
     pub transcribe_bus: Arc<TranscriptBlockBus>,
     pub transcribe_orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
@@ -351,6 +531,14 @@ where
     let orchestrator: Arc<Mutex<dyn CaptureOrchestrator>> =
         Arc::new(Mutex::new(DefaultCaptureOrchestrator::new(mic, system)));
     let pipeline = Arc::new(CapturePipelineState::new(streams));
+    let mic_gate = pipeline.mic_gate().clone();
+    let ingest_level_cache: IngestLevelSnapshotCache = Arc::new(Mutex::new(None));
+    let ingest_level_events = Arc::new(CachingIngestLevelEventEmitter::new(Arc::clone(
+        &ingest_level_cache,
+    )));
+    let ingest_level_emitter = Arc::new(IngestLevelEmitter::new(
+        Arc::clone(&ingest_level_events) as Arc<dyn IngestLevelEventEmitter>
+    ));
 
     let device_selection_events = Arc::new(LateBoundDeviceSelectionEvents::new());
     let device_selection: Arc<dyn DeviceSelectionService> =
@@ -377,6 +565,7 @@ where
         gijirec_presentation::transcribe::observability::log_pcm_sequence_gaps(from, to);
     }));
     let pcm_ingest_rms = Arc::new(Mutex::new(PcmIngestRmsAccumulator::new()));
+    let ingest_level_rms = ingest_level_emitter.pcm_rms_callback();
     pcm_ingest.set_pcm_rms_callback(Arc::new({
         let accumulator = Arc::clone(&pcm_ingest_rms);
         move |rms| {
@@ -392,11 +581,42 @@ where
                     chunk_count,
                 );
             }
+            ingest_level_rms(rms);
         }
     }));
     let rtrb_overflow_counter = pcm_ingest.rtrb_overflow_counter();
     let pcm_ingest = Arc::new(pcm_ingest);
-    pipeline.pcm_bus.register(pcm_ingest);
+    pipeline.pcm_bus.register(Arc::clone(&pcm_ingest)
+        as Arc<dyn gijirec_presentation::domain::audio::pcm_chunk::PcmChunkConsumer>);
+
+    let capture_audio_controls_events = Arc::new(LateBoundCaptureAudioControlsEvents::new());
+    let capture_audio_controls: Arc<dyn CaptureAudioControlsService> =
+        Arc::new(DefaultCaptureAudioControlsService::new(
+            CaptureAudioControlsStore::new(),
+            OrchestratorCapturePhasePort {
+                orchestrator: Arc::clone(&orchestrator),
+            },
+            CaptureAudioControlsApplyPortAdapter {
+                mic_gate: mic_gate.clone(),
+                pcm_ingest: Arc::clone(&pcm_ingest),
+            },
+            ComposeIngestSourcePort {
+                orchestrator: Arc::clone(&orchestrator),
+                pipeline: Arc::clone(&pipeline),
+            },
+            CaptureAudioControlsEventsProxy(Arc::clone(&capture_audio_controls_events)),
+        ));
+    let capture_audio_controls_hook = Arc::new(CaptureAudioControlsProcessingHook {
+        service: Arc::clone(&capture_audio_controls),
+        mic_gate,
+        pcm_ingest: Arc::clone(&pcm_ingest),
+        ingest_level_emitter: Arc::clone(&ingest_level_emitter),
+        ingest_level_cache: Arc::clone(&ingest_level_cache),
+        ingest_source: ComposeIngestSourcePort {
+            orchestrator: Arc::clone(&orchestrator),
+            pipeline: Arc::clone(&pipeline),
+        },
+    });
 
     // 2. Set up TranscriptBlockBus with drop logging
     let block_bus = TranscriptBlockBus::new();
@@ -586,6 +806,13 @@ where
         device_selection,
         device_selection_events,
         pipeline,
+        capture_audio_controls,
+        capture_audio_controls_events,
+        capture_audio_controls_hook,
+        pcm_ingest,
+        ingest_level_emitter,
+        ingest_level_events,
+        ingest_level_cache,
         transcribe_lifecycle,
         transcribe_bus: block_bus,
         transcribe_orchestrator,
@@ -594,7 +821,7 @@ where
 }
 
 /// Builds capture stack with default dummy transcribe stack for testing.
-#[cfg(test)]
+#[cfg(debug_assertions)]
 pub(crate) fn compose_with_ports<M, S>(
     mic: M,
     system: S,
@@ -954,6 +1181,65 @@ mod tests {
             composed.orchestrator.lock().expect("lock").phase(),
             CapturePhase::Idle
         );
+    }
+
+    #[test]
+    fn compose_wires_capture_audio_controls_stack() {
+        let compose_source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/compose.rs"),
+        )
+        .expect("compose.rs must exist");
+        let production_source = compose_source
+            .split("mod tests")
+            .next()
+            .expect("compose.rs must define tests module");
+        for needle in [
+            "CaptureAudioControlsApplyPortAdapter",
+            "ComposeIngestSourcePort",
+            "CaptureAudioControlsProcessingHook",
+            "ingest_level_emitter.pcm_rms_callback",
+            "LateBoundCaptureAudioControlsEvents",
+        ] {
+            assert!(
+                production_source.contains(needle),
+                "compose production code must wire capture audio controls via {needle}"
+            );
+        }
+    }
+
+    #[test]
+    fn composed_stack_exposes_capture_audio_controls_service() {
+        let composed = build_capture_stack();
+        let state = composed.capture_audio_controls.get_state();
+        assert!(state.controls.mic_ingest_enabled);
+        assert!(composed.ingest_level_cache.lock().expect("lock").is_none());
+    }
+
+    #[test]
+    fn capture_audio_controls_hook_applies_stored_gain_on_capture_start() {
+        use gijirec_presentation::application::capture_audio_controls::CaptureAudioControlsPatch;
+        use gijirec_presentation::domain::audio::DEFAULT_INGEST_GAIN;
+
+        let composed = build_capture_stack();
+        composed
+            .capture_audio_controls
+            .apply_partial(CaptureAudioControlsPatch {
+                manual_ingest_gain: Some(2.5),
+                mic_ingest_enabled: Some(false),
+                ..Default::default()
+            })
+            .expect("apply");
+
+        assert!(
+            (composed.pcm_ingest.ingest_gain_multiplier() - DEFAULT_INGEST_GAIN).abs()
+                < f32::EPSILON,
+            "gain must not apply until capturing"
+        );
+
+        composed.capture_audio_controls_hook.on_capture_started();
+
+        assert!(!composed.pipeline.mic_gate().mic_ingest_enabled());
+        assert!((composed.pcm_ingest.ingest_gain_multiplier() - 2.5).abs() < f32::EPSILON);
     }
 
     #[test]

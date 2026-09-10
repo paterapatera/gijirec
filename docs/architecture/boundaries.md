@@ -109,6 +109,55 @@
 | `src/presentation` | `src/infrastructure`（Tauri invoke ミラー） | TS レイヤ |
 | `audio-device-selection` | whisper-transcribe 実装 | **禁止** — PCM バスのみ下流 |
 
+## capture-audio-controls ドメイン境界
+
+`docs/contracts/capture-audio-controls.md` および ADR-0014 に基づく。`audio-device-selection` UI 領域と `transcribe-volume-normalize` ingest ゲインの拡張。
+
+### Owns（この Spec が所有）
+
+| 領域 | コンポーネント / 成果物 |
+|------|-------------------------|
+| セッション内 ingest 制御状態 | `CaptureAudioControlsStore`、`CaptureAudioControls`（domain） |
+| マイク ingest ON/OFF（ミックス除外） | `capture_processing` の `mic_ingest_enabled` ゲート（OS ミュートではない） |
+| 手動 ingest ゲイン | `PcmIngestConsumer` の動的乗数（既定 1.25 + ソフトリミット 0.95） |
+| ingest 直前 dBFS メーター | `IngestLevelEmitter`（1 Hz 集約）、`capture-audio-controls://ingest-level` |
+| Tauri IPC | `get_capture_audio_controls` / `set_capture_audio_controls`、`capture-audio-controls://controls-changed` |
+| キャプチャ設定 UI | `DeviceSelectorPanel` 内 `CaptureAudioControlsRow`（トグル・メーター・ゲイン） |
+| ingest 音声源なしエラー | `TRANSCRIBE_INGEST_NO_AUDIO_SOURCE` → `audio-capture://error` |
+
+### Out of Boundary（境界外）
+
+| 領域 | 備考 |
+|------|------|
+| OS マイクミュート・システムミキサー | 要件スコープ外 |
+| キャプチャ段ミキサー正規化（−20 dBFS） | audio-capture `mixer.rs` が所有 |
+| PCM チャンク形状 | `audio-capture-pcm.md` 変更なし |
+| デバイス一覧・選択 | audio-device-selection が所有 |
+| 生 PCM のフロント配信 | **禁止** |
+| 設定ディスク永続化 | セッション内のみ（要件外） |
+| 自動 AGC | product スコープ外 |
+
+### Allowed Dependencies（許可依存）
+
+| 種別 | 依存 |
+|------|------|
+| 上流 | `audio-capture` processing / `CaptureOrchestrator`、`audio-device-selection` UI 領域 |
+| 実装接点 | `PcmIngestConsumer`（ingest ゲイン・RMS 計測）、`PcmChunkBus` |
+| 契約 | `capture-audio-controls.md`（modify）、`audio-capture-status.md`（modify — エラーコード 1 件）、`audio-device-selection.md`（reference）、`audio-capture-pcm.md`（reference） |
+| フロント | `useCaptureStatus`（phase ゲート）、`DeviceSelectorPanel` |
+| 下流 | whisper-transcribe は ingest 後 PCM のみ消費（制御 IPC に依存しない） |
+
+### 依存方向（capture-audio-controls 内）
+
+| From | To | Rule |
+|------|-----|------|
+| `gijirec-presentation` | `gijirec-application`, `gijirec-domain` | Tauri command / イベント |
+| `gijirec-application` | `gijirec-domain` | `CaptureAudioControlsService` |
+| `src/presentation` | `src/infrastructure` | TS invoke ミラー |
+| `capture-audio-controls` | transcript-editor | **禁止** |
+| ingest ゲイン | `PcmIngestConsumer` | presentation 内結線（`compose.rs`）。whisper worker は乗数を直接変更しない |
+| composition root 結線 | `compose.rs` / `lib.rs` | `CaptureAudioControlsService`・`CaptureProcessingGate`・`IngestLevelEmitter` の注入 |
+
 ## whisper-transcribe ドメイン境界
 
 `docs/contracts/whisper-transcribe-*.md` および ADR-0003 / ADR-0011 に基づく。手動性能記録は `docs/manual/whisper-transcribe/performance-results.md`。
@@ -117,7 +166,7 @@
 
 | 領域 | コンポーネント / 成果物 |
 |------|-------------------------|
-| PCM 消費と推論ウィンドウ蓄積 | `PcmIngestConsumer`（転写 ingest 固定ゲイン ×1.25 + ソフトリミット 0.95）、`rtrb::RingBuffer`、`transcribe_worker.rs` 内 `VecDeque`（非破棄） |
+| PCM 消費と推論ウィンドウ蓄積 | `PcmIngestConsumer`（ingest ゲイン適用・rtrb push）、`rtrb::RingBuffer`、`transcribe_worker.rs` 内 `VecDeque`（非破棄）。**ゲイン乗数 UI** は capture-audio-controls が所有 |
 | バッチ推論スケジュール | `transcribe_worker.rs` 内 30 秒固定サイクル（前サイクル完了起点） |
 | ローカル Whisper 推論 | `WhisperCppAdapter`（`whisper_adapter.rs`）、`TranscribeWorker` |
 | テキストブロック生成と下流供給 | `TranscriptBlock`、`BlockEmitter`、`TranscriptBlockBus`（契約: `whisper-transcribe-blocks.md`） |

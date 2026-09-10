@@ -213,3 +213,42 @@ pub mod device_selection {
         set_audio_device_ui_visible_impl(service.inner().as_ref(), visible);
     }
 }
+
+/// Capture audio controls IPC commands (`docs/contracts/capture-audio-controls.md`).
+pub mod capture_audio_controls {
+    use super::*;
+    use gijirec_presentation::application::capture_audio_controls::CaptureAudioControlsService;
+    use gijirec_presentation::tauri::capture_audio_controls::{
+        CaptureAudioControlsInvokeError, CaptureAudioControlsPatchRequest,
+        CaptureAudioControlsStateResponse, IngestLevelSnapshotCache,
+        get_capture_audio_controls_impl, set_capture_audio_controls_impl,
+    };
+
+    #[tauri::command(rename_all = "snake_case")]
+    pub fn get_capture_audio_controls(
+        service: State<'_, Arc<dyn CaptureAudioControlsService>>,
+        ingest_level_cache: State<'_, IngestLevelSnapshotCache>,
+    ) -> CaptureAudioControlsStateResponse {
+        get_capture_audio_controls_impl(service.inner().as_ref(), ingest_level_cache.inner())
+    }
+
+    #[tauri::command(rename_all = "snake_case")]
+    #[allow(clippy::too_many_arguments)] // Tauri IPC injects service, cache, and patch fields.
+    pub fn set_capture_audio_controls(
+        service: State<'_, Arc<dyn CaptureAudioControlsService>>,
+        ingest_level_cache: State<'_, IngestLevelSnapshotCache>,
+        mic_ingest_enabled: Option<bool>,
+        manual_ingest_gain: Option<f32>,
+        gain_user_adjusted: Option<bool>,
+    ) -> Result<CaptureAudioControlsStateResponse, CaptureAudioControlsInvokeError> {
+        set_capture_audio_controls_impl(
+            service.inner().as_ref(),
+            ingest_level_cache.inner(),
+            CaptureAudioControlsPatchRequest {
+                mic_ingest_enabled,
+                manual_ingest_gain,
+                gain_user_adjusted,
+            },
+        )
+    }
+}

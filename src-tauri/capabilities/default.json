@@ -12,6 +12,8 @@
     "allow-editor-commands",
     "allow-transcribe-settings-commands",
     "allow-audio-device-commands",
+    "allow-capture-audio-controls-commands",
+    "allow-listen-capture-audio-controls-events",
     "allow-listen-audio-device-events",
     "fs:default",
     "dialog:default"

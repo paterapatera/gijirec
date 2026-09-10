@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-listen-capture-audio-controls-events"
+description = "Allows the frontend to listen for capture audio controls and ingest-level events."
+[[permission.event.allow]]
+event = "capture-audio-controls://controls-changed"
+[[permission.event.allow]]
+event = "capture-audio-controls://ingest-level"

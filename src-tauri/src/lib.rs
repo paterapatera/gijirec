@@ -1,3 +1,5 @@
+#[cfg(debug_assertions)]
+pub mod capture_audio_controls_integration_support;
 pub mod capture_observability;
 mod capture_ports;
 mod capture_processing;
@@ -37,6 +39,7 @@ pub mod test_support {
 }
 
 use capture_observability::TracingCaptureObservability;
+use commands::capture_audio_controls::{get_capture_audio_controls, set_capture_audio_controls};
 use commands::device_selection::{
     get_device_selection, list_audio_devices, set_audio_device_ui_visible, set_device_selection,
 };
@@ -60,6 +63,7 @@ use gijirec_presentation::domain::audio::CapturePhase;
 use gijirec_presentation::domain::transcribe::WhisperModelVariant;
 use gijirec_presentation::domain::transcribe::{TranscribeError, TranscribePhase};
 use gijirec_presentation::editor::set_editor_observability;
+use gijirec_presentation::tauri::capture_audio_controls::TauriCaptureAudioControlsEventEmitter;
 use gijirec_presentation::tauri::lifecycle::{
     CaptureLifecycleState, CaptureProcessingHook, OsCapturePlatformSupport,
     OsUnsupportedPlatformNotifier, attach_capture_lifecycle, handle_capture_run_event,
@@ -70,6 +74,7 @@ use gijirec_presentation::transcribe::TranscribeEventEmitter;
 use gijirec_presentation::transcribe::TranscribeStatusCache;
 use gijirec_presentation::transcribe::apply_transcribe_model_variant_impl;
 use gijirec_presentation::transcribe::observability::set_transcribe_observability;
+use gijirec_presentation::transcribe::{IngestLevelEventEmitter, TauriIngestLevelEventEmitter};
 use logging::{
     ReleaseLogConfig, install_global_subscriber, parse_release_log_config_from_env, run_session_id,
     setup_release_file_logging,
@@ -330,6 +335,9 @@ pub fn run() {
     lifecycle.add_processing_hook(
         Arc::clone(&composed.transcribe_lifecycle) as Arc<dyn CaptureProcessingHook>
     );
+    lifecycle.add_processing_hook(
+        Arc::clone(&composed.capture_audio_controls_hook) as Arc<dyn CaptureProcessingHook>
+    );
 
     let transcribe_lifecycle = Arc::clone(&composed.transcribe_lifecycle);
     let transcribe_bus = Arc::clone(&composed.transcribe_bus);
@@ -337,6 +345,10 @@ pub fn run() {
     let model_orchestrator = Arc::clone(&composed.model_orchestrator);
     let transcribe_status_cache = Arc::new(TranscribeStatusCache::new());
     let status_cache_for_model_load = Arc::clone(&transcribe_status_cache);
+    let capture_audio_controls = Arc::clone(&composed.capture_audio_controls);
+    let capture_audio_controls_events = Arc::clone(&composed.capture_audio_controls_events);
+    let ingest_level_events = Arc::clone(&composed.ingest_level_events);
+    let ingest_level_cache = Arc::clone(&composed.ingest_level_cache);
     let app = attach_capture_lifecycle(
         tauri::Builder::default()
             .plugin(tauri_plugin_dialog::init())
@@ -399,6 +411,15 @@ pub fn run() {
                 handle.clone(),
             ),
         ));
+        capture_audio_controls_events.set_emitter(Arc::new(
+            TauriCaptureAudioControlsEventEmitter::new(handle.clone()),
+        ));
+        ingest_level_events
+            .set_emitter(Arc::new(TauriIngestLevelEventEmitter::new(handle.clone()))
+                as Arc<dyn IngestLevelEventEmitter>);
+
+        app.manage(capture_audio_controls);
+        app.manage(ingest_level_cache);
 
         run_capture_app_setup(&handle)?;
 
@@ -430,6 +451,8 @@ pub fn run() {
         get_device_selection,
         set_device_selection,
         set_audio_device_ui_visible,
+        get_capture_audio_controls,
+        set_capture_audio_controls,
     ])
     .manage(pipeline)
     .manage(device_selection)
