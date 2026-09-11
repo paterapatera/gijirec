@@ -183,14 +183,7 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     fn temp_store() -> (ModelStore, PathBuf) {
-        let base = std::env::temp_dir().join(format!(
-            "gijirec-model-store-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
+        let base = crate::transcribe::test_temp::unique_temp_path("gijirec-model-store");
         fs::create_dir_all(&base).expect("create temp base dir");
         (ModelStore::new(base.clone()), base)
     }
@@ -297,14 +290,7 @@ mod tests {
     }
 
     fn temp_legacy_models_dir() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "gijirec-legacy-models-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ))
+        crate::transcribe::test_temp::unique_temp_path("gijirec-legacy-models")
     }
 
     #[test]

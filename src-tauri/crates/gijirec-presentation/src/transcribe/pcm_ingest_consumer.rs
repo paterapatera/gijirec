@@ -119,24 +119,19 @@ impl PcmIngestConsumer {
     }
 
     /// Pushes normalized samples atomically; spins briefly for space, then signals backpressure.
-    #[allow(clippy::excessive_nesting)]
     fn push_normalized_samples(
         producer: &mut rtrb::Producer<f32>,
         samples: &[f32],
     ) -> Result<(), PcmConsumerError> {
         let deadline = Instant::now() + RTRB_PUSH_SPIN_BUDGET;
-        loop {
-            match producer.push_entire_slice(samples) {
-                Ok(()) => return Ok(()),
-                Err(rtrb::chunks::ChunkError::TooFewSlots(_)) => {
-                    if Instant::now() >= deadline {
-                        // Disconnected lets PcmChunkBus re-queue the chunk without counting a drop.
-                        return Err(PcmConsumerError::Disconnected);
-                    }
-                    std::thread::yield_now();
-                }
+        while Instant::now() < deadline {
+            if producer.push_entire_slice(samples).is_ok() {
+                return Ok(());
             }
+            std::thread::yield_now();
         }
+        // Disconnected lets PcmChunkBus re-queue the chunk without counting a drop.
+        Err(PcmConsumerError::Disconnected)
     }
 }
 
@@ -328,20 +323,30 @@ mod tests {
         make_test_chunk(sequence, sample)
     }
 
+    fn drain_gained_samples(cons: &mut rtrb::Consumer<f32>) -> Vec<f32> {
+        let mut gained = Vec::with_capacity(CHUNK_FRAME_COUNT as usize);
+        while cons.slots() > 0 {
+            gained.push(cons.pop().expect("pop"));
+        }
+        gained
+    }
+
+    fn ingest_and_drain(
+        consumer: &PcmIngestConsumer,
+        cons: &mut rtrb::Consumer<f32>,
+        chunk: PcmChunk,
+    ) -> Vec<f32> {
+        consumer.on_pcm_chunk(chunk).expect("ingest");
+        drain_gained_samples(cons)
+    }
+
     #[test]
     fn silence_stays_below_silence_threshold_after_gain() {
         let (prod, mut cons) = rtrb::RingBuffer::<f32>::new(4096);
         let consumer = PcmIngestConsumer::new(prod);
 
         // Pre-gain RMS well below SILENCE_RMS_THRESHOLD (0.008).
-        consumer
-            .on_pcm_chunk(constant_amplitude_chunk(1, 0.004))
-            .expect("ingest");
-
-        let mut gained = Vec::with_capacity(CHUNK_FRAME_COUNT as usize);
-        while cons.slots() > 0 {
-            gained.push(cons.pop().expect("pop"));
-        }
+        let gained = ingest_and_drain(&consumer, &mut cons, constant_amplitude_chunk(1, 0.004));
 
         assert!(
             chunk_rms(&gained) < 0.008,
@@ -356,14 +361,7 @@ mod tests {
         let consumer = PcmIngestConsumer::new(prod);
 
         // ~−20 dBFS pre-gain; ×1.25 lands near −18 to −17 dBFS target.
-        consumer
-            .on_pcm_chunk(constant_amplitude_chunk(1, 0.10))
-            .expect("ingest");
-
-        let mut gained = Vec::with_capacity(CHUNK_FRAME_COUNT as usize);
-        while cons.slots() > 0 {
-            gained.push(cons.pop().expect("pop"));
-        }
+        let gained = ingest_and_drain(&consumer, &mut cons, constant_amplitude_chunk(1, 0.10));
 
         let rms = chunk_rms(&gained);
         assert!(
@@ -409,14 +407,7 @@ mod tests {
         while cons.pop().is_ok() {}
 
         consumer.set_ingest_gain_multiplier(2.0);
-        consumer
-            .on_pcm_chunk(constant_amplitude_chunk(2, 0.10))
-            .expect("second chunk at raised gain");
-
-        let mut gained = Vec::with_capacity(CHUNK_FRAME_COUNT as usize);
-        while cons.slots() > 0 {
-            gained.push(cons.pop().expect("pop"));
-        }
+        let gained = ingest_and_drain(&consumer, &mut cons, constant_amplitude_chunk(2, 0.10));
 
         let rms = chunk_rms(&gained);
         let expected = apply_ingest_gain(0.10, 2.0);

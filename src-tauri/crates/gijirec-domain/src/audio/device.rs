@@ -139,6 +139,7 @@ impl DeviceSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::fixtures;
     use serde_json::json;
 
     #[test]
@@ -161,11 +162,7 @@ mod tests {
 
     #[test]
     fn device_selection_default_uses_os_defaults() {
-        let selection = DeviceSelection::default();
-        assert!(selection.microphone_id().is_none());
-        assert!(selection.speaker_id().is_none());
-        assert!(selection.resolves_microphone_to_os_default());
-        assert!(selection.resolves_speaker_to_os_default());
+        fixtures::assert_both_channels_resolve_to_os_default(&DeviceSelection::default());
     }
 
     #[test]

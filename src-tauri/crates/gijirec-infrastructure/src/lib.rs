@@ -2,6 +2,7 @@
 pub use gijirec_domain as domain;
 
 pub mod audio;
+pub mod thread_lifecycle;
 pub mod transcribe;
 
 pub use transcribe::{

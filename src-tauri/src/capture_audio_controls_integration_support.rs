@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 #[cfg(debug_assertions)]
 use crate::capture_ports::{SyntheticMicPort, SyntheticSystemPort};
 #[cfg(debug_assertions)]
+use crate::capture_processing::pump_rtrb_mic_sys_producers;
+#[cfg(debug_assertions)]
 use crate::compose::compose_with_ports;
 #[cfg(debug_assertions)]
 use crate::test_support::new_stream_handles;
@@ -85,11 +87,13 @@ impl CaptureAudioControlsIntegrationStack {
     }
 
     pub fn pcm_ingest(&self) -> &Arc<PcmIngestConsumer> {
-        &self.composed.pcm_ingest
+        self.composed.capture_audio_controls_hook.pcm_ingest()
     }
 
     pub fn ingest_level_emitter(&self) -> &Arc<IngestLevelEmitter> {
-        &self.composed.ingest_level_emitter
+        self.composed
+            .capture_audio_controls_hook
+            .ingest_level_emitter()
     }
 
     pub fn pcm_bus(&self) -> &Arc<gijirec_presentation::tauri::pcm_bus::PcmChunkBus> {
@@ -172,11 +176,7 @@ impl CaptureAudioControlsIntegrationStack {
         let mut sys = self.sys_prod.lock().expect("lock sys producer");
         let mic = mic.as_mut().expect("mic producer must be open");
         let sys = sys.as_mut().expect("sys producer must be open");
-        for i in 0..samples {
-            let sample = 0.2 * ((i as f32) * 0.01).sin();
-            let _ = mic.push(sample);
-            let _ = sys.push(sample * 0.5);
-        }
+        pump_rtrb_mic_sys_producers(mic, sys, samples);
     }
 
     pub fn on_capture_stopping(&self) {

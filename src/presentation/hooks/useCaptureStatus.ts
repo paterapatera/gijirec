@@ -1,7 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Dispatch, SetStateAction } from "react";
 import { useEffect, useState } from "react";
+import {
+  defaultInvoke,
+  type InjectableInvokeFn,
+} from "../../infrastructure/tauri/injectableInvoke";
 import type {
   CaptureEventListenFn,
   CapturePhaseChanged,
@@ -12,7 +15,7 @@ import { ERROR_EVENT, INITIAL_CAPTURE_STATUS, PHASE_CHANGED_EVENT } from "./capt
 
 export interface UseCaptureStatusOptions {
   listenFn?: CaptureEventListenFn;
-  invokeFn?: typeof invoke;
+  invokeFn?: InjectableInvokeFn;
 }
 
 function applyPhaseChanged(
@@ -36,7 +39,7 @@ function applyError(payload: CaptureUserError): CaptureStatusState {
 }
 
 async function syncInitialPhase(
-  invokeFn: typeof invoke,
+  invokeFn: InjectableInvokeFn,
   setStatus: Dispatch<SetStateAction<CaptureStatusState>>,
 ): Promise<void> {
   try {
@@ -77,7 +80,7 @@ async function subscribeCaptureEvents(
  * Unlistens on unmount (req 5.4 — surfaces action_ja for UI in task 6.2).
  */
 export function useCaptureStatus(options: UseCaptureStatusOptions = {}): CaptureStatusState {
-  const { listenFn = listen, invokeFn = invoke } = options;
+  const { listenFn = listen, invokeFn = defaultInvoke } = options;
   const [status, setStatus] = useState<CaptureStatusState>(INITIAL_CAPTURE_STATUS);
 
   useEffect(() => {

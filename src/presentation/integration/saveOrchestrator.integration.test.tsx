@@ -8,6 +8,7 @@ import { createRef, type RefObject, useMemo } from "react";
 import { Editor, Transforms } from "slate";
 import { toJsonlRecords } from "../../domain/transcript/export";
 import type { SaveTranscriptSessionResult } from "../../infrastructure/tauri/editorCommands";
+import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../../test-setup";
 import type { AiTranscriptEditorRef } from "../components/AiTranscriptEditor";
 import {
@@ -15,6 +16,7 @@ import {
   type HandwritingEditorRef,
 } from "../components/HandwritingEditor";
 import { TranscriptEditorView } from "../components/TranscriptEditorView";
+import { createMockListen } from "../components/transcriptEditorTestHelpers";
 import { DEFAULT_EDITOR_SETTINGS, type EditorSettings } from "../hooks/editor-settings";
 import type { TranscriptBlockAppended } from "../hooks/transcript-blocks";
 import { BLOCK_APPENDED_EVENT } from "../hooks/transcript-blocks";
@@ -30,33 +32,7 @@ afterEach(() => {
   cleanup();
 });
 
-type EventHandler = (event: { payload: unknown }) => void;
 type InvokeCall = { cmd: string; args?: Record<string, unknown> };
-
-function createMockListen() {
-  const listeners = new Map<string, EventHandler[]>();
-
-  const listenFn = async (event: string, handler: EventHandler) => {
-    const handlers = listeners.get(event) ?? [];
-    handlers.push(handler);
-    listeners.set(event, handlers);
-    return () => {
-      const list = listeners.get(event) ?? [];
-      const index = list.indexOf(handler);
-      if (index >= 0) {
-        list.splice(index, 1);
-      }
-    };
-  };
-
-  const emit = (event: string, payload: unknown) => {
-    for (const handler of listeners.get(event) ?? []) {
-      handler({ payload });
-    }
-  };
-
-  return { listenFn, emit, listeners };
-}
 
 function makeBlockAppended(
   overrides: Partial<TranscriptBlockAppended["block"]> &
@@ -135,7 +111,11 @@ function createStatefulMockInvoke(
     }
   };
 
-  return { invokeFn, calls, getPersisted: () => ({ ...persisted }) };
+  return {
+    invokeFn: asInjectableInvokeFn(invokeFn),
+    calls,
+    getPersisted: () => ({ ...persisted }),
+  };
 }
 
 function createDeferred<T>() {

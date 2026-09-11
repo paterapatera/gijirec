@@ -1,7 +1,6 @@
 //! Persists [`EditorSettings`] to `editor-settings.json` under a configurable data directory.
 
 use gijirec_domain::editor::{EditorError, EditorSettings};
-use std::path::{Path, PathBuf};
 
 const SETTINGS_FILENAME: &str = "editor-settings.json";
 
@@ -12,24 +11,9 @@ pub struct EditorSettingsPatch {
     pub export_jsonl_enabled: Option<bool>,
 }
 
-/// Reads and writes editor settings JSON under an injected base directory.
-pub struct SettingsService {
-    data_dir: PathBuf,
-}
+crate::settings_service_shell!(pub SettingsService, SETTINGS_FILENAME);
 
 impl SettingsService {
-    pub fn new(data_dir: PathBuf) -> Self {
-        Self { data_dir }
-    }
-
-    pub fn data_dir(&self) -> &Path {
-        &self.data_dir
-    }
-
-    fn settings_path(&self) -> PathBuf {
-        self.data_dir.join(SETTINGS_FILENAME)
-    }
-
     pub fn get(&self) -> Result<EditorSettings, EditorError> {
         let path = self.settings_path();
         if !path.is_file() {
@@ -42,15 +26,9 @@ impl SettingsService {
     }
 
     pub fn save(&self, settings: &EditorSettings) -> Result<(), EditorError> {
-        let path = self.settings_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| persist_error("create settings directory", err))?;
-        }
-
-        let json = serde_json::to_string_pretty(settings)
-            .map_err(|err| persist_error("serialize settings", err))?;
-        std::fs::write(&path, json).map_err(|err| persist_error("write settings", err))
+        crate::settings_file::write_json_pretty(&self.settings_path(), settings, |detail| {
+            EditorError::SettingsPersistFailed { detail }
+        })
     }
 
     pub fn update(&self, patch: EditorSettingsPatch) -> Result<EditorSettings, EditorError> {

@@ -1,7 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Dispatch, SetStateAction } from "react";
 import { useEffect, useState } from "react";
+import {
+  defaultInvoke,
+  type InjectableInvokeFn,
+} from "../../infrastructure/tauri/injectableInvoke";
 import type {
   ModelDownloadProgress,
   TranscribeEventListenFn,
@@ -18,7 +21,7 @@ import {
 
 export interface UseTranscribeStatusOptions {
   listenFn?: TranscribeEventListenFn;
-  invokeFn?: typeof invoke;
+  invokeFn?: InjectableInvokeFn;
 }
 
 function applyPhaseChanged(
@@ -65,7 +68,7 @@ interface TranscribeStatusSnapshot {
 }
 
 async function syncInitialPhase(
-  invokeFn: typeof invoke,
+  invokeFn: InjectableInvokeFn,
   setStatus: Dispatch<SetStateAction<TranscribeStatusState>>,
 ): Promise<void> {
   try {
@@ -124,7 +127,7 @@ async function subscribeTranscribeEvents(
 export function useTranscribeStatus(
   options: UseTranscribeStatusOptions = {},
 ): TranscribeStatusState {
-  const { listenFn = listen, invokeFn = invoke } = options;
+  const { listenFn = listen, invokeFn = defaultInvoke } = options;
   const [status, setStatus] = useState<TranscribeStatusState>(INITIAL_TRANSCRIBE_STATUS);
 
   useEffect(() => {

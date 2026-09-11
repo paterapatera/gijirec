@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../../test-setup";
 import type { EditorSettings } from "./editor-settings";
 import { DEFAULT_EDITOR_SETTINGS } from "./editor-settings";
@@ -43,7 +44,7 @@ function createMockInvoke(options: { initial?: EditorSettings; pickResult?: stri
   };
 
   return {
-    invokeFn,
+    invokeFn: asInjectableInvokeFn(invokeFn),
     calls,
     getPersisted: () => ({ ...persisted }),
     setPickResult: (path: string | null) => {
@@ -160,12 +161,12 @@ describe("useEditorSettings", () => {
   test("keeps previous settings when set_editor_settings rejects after pick", async () => {
     const selectedPath = "/home/user/chosen-dir";
     const mock = createMockInvoke({ pickResult: selectedPath });
-    const invokeFn = async (cmd: string, args?: Record<string, unknown>) => {
+    const invokeFn = asInjectableInvokeFn(async (cmd: string, args?: Record<string, unknown>) => {
       if (cmd === "set_editor_settings") {
         throw new Error("invalid args");
       }
       return mock.invokeFn(cmd, args);
-    };
+    });
     const { result } = renderHook(() => useEditorSettings({ invokeFn }));
 
     await waitFor(() => {

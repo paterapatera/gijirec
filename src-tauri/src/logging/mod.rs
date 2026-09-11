@@ -11,6 +11,8 @@ mod degrade;
 mod privacy;
 #[cfg(test)]
 mod smoke;
+#[cfg(test)]
+mod test_support;
 
 pub use cli::{log_flag_present, parse_release_log_config, parse_release_log_config_from_env};
 pub use persistence::{

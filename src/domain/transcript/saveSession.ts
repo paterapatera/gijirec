@@ -1,7 +1,7 @@
 import type { AiTranscriptionJsonlRecord } from "./export";
 
 /** transcript-editor-status.md contract mirror. */
-export type EditorUserErrorCode =
+type EditorUserErrorCode =
   | "SAVE_DIRECTORY_NOT_SET"
   | "SAVE_DIRECTORY_UNAVAILABLE"
   | "SAVE_DIRECTORY_CREATE_FAILED"
@@ -10,8 +10,8 @@ export type EditorUserErrorCode =
   | "SETTINGS_PERSIST_FAILED"
   | "INTERNAL";
 
-export interface EditorUserError {
-  code: EditorUserErrorCode | string;
+interface EditorUserError {
+  code: EditorUserErrorCode;
   message_ja: string;
   action_ja: string;
   recoverable: boolean;

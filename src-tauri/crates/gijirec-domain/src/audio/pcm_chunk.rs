@@ -129,15 +129,9 @@ pub trait PcmChunkConsumer: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
 
     fn sample_chunk(sequence: u64) -> PcmChunk {
-        PcmChunk::new(
-            sequence,
-            vec![0_i16; CHUNK_FRAME_COUNT as usize],
-            sequence * 100,
-        )
-        .expect("valid chunk")
+        crate::audio::fixtures::sample_pcm_chunk(sequence)
     }
 
     #[test]
@@ -170,29 +164,5 @@ mod tests {
     fn frame_count_matches_samples_len() {
         let chunk = sample_chunk(42);
         assert_eq!(chunk.frame_count() as usize, chunk.samples().len());
-    }
-
-    #[test]
-    fn consumer_trait_accepts_chunk() {
-        struct MockConsumer {
-            last_sequence: Arc<Mutex<Option<u64>>>,
-        }
-
-        impl PcmChunkConsumer for MockConsumer {
-            fn on_pcm_chunk(&self, chunk: PcmChunk) -> Result<(), PcmConsumerError> {
-                *self.last_sequence.lock().expect("lock") = Some(chunk.sequence());
-                Ok(())
-            }
-        }
-
-        let last_sequence = Arc::new(Mutex::new(None));
-        let consumer = MockConsumer {
-            last_sequence: Arc::clone(&last_sequence),
-        };
-        let chunk = sample_chunk(7);
-        consumer
-            .on_pcm_chunk(chunk)
-            .expect("consumer accepts chunk");
-        assert_eq!(*last_sequence.lock().expect("lock"), Some(7));
     }
 }

@@ -6,6 +6,7 @@ use super::persistence::{LogGuardState, ReleaseLogInitError};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -179,6 +180,24 @@ where
         )
 }
 
+fn assemble_release_file_tracing_stack<W>(
+    make_writer: ReleaseLogMakeWriter<W>,
+    worker_guard: WorkerGuard,
+    log_path: PathBuf,
+) -> ReleaseFileTracingStack<impl tracing::Subscriber + Send + Sync + SubscriberInitExt + 'static>
+where
+    W: for<'a> MakeWriter<'a> + Send + Sync + 'static,
+{
+    let persistence_failure_surfaced = make_writer.surfaced_handle();
+    let subscriber = build_file_fmt_subscriber(make_writer);
+    ReleaseFileTracingStack {
+        subscriber,
+        guard: LogGuardState::new(worker_guard),
+        log_path,
+        persistence_failure_surfaced,
+    }
+}
+
 /// Builds session files and a file fmt subscriber stack without global init.
 pub fn build_release_file_tracing_stack(
     app_data: &Path,
@@ -190,14 +209,11 @@ pub fn build_release_file_tracing_stack(
     let (non_blocking, worker_guard, log_path) =
         super::persistence::prepare_release_file_layer(app_data, run_session_id)?;
     let make_writer = ReleaseLogMakeWriter::new(non_blocking);
-    let persistence_failure_surfaced = make_writer.surfaced_handle();
-    let subscriber = build_file_fmt_subscriber(make_writer);
-    Ok(ReleaseFileTracingStack {
-        subscriber,
-        guard: LogGuardState::new(worker_guard),
+    Ok(assemble_release_file_tracing_stack(
+        make_writer,
+        worker_guard,
         log_path,
-        persistence_failure_surfaced,
-    })
+    ))
 }
 
 /// Builds a file fmt stack with a custom wrapped writer (integration tests).
@@ -217,14 +233,11 @@ where
         super::persistence::create_session_log_files(app_data, run_session_id)?;
     let (_non_blocking, worker_guard) =
         super::persistence::build_nonblocking_appender(&session_dir)?;
-    let persistence_failure_surfaced = make_writer.surfaced_handle();
-    let subscriber = build_file_fmt_subscriber(make_writer);
-    Ok(ReleaseFileTracingStack {
-        subscriber,
-        guard: LogGuardState::new(worker_guard),
+    Ok(assemble_release_file_tracing_stack(
+        make_writer,
+        worker_guard,
         log_path,
-        persistence_failure_surfaced,
-    })
+    ))
 }
 
 /// Creates session files, installs the release file fmt layer, and returns the worker guard.

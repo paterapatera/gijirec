@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Dispatch, SetStateAction } from "react";
 import { useEffect, useState } from "react";
@@ -7,6 +6,10 @@ import {
   listAudioDevices,
   setAudioDeviceUiVisible,
 } from "../../infrastructure/tauri/audioDeviceCommands";
+import {
+  defaultInvoke,
+  type InjectableInvokeFn,
+} from "../../infrastructure/tauri/injectableInvoke";
 import type {
   AudioDeviceEventListenFn,
   AudioDeviceList,
@@ -23,7 +26,7 @@ import {
 
 export interface UseAudioDevicesOptions {
   listenFn?: AudioDeviceEventListenFn;
-  invokeFn?: typeof invoke;
+  invokeFn?: InjectableInvokeFn;
 }
 
 function isAudioDeviceList(value: unknown): value is AudioDeviceList {
@@ -62,7 +65,7 @@ function applySelectionChanged(
 }
 
 async function syncInitialData(
-  invokeFn: typeof invoke,
+  invokeFn: InjectableInvokeFn,
   setState: Dispatch<SetStateAction<AudioDevicesState>>,
 ): Promise<void> {
   try {
@@ -87,7 +90,7 @@ async function syncInitialData(
   }
 }
 
-async function setUiVisible(visible: boolean, invokeFn: typeof invoke): Promise<void> {
+async function setUiVisible(visible: boolean, invokeFn: InjectableInvokeFn): Promise<void> {
   try {
     await setAudioDeviceUiVisible(visible, { invokeFn });
   } catch {
@@ -125,7 +128,7 @@ async function subscribeAudioDeviceEvents(
  * Marks UI visible while mounted so the backend can emit hot-plug updates (req 5.1).
  */
 export function useAudioDevices(options: UseAudioDevicesOptions = {}): AudioDevicesState {
-  const { listenFn = listen, invokeFn = invoke } = options;
+  const { listenFn = listen, invokeFn = defaultInvoke } = options;
   const [state, setState] = useState<AudioDevicesState>(INITIAL_AUDIO_DEVICES_STATE);
 
   useEffect(() => {

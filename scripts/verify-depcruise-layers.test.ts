@@ -5,15 +5,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const CONFIG = ".dependency-cruiser.cjs";
+const DEPCRUISE_BIN = join(
+  process.cwd(),
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "depcruise.exe" : "depcruise",
+);
 
 function depcruise(
   srcDir: string,
   cwd: string,
 ): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync("bunx", ["depcruise", srcDir, "--config", CONFIG], {
+  const result = spawnSync(DEPCRUISE_BIN, [srcDir, "--config", CONFIG], {
     cwd,
     encoding: "utf-8",
-    shell: true,
   });
   return {
     status: result.status,

@@ -20,6 +20,7 @@ import {
   setAudioDeviceUiVisible,
   setDeviceSelection,
 } from "./audioDeviceCommands";
+import { asInjectableInvokeFn } from "./injectableInvoke";
 
 type InvokeCall = {
   command: string;
@@ -32,7 +33,7 @@ function createMockInvoke<T>(response: T) {
     calls.push({ command, args });
     return response;
   };
-  return { invokeFn, calls };
+  return { invokeFn: asInjectableInvokeFn(invokeFn), calls };
 }
 
 const inputKind: AudioDeviceKind = "input";

@@ -4,6 +4,7 @@
  */
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { asInjectableInvokeFn } from "../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../test-setup";
 import { App } from "./App";
 import type { AudioDeviceInfo, AudioDeviceList, DeviceSelection } from "./hooks/audio-device-types";
@@ -118,7 +119,11 @@ function createDeviceSelectionInvoke(
     }
   };
 
-  return { invokeFn, calls, getSelection: () => ({ ...selection }) };
+  return {
+    invokeFn: asInjectableInvokeFn(invokeFn),
+    calls,
+    getSelection: () => ({ ...selection }),
+  };
 }
 
 describe("audio-device-selection E2E/UI 1: OS default on startup (req 2.5)", () => {

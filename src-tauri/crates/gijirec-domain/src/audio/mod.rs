@@ -2,6 +2,7 @@
 pub mod capture_audio_controls;
 pub mod device;
 pub mod error;
+pub mod fixtures;
 pub mod pcm_chunk;
 pub mod phase;
 

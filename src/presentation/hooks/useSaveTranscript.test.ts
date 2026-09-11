@@ -6,6 +6,7 @@ import type {
 } from "../../application/transcript/saveOrchestrator";
 import type { TranscriptBlockView } from "../../domain/transcript/types";
 import type { SaveTranscriptSessionResult } from "../../infrastructure/tauri/editorCommands";
+import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../../test-setup";
 import type { EditorSettings } from "./editor-settings";
 import { useSaveTranscript } from "./useSaveTranscript";
@@ -81,7 +82,7 @@ describe("useSaveTranscript", () => {
         aiEditor,
         settings: TEST_SETTINGS,
         sessionId: "session-success",
-        invokeFn,
+        invokeFn: asInjectableInvokeFn(invokeFn),
         showSaveResultFn,
       }),
     );
@@ -120,7 +121,7 @@ describe("useSaveTranscript", () => {
         aiEditor,
         settings: { ...TEST_SETTINGS, save_directory: null },
         sessionId: "session-not-set",
-        invokeFn,
+        invokeFn: asInjectableInvokeFn(invokeFn),
         showSaveResultFn,
       }),
     );
@@ -170,7 +171,7 @@ describe("useSaveTranscript", () => {
         aiEditor,
         settings: { ...TEST_SETTINGS, export_jsonl_enabled: true },
         sessionId: "session-partial",
-        invokeFn,
+        invokeFn: asInjectableInvokeFn(invokeFn),
         showSaveResultFn,
       }),
     );
@@ -199,7 +200,7 @@ describe("useSaveTranscript", () => {
         aiEditor,
         settings: TEST_SETTINGS,
         sessionId: "session-concurrent",
-        invokeFn,
+        invokeFn: asInjectableInvokeFn(invokeFn),
         showSaveResultFn,
       }),
     );
@@ -247,7 +248,7 @@ describe("useSaveTranscript", () => {
         aiEditor,
         settings: TEST_SETTINGS,
         sessionId: "session-invoke-reject",
-        invokeFn,
+        invokeFn: asInjectableInvokeFn(invokeFn),
         showSaveResultFn,
       }),
     );

@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../../test-setup";
 import type { CaptureEventListenFn, CapturePhaseChanged, CaptureUserError } from "./capture-status";
 import { ERROR_EVENT, INITIAL_CAPTURE_STATUS, PHASE_CHANGED_EVENT } from "./capture-status";
@@ -52,11 +53,13 @@ describe("useCaptureStatus", () => {
 
   test("syncs current phase from invoke on mount", async () => {
     const { listenFn } = createMockListen();
-    const invokeFn = async () =>
-      ({
-        phase: "capturing",
-        timestamp_ms: 9_876_543_210,
-      }) as CapturePhaseChanged;
+    const invokeFn = asInjectableInvokeFn(
+      async () =>
+        ({
+          phase: "capturing",
+          timestamp_ms: 9_876_543_210,
+        }) as CapturePhaseChanged,
+    );
 
     const { result } = renderHook(() => useCaptureStatus({ listenFn, invokeFn }));
 

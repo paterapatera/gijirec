@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { defaultInvoke, type InjectableInvokeFn } from "./injectableInvoke";
 
 /** whisper-transcribe-settings.md contract mirror. */
 export type WhisperModelVariant = "q5_0" | "q8_0" | "fp16";
@@ -41,13 +41,13 @@ export const DEFAULT_TRANSCRIBE_SETTINGS: TranscribeSettings = {
 };
 
 export interface TranscribeSettingsCommandsOptions {
-  invokeFn?: typeof invoke;
+  invokeFn?: InjectableInvokeFn;
 }
 
 export async function getTranscribeSettings(
   options: TranscribeSettingsCommandsOptions = {},
 ): Promise<GetTranscribeSettingsResponse> {
-  const { invokeFn = invoke } = options;
+  const { invokeFn = defaultInvoke } = options;
   return invokeFn<GetTranscribeSettingsResponse>("get_transcribe_settings");
 }
 
@@ -55,7 +55,7 @@ export async function setTranscribeModelVariant(
   request: SetTranscribeModelVariantRequest,
   options: TranscribeSettingsCommandsOptions = {},
 ): Promise<SetTranscribeModelVariantResponse> {
-  const { invokeFn = invoke } = options;
+  const { invokeFn = defaultInvoke } = options;
   return invokeFn<SetTranscribeModelVariantResponse>("set_transcribe_model_variant", {
     ...request,
   });

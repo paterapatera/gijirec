@@ -1,5 +1,9 @@
 //! Infrastructure audio adapters.
+#[cfg(test)]
+mod cpal_device_test_support;
+pub mod cpal_mono_input;
 pub mod device_enumerator;
+pub mod f32_ring_consumer;
 pub mod mic_capture;
 pub mod platform;
 pub mod resampler;

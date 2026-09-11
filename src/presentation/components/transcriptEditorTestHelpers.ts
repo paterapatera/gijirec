@@ -1,11 +1,17 @@
 import { act } from "@testing-library/react";
-import type { TranscriptBlockAppended } from "../hooks/transcript-blocks";
+import type { TranscribeEventListenFn } from "../hooks/transcribe-status";
+import type {
+  TranscriptBlockAppended,
+  TranscriptBlockEventListenFn,
+} from "../hooks/transcript-blocks";
 import { BLOCK_APPENDED_EVENT } from "../hooks/transcript-blocks";
 
 type EventHandler = (event: { payload: unknown }) => void;
 
+export type MockTranscriptEditorListenFn = TranscriptBlockEventListenFn & TranscribeEventListenFn;
+
 export interface MockListenHandle {
-  listenFn: (event: string, handler: EventHandler) => Promise<() => void>;
+  listenFn: MockTranscriptEditorListenFn;
   emit: (event: string, payload: unknown) => void;
   listeners: Map<string, EventHandler[]>;
 }
@@ -14,16 +20,16 @@ export interface MockListenHandle {
 export function createMockListen(): MockListenHandle {
   const listeners = new Map<string, EventHandler[]>();
 
-  const listenFn = (event: string, handler: EventHandler): Promise<() => void> => {
+  const listenFn: MockTranscriptEditorListenFn = (event, handler): Promise<() => void> => {
     const handlers = listeners.get(event) ?? [];
-    handlers.push(handler);
+    handlers.push(handler as EventHandler);
     listeners.set(event, handlers);
     return Promise.resolve(() => {
       const list = listeners.get(event) ?? [];
-      const index = list.indexOf(handler);
-      if (index >= 0) {
-        list.splice(index, 1);
-      }
+      listeners.set(
+        event,
+        list.filter((stored) => stored !== handler),
+      );
     });
   };
 

@@ -36,6 +36,21 @@ pub mod test_support {
             .start_processing()
             .expect("start_processing in integration test");
     }
+
+    pub fn stop_processing_for_recapture(pipeline: &CapturePipelineState) {
+        pipeline.stop_processing_for_recapture();
+    }
+
+    pub fn processing_is_active(pipeline: &CapturePipelineState) -> bool {
+        pipeline.processing_is_active()
+    }
+
+    pub fn set_stream_disconnect_handler(
+        pipeline: &CapturePipelineState,
+        handler: crate::capture_ports::StreamDisconnectHandler,
+    ) {
+        pipeline.set_stream_disconnect_handler(handler);
+    }
 }
 
 use capture_observability::TracingCaptureObservability;
@@ -282,15 +297,20 @@ fn start_model_load_thread(
     });
 }
 
-#[allow(clippy::too_many_arguments)] // background apply wires orchestrator, cache, and emitter.
+/// Orchestrator, cache, and emitter wired for background model-variant apply.
+pub(crate) struct TranscribeVariantApplyDeps {
+    pub transcribe_orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
+    pub cache: Arc<TranscribeStatusCache>,
+    pub emitter: Arc<dyn TranscribeEventEmitter>,
+}
+
 pub(crate) fn spawn_transcribe_model_variant_apply(
     model_orchestrator: SharedModelOrchestrator,
-    transcribe_orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
-    cache: Arc<TranscribeStatusCache>,
-    emitter: Arc<dyn TranscribeEventEmitter>,
+    deps: TranscribeVariantApplyDeps,
     model_variant: WhisperModelVariant,
 ) {
-    let reporter = ModelLoadReporter::new(cache, emitter);
+    let reporter = ModelLoadReporter::new(deps.cache, deps.emitter);
+    let transcribe_orchestrator = deps.transcribe_orchestrator;
     std::thread::spawn(move || {
         if let Err(err) = apply_transcribe_model_variant_impl(
             &model_orchestrator,
@@ -345,6 +365,7 @@ pub fn run() {
     let transcribe_orchestrator = Arc::clone(&composed.transcribe_orchestrator);
     let model_orchestrator = Arc::clone(&composed.model_orchestrator);
     let transcribe_status_cache = Arc::new(TranscribeStatusCache::new());
+    let transcribe_status_cache_for_setup = Arc::clone(&transcribe_status_cache);
     let status_cache_for_model_load = Arc::clone(&transcribe_status_cache);
     let capture_audio_controls = Arc::clone(&composed.capture_audio_controls);
     let capture_audio_controls_events = Arc::clone(&composed.capture_audio_controls_events);
@@ -419,8 +440,15 @@ pub fn run() {
             .set_emitter(Arc::new(TauriIngestLevelEventEmitter::new(handle.clone()))
                 as Arc<dyn IngestLevelEventEmitter>);
 
-        app.manage(capture_audio_controls);
-        app.manage(ingest_level_cache);
+        app.manage(commands::TranscribeVariantApplyState {
+            transcribe_orchestrator: Arc::clone(&transcribe_orchestrator),
+            cache: Arc::clone(&transcribe_status_cache_for_setup),
+            emitter: Arc::clone(&emitter),
+        });
+        app.manage(commands::CaptureAudioControlsCommandState {
+            service: capture_audio_controls,
+            ingest_level_cache,
+        });
 
         run_capture_app_setup(&handle)?;
 

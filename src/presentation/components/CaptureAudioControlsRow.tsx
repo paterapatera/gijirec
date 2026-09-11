@@ -1,8 +1,8 @@
-import type { invoke } from "@tauri-apps/api/core";
 import type { InputEvent } from "react";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { setCaptureAudioControls } from "../../infrastructure/tauri/captureAudioControlsCommands";
+import type { InjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import type {
   CaptureAudioControls,
   CaptureAudioControlsEventListenFn,
@@ -29,7 +29,7 @@ interface CaptureAudioControlsRowInjectedProps {
 }
 
 interface CaptureAudioControlsRowRuntimeProps {
-  readonly invokeFn?: typeof invoke;
+  readonly invokeFn?: InjectableInvokeFn;
   readonly listenFn?: CaptureAudioControlsEventListenFn;
   readonly capturePhase?: CapturePhase;
 }
@@ -38,7 +38,7 @@ export type CaptureAudioControlsRowProps = Partial<CaptureAudioControlsRowInject
   CaptureAudioControlsRowRuntimeProps;
 
 interface CaptureAudioControlsRowViewProps extends CaptureAudioControlsRowInjectedProps {
-  readonly invokeFn?: typeof invoke;
+  readonly invokeFn?: InjectableInvokeFn;
 }
 
 function formatDbfs(levelDbfs: number): string {

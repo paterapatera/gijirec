@@ -5,9 +5,11 @@
  */
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../../test-setup";
 import type {
   CaptureAudioControls,
+  CaptureAudioControlsEventListenFn,
   CaptureAudioControlsState,
   IngestLevelSnapshot,
 } from "../hooks/capture-audio-controls-types";
@@ -64,9 +66,9 @@ function readUiSnapshot(container: ReturnType<typeof render>): UiSnapshot {
 
 function createMockListen() {
   const listeners = new Map<string, ((event: { payload: unknown }) => void)[]>();
-  const listenFn = async (event: string, handler: (event: { payload: unknown }) => void) => {
+  const listenFn: CaptureAudioControlsEventListenFn = async (event, handler) => {
     const handlers = listeners.get(event) ?? [];
-    handlers.push(handler);
+    handlers.push(handler as (event: { payload: unknown }) => void);
     listeners.set(event, handlers);
     return () => {
       const list = listeners.get(event) ?? [];
@@ -104,7 +106,7 @@ function createConnectedInvoke(
     }
   };
 
-  return { invokeFn, calls };
+  return { invokeFn: asInjectableInvokeFn(invokeFn), calls };
 }
 
 describe("CaptureAudioControlsRow E2E/UI", () => {

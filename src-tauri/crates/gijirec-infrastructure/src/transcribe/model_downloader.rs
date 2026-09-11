@@ -4,28 +4,9 @@ use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use gijirec_domain::transcribe::TranscribeError;
+use gijirec_domain::transcribe::{ModelDownloadProgress, ModelDownloadStatus, TranscribeError};
 use reqwest::StatusCode;
 use reqwest::blocking::Client;
-
-/// Progress payload per `docs/contracts/whisper-transcribe-status.md`.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ModelDownloadProgress {
-    pub bytes_downloaded: u64,
-    pub bytes_total: Option<u64>,
-    pub percent: Option<f64>,
-    pub status: ModelDownloadStatus,
-}
-
-/// Download lifecycle status emitted through progress callbacks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelDownloadStatus {
-    Downloading,
-    Verifying,
-    Complete,
-    Failed,
-}
 
 /// Downloads whisper model files over HTTPS (TLS 1.2+) with resumable-safe cleanup.
 pub struct ModelDownloader {
@@ -68,13 +49,7 @@ impl ModelDownloader {
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent).map_err(|err| {
                 download_failed(
-                    DownloadFailureContext {
-                        part_path: &part_path,
-                        destination,
-                        downloaded: 0,
-                        total: None,
-                        on_progress: &mut on_progress,
-                    },
+                    download_failure_context(&part_path, destination, 0, None, &mut on_progress),
                     err,
                 )
             })?;
@@ -82,26 +57,14 @@ impl ModelDownloader {
 
         let response = self.client.get(url).send().map_err(|err| {
             download_failed(
-                DownloadFailureContext {
-                    part_path: &part_path,
-                    destination,
-                    downloaded: 0,
-                    total: None,
-                    on_progress: &mut on_progress,
-                },
+                download_failure_context(&part_path, destination, 0, None, &mut on_progress),
                 err,
             )
         })?;
 
         if response.status() != StatusCode::OK {
             return Err(download_failed(
-                DownloadFailureContext {
-                    part_path: &part_path,
-                    destination,
-                    downloaded: 0,
-                    total: None,
-                    on_progress: &mut on_progress,
-                },
+                download_failure_context(&part_path, destination, 0, None, &mut on_progress),
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("unexpected HTTP status {}", response.status()),
@@ -120,13 +83,13 @@ impl ModelDownloader {
 
         let mut part_file = File::create(&part_path).map_err(|err| {
             download_failed(
-                DownloadFailureContext {
-                    part_path: &part_path,
+                download_failure_context(
+                    &part_path,
                     destination,
                     downloaded,
-                    total: bytes_total,
-                    on_progress: &mut on_progress,
-                },
+                    bytes_total,
+                    &mut on_progress,
+                ),
                 err,
             )
         })?;
@@ -138,13 +101,13 @@ impl ModelDownloader {
                 Ok(r) => r,
                 Err(err) => {
                     return Err(download_failed(
-                        DownloadFailureContext {
-                            part_path: &part_path,
+                        download_failure_context(
+                            &part_path,
                             destination,
                             downloaded,
-                            total: bytes_total,
-                            on_progress: &mut on_progress,
-                        },
+                            bytes_total,
+                            &mut on_progress,
+                        ),
                         err,
                     ));
                 }
@@ -155,13 +118,13 @@ impl ModelDownloader {
 
             if let Err(err) = part_file.write_all(&buffer[..read]) {
                 return Err(download_failed(
-                    DownloadFailureContext {
-                        part_path: &part_path,
+                    download_failure_context(
+                        &part_path,
                         destination,
                         downloaded,
-                        total: bytes_total,
-                        on_progress: &mut on_progress,
-                    },
+                        bytes_total,
+                        &mut on_progress,
+                    ),
                     err,
                 ));
             }
@@ -178,13 +141,13 @@ impl ModelDownloader {
             && downloaded < total
         {
             return Err(download_failed(
-                DownloadFailureContext {
-                    part_path: &part_path,
+                download_failure_context(
+                    &part_path,
                     destination,
                     downloaded,
-                    total: bytes_total,
-                    on_progress: &mut on_progress,
-                },
+                    bytes_total,
+                    &mut on_progress,
+                ),
                 io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     format!("connection closed after {downloaded} of {total} bytes"),
@@ -194,26 +157,26 @@ impl ModelDownloader {
 
         part_file.sync_all().map_err(|err| {
             download_failed(
-                DownloadFailureContext {
-                    part_path: &part_path,
+                download_failure_context(
+                    &part_path,
                     destination,
                     downloaded,
-                    total: bytes_total,
-                    on_progress: &mut on_progress,
-                },
+                    bytes_total,
+                    &mut on_progress,
+                ),
                 err,
             )
         })?;
 
         finalize_download(&part_path, destination).map_err(|err| {
             download_failed(
-                DownloadFailureContext {
-                    part_path: &part_path,
+                download_failure_context(
+                    &part_path,
                     destination,
                     downloaded,
-                    total: bytes_total,
-                    on_progress: &mut on_progress,
-                },
+                    bytes_total,
+                    &mut on_progress,
+                ),
                 err,
             )
         })?;
@@ -279,6 +242,23 @@ struct DownloadFailureContext<'a, F> {
     downloaded: u64,
     total: Option<u64>,
     on_progress: &'a mut F,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn download_failure_context<'a, F>(
+    part_path: &'a Path,
+    destination: &'a Path,
+    downloaded: u64,
+    total: Option<u64>,
+    on_progress: &'a mut F,
+) -> DownloadFailureContext<'a, F> {
+    DownloadFailureContext {
+        part_path,
+        destination,
+        downloaded,
+        total,
+        on_progress,
+    }
 }
 
 fn download_failed<F>(
@@ -369,14 +349,8 @@ mod tests {
     }
 
     fn temp_destination(name: &str) -> (PathBuf, PathBuf) {
-        let base = std::env::temp_dir().join(format!(
-            "gijirec-model-downloader-{}-{}-{}",
-            name,
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
+        let base = crate::transcribe::test_temp::unique_temp_path(&format!(
+            "gijirec-model-downloader-{name}"
         ));
         fs::create_dir_all(&base).expect("create temp dir");
         (base.join("model.bin"), base)

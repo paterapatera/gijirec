@@ -92,7 +92,7 @@ cargo tauri build
 bun run verify
 
 # 個別実行
-# TypeScript: format / typecheck / lint / arch / knip
+# TypeScript: format / typecheck / lint / arch / knip / dup (TS threshold 0%)
 bun run check
 
 # フロント単体テスト（src/{presentation,application,domain,infrastructure}）
@@ -111,7 +111,7 @@ bun run rust:test
 | コマンド | 内容 |
 |----------|------|
 | `bun run verify` | **完成判定** — 下記の lint・テストをすべて実行 |
-| `bun run check` | Biome・ESLint・TypeScript・dependency-cruiser・knip |
+| `bun run check` | Biome・ESLint・TypeScript・dependency-cruiser・knip・jscpd（`dup:ts` + `dup:rust`） |
 | `bun run test` | フロント4レイヤ配下のテスト（キャプチャ／文字起こし／エディタ／デバイス選択） |
 | `bun run test:arch` | dependency-cruiser レイヤルールの fixture テスト |
 | `bun run rust:check` | rustfmt・cargo check・clippy・cargo bylaw・cargo machete |

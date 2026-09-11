@@ -1,6 +1,8 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { setupTestDom } from "../../test-setup";
+import type { CaptureUserError } from "../hooks/capture-status";
+import type { ModelDownloadProgress, TranscribeUserError } from "../hooks/transcribe-status";
 import { AppStatusPanels } from "./AppStatusPanels";
 
 beforeAll(() => {
@@ -14,10 +16,10 @@ afterEach(() => {
 function renderPanels(
   overrides: Partial<{
     capturePhase: string;
-    captureError: { message_ja: string; action_ja: string } | null;
+    captureError: CaptureUserError | null;
     transcribePhase: string;
-    transcribeError: { message_ja: string; action_ja: string } | null;
-    modelProgress: { status: string; percent: number | null; bytes_downloaded: number } | null;
+    transcribeError: TranscribeUserError | null;
+    modelProgress: ModelDownloadProgress | null;
   }> = {},
 ) {
   return render(
@@ -61,8 +63,18 @@ describe("AppStatusPanels horizontal layout", () => {
   test("renders progress and error panels outside phase-panels-row", () => {
     const { container } = renderPanels({
       transcribePhase: "loading_model",
-      modelProgress: { status: "downloading", percent: 42, bytes_downloaded: 1000 },
-      captureError: { message_ja: "キャプチャエラー", action_ja: "再試行してください" },
+      modelProgress: {
+        status: "downloading",
+        percent: 42,
+        bytes_downloaded: 1000,
+        bytes_total: null,
+      },
+      captureError: {
+        code: "INTERNAL",
+        message_ja: "キャプチャエラー",
+        action_ja: "再試行してください",
+        recoverable: true,
+      },
     });
 
     const row = container.querySelector(".phase-panels-row");

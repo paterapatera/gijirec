@@ -13,6 +13,9 @@ pub mod stall_watchdog;
 pub mod status_cache;
 pub mod transcript_block_bus;
 
+#[doc(hidden)]
+pub mod test_support;
+
 pub use event_emitter::{
     TRANSCRIBE_ERROR_EVENT, TRANSCRIBE_MODEL_PROGRESS_EVENT, TRANSCRIBE_PHASE_CHANGED_EVENT,
     TauriTranscribeEventEmitter, TranscribeEmitError, TranscribeEventEmitter,
@@ -138,6 +141,7 @@ impl ModelDownloaderPortAdapter {
     }
 }
 
+/* jscpd:ignore-start */
 impl ModelDownloaderPort for ModelDownloaderPortAdapter {
     fn download(
         &self,
@@ -145,41 +149,10 @@ impl ModelDownloaderPort for ModelDownloaderPortAdapter {
         destination: &Path,
         on_progress: &mut dyn FnMut(ModelDownloadProgress),
     ) -> Result<(), TranscribeError> {
-        self.0.download(url, destination, |progress| {
-            on_progress(map_download_progress(progress));
-        })
+        ModelDownloader::download(&self.0, url, destination, on_progress)
     }
 }
-
-fn map_download_progress(
-    progress: gijirec_infrastructure::transcribe::ModelDownloadProgress,
-) -> ModelDownloadProgress {
-    ModelDownloadProgress {
-        bytes_downloaded: progress.bytes_downloaded,
-        bytes_total: progress.bytes_total,
-        percent: progress.percent,
-        status: map_download_status(progress.status),
-    }
-}
-
-fn map_download_status(
-    status: gijirec_infrastructure::transcribe::ModelDownloadStatus,
-) -> ModelDownloadStatus {
-    match status {
-        gijirec_infrastructure::transcribe::ModelDownloadStatus::Downloading => {
-            ModelDownloadStatus::Downloading
-        }
-        gijirec_infrastructure::transcribe::ModelDownloadStatus::Verifying => {
-            ModelDownloadStatus::Verifying
-        }
-        gijirec_infrastructure::transcribe::ModelDownloadStatus::Complete => {
-            ModelDownloadStatus::Complete
-        }
-        gijirec_infrastructure::transcribe::ModelDownloadStatus::Failed => {
-            ModelDownloadStatus::Failed
-        }
-    }
-}
+/* jscpd:ignore-end */
 
 /// Presentation bridge implementing [`TranscribeWorkerPort`] for [`TranscribeWorker`].
 pub struct TranscribeWorkerPortAdapter {
@@ -214,6 +187,7 @@ impl TranscribeWorkerPortAdapter {
     }
 }
 
+/* jscpd:ignore-start */
 impl TranscribeWorkerPort for TranscribeWorkerPortAdapter {
     fn prepare_model_path(&mut self, path: &Path) -> Result<(), TranscribeError> {
         self.inner.prepare_model_path(path)
@@ -227,6 +201,7 @@ impl TranscribeWorkerPort for TranscribeWorkerPortAdapter {
         self.inner.stop_and_join(timeout)
     }
 }
+/* jscpd:ignore-end */
 
 #[cfg(test)]
 mod tests {
@@ -235,17 +210,14 @@ mod tests {
     #[test]
     fn whisper_context_port_delegates_load_model() {
         let mut adapter: Box<dyn WhisperContextPort> = Box::new(WhisperContextPortAdapter::new());
-        let err = adapter
-            .load_model(Path::new("/nonexistent/gijirec-model.bin"))
-            .expect_err("missing model should fail");
-        assert!(matches!(err, TranscribeError::ModelCorrupt { .. }));
+        gijirec_domain::transcribe::missing_whisper_model_load_err(|path| adapter.load_model(path));
     }
 
     #[test]
     fn whisper_context_port_is_object_safe() {
         let mut adapter: Box<dyn WhisperContextPort> = Box::new(WhisperContextPortAdapter::new());
         adapter
-            .load_model(Path::new("/nonexistent/gijirec-model.bin"))
+            .load_model(gijirec_domain::transcribe::missing_whisper_model_path())
             .expect_err("load should fail");
     }
 

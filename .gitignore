@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+.verify-agent/
 *.tsbuildinfo
 src-tauri/target/
 src-tauri/target-*/

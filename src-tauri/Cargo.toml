@@ -7,16 +7,16 @@ edition = "2024"
 version = "0.1.0"
 
 [workspace.lints.rust]
-unused = "warn"
-dead_code = "warn"
-unreachable_pub = "warn"
+unused = "deny"
+dead_code = "deny"
+unreachable_pub = "deny"
 
 [workspace.lints.clippy]
-all = "warn"
-too_many_lines = "warn"
-too_many_arguments = "warn"
-excessive_nesting = "warn"
-cognitive_complexity = "warn"
+all = "deny"
+too_many_lines = "deny"
+too_many_arguments = "deny"
+excessive_nesting = "deny"
+cognitive_complexity = "deny"
 
 [workspace.metadata.cargo-machete]
 ignored = []

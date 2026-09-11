@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -6,11 +5,15 @@ import {
   pickSaveDirectory as pickSaveDirectoryCommand,
   setEditorSettings,
 } from "../../infrastructure/tauri/editorCommands";
+import {
+  defaultInvoke,
+  type InjectableInvokeFn,
+} from "../../infrastructure/tauri/injectableInvoke";
 import type { EditorSettings } from "./editor-settings";
 import { DEFAULT_EDITOR_SETTINGS } from "./editor-settings";
 
 export interface UseEditorSettingsOptions {
-  invokeFn?: typeof invoke;
+  invokeFn?: InjectableInvokeFn;
 }
 
 export interface UseEditorSettingsResult {
@@ -21,7 +24,7 @@ export interface UseEditorSettingsResult {
 }
 
 async function loadSettings(
-  invokeFn: typeof invoke,
+  invokeFn: InjectableInvokeFn,
   setSettings: (settings: EditorSettings) => void,
   setIsLoading: (loading: boolean) => void,
 ): Promise<void> {
@@ -41,7 +44,7 @@ async function loadSettings(
  * and `pick_save_directory` (pick does not auto-persist — this hook calls set after selection).
  */
 export function useEditorSettings(options: UseEditorSettingsOptions = {}): UseEditorSettingsResult {
-  const { invokeFn = invoke } = options;
+  const { invokeFn = defaultInvoke } = options;
   const [settings, setSettings] = useState<EditorSettings>(DEFAULT_EDITOR_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
 

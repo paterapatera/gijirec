@@ -4,8 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-gijirec-application = { path = "../gijirec-application" }
-gijirec-domain = { path = "../gijirec-domain" }
+gijirec-application = { path = "../gijirec-application", features = ["test-support"] }
+gijirec-domain = { path = "../gijirec-domain", features = ["contract-test-support"] }
 gijirec-infrastructure = { path = "../gijirec-infrastructure" }
 rtrb = "0.3"
 serde = { version = "1", features = ["derive"] }

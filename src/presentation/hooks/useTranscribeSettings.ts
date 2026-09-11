@@ -1,6 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import {
+  defaultInvoke,
+  type InjectableInvokeFn,
+} from "../../infrastructure/tauri/injectableInvoke";
 import {
   DEFAULT_TRANSCRIBE_SETTINGS,
   type GetTranscribeSettingsResponse,
@@ -14,7 +17,7 @@ import {
 import { coerceLocalAvailability } from "../testInvokeHelpers";
 
 export interface UseTranscribeSettingsOptions {
-  invokeFn?: typeof invoke;
+  invokeFn?: InjectableInvokeFn;
 }
 
 export interface UseTranscribeSettingsResult {
@@ -49,7 +52,7 @@ function isTranscribeSettingsUserError(error: unknown): error is TranscribeSetti
 }
 
 async function loadTranscribeSettings(
-  invokeFn: typeof invoke,
+  invokeFn: InjectableInvokeFn,
   setSettings: (settings: TranscribeSettings) => void,
   setLocalAvailability: (availability: LocalAvailability) => void,
   setIsLoading: (loading: boolean) => void,
@@ -72,7 +75,7 @@ async function loadTranscribeSettings(
 export function useTranscribeSettings(
   options: UseTranscribeSettingsOptions = {},
 ): UseTranscribeSettingsResult {
-  const { invokeFn = invoke } = options;
+  const { invokeFn = defaultInvoke } = options;
   const [settings, setSettings] = useState<TranscribeSettings>(DEFAULT_TRANSCRIBE_SETTINGS);
   const [localAvailability, setLocalAvailability] = useState<LocalAvailability>(
     DEFAULT_LOCAL_AVAILABILITY,

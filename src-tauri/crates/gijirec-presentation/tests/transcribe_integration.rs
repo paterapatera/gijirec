@@ -1,277 +1,41 @@
 //! Integration tests (Testing Strategy Integration 1-5) for whisper-transcribe.
 
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    },
+};
 
 use gijirec_presentation::application::transcribe::block_emitter::BlockEmitter;
-use gijirec_presentation::application::transcribe::model_orchestrator::{
-    ModelOrchestrator, ModelOrchestratorConfig,
-};
+use gijirec_presentation::application::transcribe::model_orchestrator::ModelOrchestrator;
 use gijirec_presentation::application::transcribe::orchestrator::{
     DefaultTranscribeOrchestrator, TranscribeOrchestrator,
 };
 use gijirec_presentation::application::transcribe::ports::{
-    ModelDownloadProgress, ModelDownloadStatus, ModelDownloaderPort, ModelStorePort,
-    TranscribeWorkerPort, WhisperContextPort,
+    ModelDownloadProgress, ModelDownloadStatus, ModelStorePort,
 };
 use gijirec_presentation::domain::audio::CapturePhase;
-use gijirec_presentation::domain::audio::pcm_chunk::{CHUNK_FRAME_COUNT, PcmChunk};
+use gijirec_presentation::domain::audio::pcm_chunk::CHUNK_FRAME_COUNT;
 use gijirec_presentation::domain::transcribe::{
-    TranscribeError, TranscribeErrorCode, TranscribePhase, TranscriptBlock,
-    TranscriptBlockConsumer, TranscriptConsumerError, TranscriptSegmentSink,
-    UserFacingTranscribeError,
+    TranscribeError, TranscribeErrorCode, TranscribePhase, TranscriptBlock, TranscriptSegmentSink,
 };
-use gijirec_presentation::infrastructure::transcribe::{
-    ModelPathLoadable, SegmentEngine, TranscribeWorker, WhisperSegment,
-};
+use gijirec_presentation::infrastructure::transcribe::{TranscribeWorker, WhisperSegment};
 use gijirec_presentation::tauri::pcm_bus::PcmChunkBus;
-use gijirec_presentation::transcribe::{
-    PcmIngestConsumer, TranscribeEmitError, TranscribeEventEmitter, TranscribeLifecycleHook,
-    TranscribeWorkerPortAdapter, TranscriptBlockBus,
+use gijirec_presentation::transcribe::test_support::{
+    BATCH_WINDOW_SAMPLES, CHUNKS_PER_BATCH, CountingBatchEngine, DeferredPlaceholderStore,
+    FailOnceBatchEngine, InjectableMockStore, MockEngineWorkerPort, MockFailingDownloader,
+    MockSegmentEngine, MockSequenceDownloader, MockStore, MockWorkerPort, NoopTranscribeWorkerPort,
+    NoopWhisperContextPort, RecordingTranscribeEventEmitter, assert_contiguous_sequences,
+    create_temp_model_file, publish_speech_pcm, recording_block_bus, setup_batch_pipeline,
+    spawn_transcribe_worker, stop_batch_worker_and_take_blocks, wait_for_block_count,
+    wait_for_blocks,
 };
-
-// ==========================================
-// Mocks & Helpers
-// ==========================================
-
-#[derive(Default)]
-struct RecordingBlockConsumer {
-    blocks: Arc<Mutex<Vec<TranscriptBlock>>>,
-}
-
-impl TranscriptBlockConsumer for RecordingBlockConsumer {
-    fn on_block_appended(&self, block: TranscriptBlock) -> Result<(), TranscriptConsumerError> {
-        self.blocks.lock().unwrap().push(block);
-        Ok(())
-    }
-}
-
-#[derive(Default)]
-struct RecordingTranscribeEventEmitter {
-    phases: Arc<Mutex<Vec<TranscribePhase>>>,
-    errors: Arc<Mutex<Vec<TranscribeError>>>,
-    user_errors: Arc<Mutex<Vec<UserFacingTranscribeError>>>,
-    progress: Arc<Mutex<Vec<ModelDownloadProgress>>>,
-}
-
-impl TranscribeEventEmitter for RecordingTranscribeEventEmitter {
-    fn emit_phase_changed(&self, phase: TranscribePhase) -> Result<(), TranscribeEmitError> {
-        self.phases.lock().unwrap().push(phase);
-        Ok(())
-    }
-
-    fn emit_model_progress(
-        &self,
-        progress: &ModelDownloadProgress,
-    ) -> Result<(), TranscribeEmitError> {
-        self.progress.lock().unwrap().push(progress.clone());
-        Ok(())
-    }
-
-    fn emit_error(&self, error: &TranscribeError) -> Result<(), TranscribeEmitError> {
-        self.errors.lock().unwrap().push(error.clone());
-        self.user_errors
-            .lock()
-            .unwrap()
-            .push(error.to_user_facing());
-        Ok(())
-    }
-}
-
-struct MockStore {
-    path: PathBuf,
-}
-
-impl ModelStorePort for MockStore {
-    fn model_path(&self) -> PathBuf {
-        self.path.clone()
-    }
-    fn model_path_for(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> PathBuf {
-        self.path.clone()
-    }
-    fn verify(&self, _expected: Option<&str>) -> Result<PathBuf, TranscribeError> {
-        Ok(self.path.clone())
-    }
-    fn verify_variant(
-        &self,
-        _variant: gijirec_domain::transcribe::WhisperModelVariant,
-        _expected: Option<&str>,
-    ) -> Result<PathBuf, TranscribeError> {
-        Ok(self.path.clone())
-    }
-    fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
-        true
-    }
-}
-
-struct MockSequenceDownloader {
-    progress_series: Vec<ModelDownloadProgress>,
-}
-
-impl ModelDownloaderPort for MockSequenceDownloader {
-    fn download(
-        &self,
-        _url: &str,
-        _dest: &std::path::Path,
-        on_progress: &mut dyn FnMut(ModelDownloadProgress),
-    ) -> Result<(), TranscribeError> {
-        for p in &self.progress_series {
-            on_progress(p.clone());
-        }
-        Ok(())
-    }
-}
-
-struct MockSegmentEngine {
-    segments: Vec<WhisperSegment>,
-    inference_called: Arc<AtomicBool>,
-}
-
-impl SegmentEngine for MockSegmentEngine {
-    fn transcribe_pcm(&mut self, _pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
-        self.inference_called.store(true, Ordering::SeqCst);
-        Ok(self.segments.clone())
-    }
-
-    fn is_loaded(&self) -> bool {
-        true
-    }
-}
-
-impl ModelPathLoadable for MockSegmentEngine {
-    fn load_from_path_if_needed(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
-        Ok(())
-    }
-}
-
-/// One 30 s batch window at 16 kHz (matches production worker constant).
-const BATCH_WINDOW_SAMPLES: usize = 480_000;
-
-const CHUNKS_PER_BATCH: usize = BATCH_WINDOW_SAMPLES / CHUNK_FRAME_COUNT as usize;
-
-struct CountingBatchEngine {
-    cycle: Arc<AtomicUsize>,
-}
-
-impl SegmentEngine for CountingBatchEngine {
-    fn transcribe_pcm(&mut self, _pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
-        let cycle = self.cycle.fetch_add(1, Ordering::SeqCst);
-        Ok(vec![WhisperSegment {
-            text: format!("batch-{cycle}"),
-            start_ms: cycle as i64 * 1_000,
-            end_ms: cycle as i64 * 1_000 + 500,
-        }])
-    }
-
-    fn is_loaded(&self) -> bool {
-        true
-    }
-}
-
-impl ModelPathLoadable for CountingBatchEngine {
-    fn load_from_path_if_needed(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
-        Ok(())
-    }
-}
-
-struct FailOnceBatchEngine {
-    attempts: Arc<AtomicU64>,
-}
-
-impl SegmentEngine for FailOnceBatchEngine {
-    fn transcribe_pcm(&mut self, pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
-        if pcm.is_empty() {
-            return Ok(Vec::new());
-        }
-        let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
-        if attempt == 0 {
-            return Err(TranscribeError::InferenceFailed {
-                detail: "injected batch failure".to_string(),
-            });
-        }
-        Ok(vec![WhisperSegment {
-            text: "recovered-batch".to_string(),
-            start_ms: 0,
-            end_ms: 500,
-        }])
-    }
-
-    fn is_loaded(&self) -> bool {
-        true
-    }
-}
-
-impl ModelPathLoadable for FailOnceBatchEngine {
-    fn load_from_path_if_needed(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
-        Ok(())
-    }
-}
-
-struct BatchPipelineFixture<E: SegmentEngine + ModelPathLoadable + 'static> {
-    pcm_bus: PcmChunkBus,
-    recorded_blocks: Arc<Mutex<Vec<TranscriptBlock>>>,
-    worker: TranscribeWorker<E>,
-}
-
-fn setup_batch_pipeline<E: SegmentEngine + ModelPathLoadable + 'static>(
-    engine: E,
-) -> BatchPipelineFixture<E> {
-    let pcm_bus = PcmChunkBus::new();
-    let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(BATCH_WINDOW_SAMPLES * 3);
-    pcm_bus.register(Arc::new(PcmIngestConsumer::new(pcm_prod)));
-
-    let block_consumer = Arc::new(RecordingBlockConsumer::default());
-    let recorded_blocks = Arc::clone(&block_consumer.blocks);
-    let block_bus = Arc::new(TranscriptBlockBus::new());
-    block_bus.register(block_consumer);
-    let emitter = Arc::new(BlockEmitter::new(block_bus));
-
-    let mut worker =
-        TranscribeWorker::with_engine(emitter as Arc<dyn TranscriptSegmentSink>, engine);
-    worker.attach_pcm_consumer(pcm_cons);
-    worker.spawn().expect("spawn batch worker");
-
-    BatchPipelineFixture {
-        pcm_bus,
-        recorded_blocks,
-        worker,
-    }
-}
-
-fn publish_speech_pcm(pcm_bus: &PcmChunkBus, chunk_count: usize, start_seq: u64) {
-    for offset in 0..chunk_count {
-        let seq = start_seq + offset as u64;
-        let samples = vec![16384_i16; CHUNK_FRAME_COUNT as usize];
-        let chunk = PcmChunk::new(seq, samples, seq * 100).expect("chunk");
-        pcm_bus.publish(chunk);
-    }
-}
-
-fn wait_for_block_count(recorded_blocks: &Arc<Mutex<Vec<TranscriptBlock>>>, expected: usize) {
-    for _ in 0..100 {
-        if recorded_blocks.lock().unwrap().len() >= expected {
-            return;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    panic!(
-        "expected at least {expected} blocks, got {}",
-        recorded_blocks.lock().unwrap().len()
-    );
-}
-
-fn assert_contiguous_sequences(blocks: &[TranscriptBlock]) {
-    for (index, block) in blocks.iter().enumerate() {
-        assert_eq!(
-            block.sequence,
-            (index + 1) as u64,
-            "sequence must increase by one without gaps"
-        );
-    }
-}
+use gijirec_presentation::transcribe::{
+    PcmIngestConsumer, TranscribeEventEmitter, TranscribeLifecycleHook, TranscribeWorkerPort,
+    TranscribeWorkerPortAdapter,
+};
 
 // ==========================================
 // Integration Tests 1 - 5
@@ -280,11 +44,7 @@ fn assert_contiguous_sequences(blocks: &[TranscriptBlock]) {
 /// Integration Test 1: 合成 PCM → ブロック emit（モック WhisperAdapter / ワーカー結合） (req 2.1, 3.3)
 #[test]
 fn integration_1_synthetic_pcm_to_block_emission() {
-    let bus = Arc::new(TranscriptBlockBus::new());
-    let consumer = Arc::new(RecordingBlockConsumer::default());
-    let recorded_blocks = Arc::clone(&consumer.blocks);
-    bus.register(consumer);
-
+    let (bus, recorded_blocks) = recording_block_bus();
     let emitter = Arc::new(BlockEmitter::new(bus));
     let (mut prod, cons) = rtrb::RingBuffer::<f32>::new(160_000);
 
@@ -297,13 +57,8 @@ fn integration_1_synthetic_pcm_to_block_emission() {
         inference_called: Arc::new(AtomicBool::new(false)),
     };
 
-    let mut worker =
-        TranscribeWorker::with_engine(emitter as Arc<dyn TranscriptSegmentSink>, engine);
-    worker.attach_pcm_consumer(cons);
+    let mut worker = spawn_transcribe_worker(emitter, engine, cons);
 
-    worker.spawn().expect("worker spawn");
-
-    // Feed a 2 s utterance followed by trailing-silence padding so endpointing closes the window
     for _ in 0..32_000 {
         let _ = prod.push(0.25);
     }
@@ -311,16 +66,15 @@ fn integration_1_synthetic_pcm_to_block_emission() {
         let _ = prod.push(0.0);
     }
 
-    // Wait briefly for worker inference loop to pick up and process window
     for _ in 0..50 {
         if !recorded_blocks.lock().unwrap().is_empty() {
             break;
         }
-        thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     worker
-        .stop_and_join(Duration::from_secs(2))
+        .stop_and_join(std::time::Duration::from_secs(2))
         .expect("worker stop");
 
     let blocks = recorded_blocks.lock().unwrap();
@@ -339,7 +93,7 @@ fn integration_2_pcm_chunk_bus_delivers_to_ingest_consumer_and_worker_consumes()
 
     pcm_bus.register(ingest_consumer);
 
-    let bus = Arc::new(TranscriptBlockBus::new());
+    let (bus, _) = recording_block_bus();
     let emitter = Arc::new(BlockEmitter::new(bus));
     let inference_called = Arc::new(AtomicBool::new(false));
 
@@ -352,64 +106,29 @@ fn integration_2_pcm_chunk_bus_delivers_to_ingest_consumer_and_worker_consumes()
         inference_called: Arc::clone(&inference_called),
     };
 
-    let mut worker =
-        TranscribeWorker::with_engine(emitter as Arc<dyn TranscriptSegmentSink>, engine);
-    worker.attach_pcm_consumer(cons);
-    worker.spawn().expect("worker spawn");
+    let mut worker = spawn_transcribe_worker(emitter, engine, cons);
 
-    // Batch worker triggers immediately once 480k speech samples are buffered.
     publish_speech_pcm(&pcm_bus, CHUNKS_PER_BATCH, 0);
 
-    // Wait for worker to consume and invoke engine
     for _ in 0..100 {
         if inference_called.load(Ordering::SeqCst) {
             break;
         }
-        thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     assert!(inference_called.load(Ordering::SeqCst));
     worker
-        .stop_and_join(Duration::from_secs(2))
+        .stop_and_join(std::time::Duration::from_secs(2))
         .expect("worker stop");
 }
 
 /// Integration Test 3: キャプチャ error イベント → 推論停止 → capturing 復帰で再開 (req 8.3)
 #[test]
 fn integration_3_capture_error_stops_transcribe_and_resumes_on_capturing() {
-    #[derive(Clone)]
-    struct MockWorkerPort {
-        spawns: Arc<AtomicUsize>,
-        stops: Arc<AtomicUsize>,
-    }
-    impl TranscribeWorkerPort for MockWorkerPort {
-        fn prepare_model_path(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-
-        fn spawn(&mut self) -> Result<(), TranscribeError> {
-            self.spawns.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-        fn stop_and_join(&mut self, _timeout: Duration) -> Result<(), TranscribeError> {
-            self.stops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-    }
-
-    struct MockCtx;
-    impl WhisperContextPort for MockCtx {
-        fn load_model(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-    }
-
     let worker_spawns = Arc::new(AtomicUsize::new(0));
     let worker_stops = Arc::new(AtomicUsize::new(0));
-    let worker = MockWorkerPort {
-        spawns: Arc::clone(&worker_spawns),
-        stops: Arc::clone(&worker_stops),
-    };
+    let worker = MockWorkerPort::new(Arc::clone(&worker_spawns), Arc::clone(&worker_stops));
 
     let store = MockStore {
         path: PathBuf::from("/tmp/model.bin"),
@@ -417,23 +136,15 @@ fn integration_3_capture_error_stops_transcribe_and_resumes_on_capturing() {
     let downloader = MockSequenceDownloader {
         progress_series: vec![],
     };
-    let model_orch = Arc::new(Mutex::new(ModelOrchestrator::new(
-        store,
-        downloader,
-        ModelOrchestratorConfig {
-            model_url: "http://example.com/model.bin".to_string(),
-            expected_sha256: "hash".to_string(),
-        },
-    )));
+    let model_orch = Arc::new(Mutex::new(ModelOrchestrator::new(store, downloader)));
 
     let orch = Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
         worker,
-        MockCtx,
+        NoopWhisperContextPort,
         model_orch,
-        Duration::from_millis(500),
+        std::time::Duration::from_millis(500),
     )));
 
-    // Ensure model so phase becomes Ready
     orch.lock().unwrap().ensure_model().expect("ensure model");
     assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
 
@@ -443,18 +154,15 @@ fn integration_3_capture_error_stops_transcribe_and_resumes_on_capturing() {
         emitter.clone(),
     );
 
-    // 1. Capture starts -> Transcribing
     hook.on_capture_phase_changed(CapturePhase::Capturing);
     assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
     assert_eq!(worker_spawns.load(Ordering::SeqCst), 1);
 
-    // 2. Capture error -> Pause / Ready
     hook.on_capture_phase_changed(CapturePhase::Error);
     assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
     assert_eq!(worker_stops.load(Ordering::SeqCst), 1);
     assert!(!emitter.errors.lock().unwrap().is_empty());
 
-    // 3. Capture resumes -> Transcribing
     hook.on_capture_phase_changed(CapturePhase::Capturing);
     assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
     assert_eq!(worker_spawns.load(Ordering::SeqCst), 2);
@@ -463,7 +171,7 @@ fn integration_3_capture_error_stops_transcribe_and_resumes_on_capturing() {
 /// Integration Test 4: stop → ワーカー join 完了、バックグラウンドスレッド残存なし (req 6.5)
 #[test]
 fn integration_4_stop_joins_transcribe_worker_completely() {
-    let bus = Arc::new(TranscriptBlockBus::new());
+    let (bus, _) = recording_block_bus();
     let emitter = Arc::new(BlockEmitter::new(bus));
     let (mut prod, cons) = rtrb::RingBuffer::<f32>::new(4096);
 
@@ -474,21 +182,18 @@ fn integration_4_stop_joins_transcribe_worker_completely() {
     adapter.spawn().expect("spawn worker thread");
     assert!(adapter.inner().is_active());
 
-    // Push some audio data into ringbuffer
     for _ in 0..1600 {
         let _ = prod.push(0.0);
     }
 
-    // Stop and join worker
-    let res = adapter.stop_and_join(Duration::from_secs(2));
+    let res = adapter.stop_and_join(std::time::Duration::from_secs(2));
     assert!(res.is_ok());
     assert!(
         !adapter.inner().is_active(),
         "worker thread must not remain active after stop"
     );
 
-    // Repeated stops should also succeed smoothly
-    let res2 = adapter.stop_and_join(Duration::from_millis(100));
+    let res2 = adapter.stop_and_join(std::time::Duration::from_millis(100));
     assert!(res2.is_ok());
 }
 
@@ -552,27 +257,6 @@ fn integration_5_model_download_progress_event_series() {
         }
     }
 
-    struct MockCtx;
-    impl WhisperContextPort for MockCtx {
-        fn load_model(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-    }
-
-    struct DummyWorker;
-    impl TranscribeWorkerPort for DummyWorker {
-        fn prepare_model_path(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-
-        fn spawn(&mut self) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-        fn stop_and_join(&mut self, _timeout: Duration) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-    }
-
     let store = MockStoreMissingThenOk {
         calls: AtomicUsize::new(0),
         path: PathBuf::from("/tmp/model.bin"),
@@ -580,23 +264,16 @@ fn integration_5_model_download_progress_event_series() {
     let downloader = MockSequenceDownloader {
         progress_series: progress_events,
     };
-    let model_orch = Arc::new(Mutex::new(ModelOrchestrator::new(
-        store,
-        downloader,
-        ModelOrchestratorConfig {
-            model_url: "https://example.com/model.bin".to_string(),
-            expected_sha256: "hash".to_string(),
-        },
-    )));
+    let model_orch = Arc::new(Mutex::new(ModelOrchestrator::new(store, downloader)));
 
     let emitter = Arc::new(RecordingTranscribeEventEmitter::default());
     let emitter_for_cb = emitter.clone();
 
     let mut orch = DefaultTranscribeOrchestrator::new(
-        DummyWorker,
-        MockCtx,
+        NoopTranscribeWorkerPort,
+        NoopWhisperContextPort,
         model_orch,
-        Duration::from_millis(500),
+        std::time::Duration::from_millis(500),
     );
 
     orch.set_model_progress_callback(Box::new(move |p| {
@@ -606,7 +283,7 @@ fn integration_5_model_download_progress_event_series() {
     orch.ensure_model().expect("ensure model");
 
     let received_progress = emitter.progress.lock().unwrap().clone();
-    assert_eq!(received_progress.len(), 4); // 3 download + 1 verifying
+    assert_eq!(received_progress.len(), 4);
     assert_eq!(received_progress[0].percent, Some(0.0));
     assert_eq!(received_progress[1].percent, Some(50.0));
     assert_eq!(received_progress[2].percent, Some(100.0));
@@ -617,123 +294,6 @@ fn integration_5_model_download_progress_event_series() {
 // Integration Tests 6 - 8 (fix-release-transcribe task 6.2)
 // ==========================================
 
-struct InjectableMockStore {
-    state: Mutex<InjectableMockStoreState>,
-}
-
-struct InjectableMockStoreState {
-    injected: bool,
-    path: PathBuf,
-}
-
-impl InjectableMockStore {
-    fn deferred() -> Self {
-        Self {
-            state: Mutex::new(InjectableMockStoreState {
-                injected: false,
-                path: PathBuf::from("/deferred/unavailable/model.bin"),
-            }),
-        }
-    }
-}
-
-impl ModelStorePort for InjectableMockStore {
-    fn model_path(&self) -> PathBuf {
-        self.state
-            .lock()
-            .expect("lock injectable store")
-            .path
-            .clone()
-    }
-
-    fn model_path_for(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> PathBuf {
-        self.model_path()
-    }
-
-    fn verify(&self, _expected: Option<&str>) -> Result<PathBuf, TranscribeError> {
-        let state = self.state.lock().expect("lock injectable store");
-        if !state.injected {
-            return Err(TranscribeError::ModelNotFound {
-                detail: "deferred until app_data_dir inject".to_string(),
-            });
-        }
-        Ok(state.path.clone())
-    }
-
-    fn verify_variant(
-        &self,
-        _variant: gijirec_domain::transcribe::WhisperModelVariant,
-        expected: Option<&str>,
-    ) -> Result<PathBuf, TranscribeError> {
-        self.verify(expected)
-    }
-
-    fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
-        false
-    }
-}
-
-struct DeferredPlaceholderStore;
-
-impl ModelStorePort for DeferredPlaceholderStore {
-    fn model_path(&self) -> PathBuf {
-        PathBuf::from("/deferred/unavailable/model.bin")
-    }
-
-    fn model_path_for(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> PathBuf {
-        self.model_path()
-    }
-
-    fn verify(&self, _expected: Option<&str>) -> Result<PathBuf, TranscribeError> {
-        Err(TranscribeError::ModelNotFound {
-            detail: "deferred until app_data_dir inject".to_string(),
-        })
-    }
-
-    fn verify_variant(
-        &self,
-        _variant: gijirec_domain::transcribe::WhisperModelVariant,
-        expected: Option<&str>,
-    ) -> Result<PathBuf, TranscribeError> {
-        self.verify(expected)
-    }
-
-    fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
-        false
-    }
-}
-
-struct MockFailingDownloader;
-
-impl ModelDownloaderPort for MockFailingDownloader {
-    fn download(
-        &self,
-        _url: &str,
-        _dest: &std::path::Path,
-        _on_progress: &mut dyn FnMut(ModelDownloadProgress),
-    ) -> Result<(), TranscribeError> {
-        Err(TranscribeError::ModelDownloadFailed {
-            detail: "network unreachable".to_string(),
-        })
-    }
-}
-
-fn create_temp_model_file() -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "gijirec-integration-model-{}.bin",
-        std::process::id()
-    ));
-    std::fs::write(&path, b"mock-whisper-model").expect("write temp model file");
-    path
-}
-
-fn default_model_config() -> ModelOrchestratorConfig {
-    ModelOrchestratorConfig {
-        model_url: "https://example.com/model.bin".to_string(),
-        expected_sha256: "hash".to_string(),
-    }
-}
-
 type TestModelOrchestrator =
     Arc<Mutex<ModelOrchestrator<InjectableMockStore, MockSequenceDownloader>>>;
 
@@ -742,16 +302,10 @@ fn inject_valid_model_orchestrator(
     model_path: PathBuf,
 ) {
     *model_orchestrator.lock().expect("lock model orchestrator") = ModelOrchestrator::new(
-        InjectableMockStore {
-            state: Mutex::new(InjectableMockStoreState {
-                injected: true,
-                path: model_path,
-            }),
-        },
+        InjectableMockStore::injected(model_path),
         MockSequenceDownloader {
             progress_series: vec![],
         },
-        default_model_config(),
     );
 }
 
@@ -763,37 +317,15 @@ struct WiredTranscribePipeline {
     model_orchestrator: TestModelOrchestrator,
 }
 
-struct MockEngineWorkerPort {
-    inner: TranscribeWorker<MockSegmentEngine>,
-}
-
-impl TranscribeWorkerPort for MockEngineWorkerPort {
-    fn prepare_model_path(&mut self, path: &std::path::Path) -> Result<(), TranscribeError> {
-        self.inner.prepare_model_path(path)
-    }
-
-    fn spawn(&mut self) -> Result<(), TranscribeError> {
-        self.inner.spawn()
-    }
-
-    fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError> {
-        self.inner.stop_and_join(timeout)
-    }
-}
-
 fn build_deferred_transcribe_pipeline(segments: Vec<WhisperSegment>) -> WiredTranscribePipeline {
     let model_orchestrator = Arc::new(Mutex::new(ModelOrchestrator::new(
         InjectableMockStore::deferred(),
         MockSequenceDownloader {
             progress_series: vec![],
         },
-        default_model_config(),
     )));
 
-    let block_consumer = Arc::new(RecordingBlockConsumer::default());
-    let recorded_blocks = Arc::clone(&block_consumer.blocks);
-    let block_bus = Arc::new(TranscriptBlockBus::new());
-    block_bus.register(block_consumer);
+    let (block_bus, recorded_blocks) = recording_block_bus();
 
     let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(BATCH_WINDOW_SAMPLES * 3);
     let pcm_ingest = Arc::new(PcmIngestConsumer::new(pcm_prod));
@@ -812,9 +344,9 @@ fn build_deferred_transcribe_pipeline(segments: Vec<WhisperSegment>) -> WiredTra
 
     let orchestrator = Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
         worker_port,
-        PipelineMockCtx,
+        NoopWhisperContextPort,
         Arc::clone(&model_orchestrator),
-        Duration::from_millis(500),
+        std::time::Duration::from_millis(500),
     )));
 
     let lifecycle = TranscribeLifecycleHook::new(
@@ -831,10 +363,6 @@ fn build_deferred_transcribe_pipeline(segments: Vec<WhisperSegment>) -> WiredTra
     }
 }
 
-fn wait_for_blocks(recorded_blocks: &Arc<Mutex<Vec<TranscriptBlock>>>) {
-    wait_for_block_count(recorded_blocks, 1);
-}
-
 fn report_model_load_error(
     orchestrator: &Arc<Mutex<dyn TranscribeOrchestrator>>,
     emitter: &RecordingTranscribeEventEmitter,
@@ -844,14 +372,6 @@ fn report_model_load_error(
     orch.fail_model_loading();
     let _ = emitter.emit_error(&err);
     let _ = emitter.emit_phase_changed(orch.phase());
-}
-
-struct PipelineMockCtx;
-
-impl WhisperContextPort for PipelineMockCtx {
-    fn load_model(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
-        Ok(())
-    }
 }
 
 /// Integration Test 6: deferred inject → ready → transcribing → block delivery (req 1.1, 1.2, 2.3, 5.3)
@@ -908,33 +428,17 @@ fn integration_6_deferred_inject_ready_transcribing_block_delivery() {
 /// Integration Test 7: model fetch failure surfaces error phase and user-facing copy (req 4.1, 4.2)
 #[test]
 fn integration_7_model_fetch_failure_surfaces_user_facing_error() {
-    struct DummyWorker;
-    impl TranscribeWorkerPort for DummyWorker {
-        fn prepare_model_path(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-
-        fn spawn(&mut self) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-
-        fn stop_and_join(&mut self, _timeout: Duration) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-    }
-
     let model_orchestrator = Arc::new(Mutex::new(ModelOrchestrator::new(
         DeferredPlaceholderStore,
         MockFailingDownloader,
-        default_model_config(),
     )));
 
     let orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>> =
         Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
-            DummyWorker,
-            PipelineMockCtx,
+            NoopTranscribeWorkerPort,
+            NoopWhisperContextPort,
             Arc::clone(&model_orchestrator),
-            Duration::from_millis(500),
+            std::time::Duration::from_millis(500),
         )));
 
     let emitter = Arc::new(RecordingTranscribeEventEmitter::default());
@@ -1038,12 +542,11 @@ fn integration_batch_pipeline_emits_contiguous_sequences() {
     publish_speech_pcm(&fixture.pcm_bus, CHUNKS_PER_BATCH * 2, 0);
     wait_for_block_count(&fixture.recorded_blocks, 2);
 
-    fixture
-        .worker
-        .stop_and_join(Duration::from_secs(2))
-        .expect("stop batch worker");
-
-    let blocks = fixture.recorded_blocks.lock().unwrap().clone();
+    let blocks = stop_batch_worker_and_take_blocks(
+        &mut fixture.worker,
+        &fixture.recorded_blocks,
+        "stop batch worker",
+    );
     assert_eq!(blocks.len(), 2);
     assert_contiguous_sequences(&blocks);
     assert_eq!(blocks[0].text, "batch-0");
@@ -1065,12 +568,11 @@ fn integration_batch_pipeline_continues_after_inference_failure() {
     );
     wait_for_block_count(&fixture.recorded_blocks, 1);
 
-    fixture
-        .worker
-        .stop_and_join(Duration::from_secs(2))
-        .expect("stop batch worker");
-
-    let blocks = fixture.recorded_blocks.lock().unwrap().clone();
+    let blocks = stop_batch_worker_and_take_blocks(
+        &mut fixture.worker,
+        &fixture.recorded_blocks,
+        "stop batch worker",
+    );
     assert!(
         !blocks.is_empty(),
         "recovery cycle must emit at least one block"
@@ -1096,18 +598,17 @@ fn integration_batch_pipeline_stop_flush_processes_remaining_pcm() {
     });
 
     publish_speech_pcm(&fixture.pcm_bus, CHUNKS_PER_BATCH / 6, 0);
-    thread::sleep(Duration::from_millis(50));
+    std::thread::sleep(std::time::Duration::from_millis(50));
     assert!(
         fixture.recorded_blocks.lock().unwrap().is_empty(),
         "partial buffer must not infer before stop flush"
     );
 
-    fixture
-        .worker
-        .stop_and_join(Duration::from_secs(2))
-        .expect("stop batch worker");
-
-    let blocks = fixture.recorded_blocks.lock().unwrap().clone();
+    let blocks = stop_batch_worker_and_take_blocks(
+        &mut fixture.worker,
+        &fixture.recorded_blocks,
+        "stop batch worker",
+    );
     assert_eq!(
         blocks.len(),
         1,

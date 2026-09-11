@@ -130,7 +130,10 @@ impl<R: Runtime> TauriCaptureAudioControlsEventEmitter<R> {
 
 impl<R: Runtime> CaptureAudioControlsEvents for TauriCaptureAudioControlsEventEmitter<R> {
     fn emit_controls_changed(&self, controls: &CaptureAudioControls) {
-        let payload = build_controls_changed_payload(controls, current_timestamp_ms());
+        let payload = build_controls_changed_payload(
+            controls,
+            crate::tauri::invoke_contract::current_timestamp_ms(),
+        );
         let _ = self.app.emit(CONTROLS_CHANGED_EVENT, payload);
     }
 
@@ -168,21 +171,13 @@ impl CaptureAudioControlsEvents for RecordingCaptureAudioControlsEventEmitter {
             .expect("lock")
             .push(build_controls_changed_payload(
                 controls,
-                current_timestamp_ms(),
+                crate::tauri::invoke_contract::current_timestamp_ms(),
             ));
     }
 
     fn emit_capture_error(&self, error: CaptureError) {
         self.errors.lock().expect("lock").push(error);
     }
-}
-
-fn current_timestamp_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 /// Returns current session capture audio controls and optional ingest meter.
@@ -210,37 +205,24 @@ pub fn set_capture_audio_controls_impl(
 mod tests {
     use super::*;
     use crate::application::capture_audio_controls::{
-        CaptureAudioControlsErrorCode, CaptureAudioControlsStore, CapturePhasePort,
+        CaptureAudioControlsErrorCode, CaptureAudioControlsStore,
         DefaultCaptureAudioControlsService, NoopCaptureAudioControlsApplyPort,
-        NoopIngestSourcePort,
+        NoopCapturePhasePort, NoopIngestSourcePort,
     };
-    use gijirec_domain::audio::{
-        CapturePhase, DEFAULT_INGEST_GAIN, MAX_INGEST_GAIN, MIN_INGEST_GAIN,
-    };
-
-    struct MockPhasePort {
-        phase: CapturePhase,
-    }
-
-    impl CapturePhasePort for MockPhasePort {
-        fn capture_phase(&self) -> CapturePhase {
-            self.phase
-        }
-    }
+    use gijirec_domain::audio::{DEFAULT_INGEST_GAIN, MAX_INGEST_GAIN, MIN_INGEST_GAIN};
+    use gijirec_domain::user_facing_contract_tests::assert_invoke_error_serializes_contract_shape;
 
     fn test_service(
         events: RecordingCaptureAudioControlsEventEmitter,
     ) -> DefaultCaptureAudioControlsService<
-        MockPhasePort,
+        NoopCapturePhasePort,
         NoopCaptureAudioControlsApplyPort,
         NoopIngestSourcePort,
         RecordingCaptureAudioControlsEventEmitter,
     > {
         DefaultCaptureAudioControlsService::new(
             CaptureAudioControlsStore::new(),
-            MockPhasePort {
-                phase: CapturePhase::Idle,
-            },
+            NoopCapturePhasePort,
             NoopCaptureAudioControlsApplyPort,
             NoopIngestSourcePort,
             events,
@@ -249,6 +231,36 @@ mod tests {
 
     fn empty_cache() -> IngestLevelSnapshotCache {
         Arc::new(Mutex::new(None))
+    }
+
+    type TestHarness = (
+        DefaultCaptureAudioControlsService<
+            NoopCapturePhasePort,
+            NoopCaptureAudioControlsApplyPort,
+            NoopIngestSourcePort,
+            RecordingCaptureAudioControlsEventEmitter,
+        >,
+        IngestLevelSnapshotCache,
+        RecordingCaptureAudioControlsEventEmitter,
+    );
+
+    fn test_harness() -> TestHarness {
+        let emitter = RecordingCaptureAudioControlsEventEmitter::new();
+        let service = test_service(emitter.clone());
+        (service, empty_cache(), emitter)
+    }
+
+    fn apply_patch(
+        service: &DefaultCaptureAudioControlsService<
+            NoopCapturePhasePort,
+            NoopCaptureAudioControlsApplyPort,
+            NoopIngestSourcePort,
+            RecordingCaptureAudioControlsEventEmitter,
+        >,
+        cache: &IngestLevelSnapshotCache,
+        patch: CaptureAudioControlsPatchRequest,
+    ) -> CaptureAudioControlsStateResponse {
+        set_capture_audio_controls_impl(service, cache, patch).expect("set")
     }
 
     #[test]
@@ -266,19 +278,16 @@ mod tests {
 
     #[test]
     fn set_applies_partial_mic_toggle() {
-        let emitter = RecordingCaptureAudioControlsEventEmitter::new();
-        let service = test_service(emitter.clone());
-        let cache = empty_cache();
+        let (service, cache, _emitter) = test_harness();
 
-        let response = set_capture_audio_controls_impl(
+        let response = apply_patch(
             &service,
             &cache,
             CaptureAudioControlsPatchRequest {
                 mic_ingest_enabled: Some(false),
                 ..Default::default()
             },
-        )
-        .expect("set");
+        );
 
         assert!(!response.controls.mic_ingest_enabled);
         assert_eq!(response.controls.manual_ingest_gain, DEFAULT_INGEST_GAIN);
@@ -323,19 +332,16 @@ mod tests {
 
     #[test]
     fn set_emits_controls_changed_on_success() {
-        let emitter = RecordingCaptureAudioControlsEventEmitter::new();
-        let service = test_service(emitter.clone());
-        let cache = empty_cache();
+        let (service, cache, emitter) = test_harness();
 
-        let response = set_capture_audio_controls_impl(
+        let response = apply_patch(
             &service,
             &cache,
             CaptureAudioControlsPatchRequest {
                 manual_ingest_gain: Some(2.0),
                 ..Default::default()
             },
-        )
-        .expect("set");
+        );
 
         let events = emitter.controls_changed();
         assert_eq!(events.len(), 1);
@@ -369,15 +375,7 @@ mod tests {
             message_ja: "ゲインの値が不正です".to_string(),
             action_ja: "スライダーを中央付近に戻して再度お試しください".to_string(),
         });
-        let json = serde_json::to_value(&err).expect("serialize");
-        let obj = json.as_object().expect("object");
-        assert_eq!(
-            obj.get("code").and_then(|v| v.as_str()),
-            Some("INVALID_GAIN")
-        );
-        assert!(obj.get("message_ja").and_then(|v| v.as_str()).is_some());
-        assert!(obj.get("action_ja").and_then(|v| v.as_str()).is_some());
-        assert_eq!(obj.len(), 3);
+        assert_invoke_error_serializes_contract_shape(&err, "INVALID_GAIN");
     }
 
     #[test]

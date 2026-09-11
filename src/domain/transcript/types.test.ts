@@ -93,6 +93,8 @@ describe("Slate transcript types", () => {
     const element: TranscriptBlockElement = {
       type: "transcript-block",
       blockId: "block-1",
+      sequence: 1,
+      upstreamText: "plainlocked",
       startTimestampMs: 500,
       language: "ja",
       children: [plainText, lockedText],

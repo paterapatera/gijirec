@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   type AiTranscriptEditorSnapshotPort,
@@ -10,6 +9,10 @@ import {
   type SaveTranscriptSessionResult,
   saveTranscriptSession,
 } from "../../infrastructure/tauri/editorCommands";
+import {
+  defaultInvoke,
+  type InjectableInvokeFn,
+} from "../../infrastructure/tauri/injectableInvoke";
 import { showSaveResult } from "../components/SaveResultToast";
 import type { EditorSettings } from "./editor-settings";
 
@@ -18,7 +21,7 @@ export interface UseSaveTranscriptOptions {
   aiEditor: AiTranscriptEditorSnapshotPort | null;
   settings: EditorSettings;
   sessionId: string;
-  invokeFn?: typeof invoke;
+  invokeFn?: InjectableInvokeFn;
   showSaveResultFn?: (result: SaveTranscriptSessionResult) => void;
 }
 
@@ -49,7 +52,7 @@ export function useSaveTranscript(options: UseSaveTranscriptOptions): UseSaveTra
     aiEditor,
     settings,
     sessionId,
-    invokeFn = invoke,
+    invokeFn = defaultInvoke,
     showSaveResultFn = showSaveResult,
   } = options;
 
@@ -77,12 +80,12 @@ export function useSaveTranscript(options: UseSaveTranscriptOptions): UseSaveTra
     }
 
     try {
-      const result = (await orchestratorRef.current.saveSession({
+      const result = await orchestratorRef.current.saveSession({
         handwritingEditor,
         aiEditor,
         settings,
         sessionId,
-      })) as SaveTranscriptSessionResult;
+      });
 
       if (isInitiator) {
         showSaveResultFn(result);

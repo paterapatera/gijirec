@@ -8,7 +8,7 @@ use std::path::PathBuf;
 /// Must match `#[ignore = "..."]` on `opens_sck_audio_on_hardware` in macos_sck_audio.rs.
 const SCK_HARDWARE_IGNORE: &str = "CI: requires macOS 13+ ScreenCaptureKit screen recording permission; run with --ignored on local hardware";
 
-/// Must match `#[ignore = "..."]` on `integration_mic_and_sck_reach_capturing_on_hardware` in compose.rs.
+/// Must match `#[ignore = "..."]` on `integration_mic_and_sck_reach_capturing_on_hardware` in compose/tests.rs.
 const DUAL_CAPTURE_HARDWARE_IGNORE: &str = "CI: requires macOS mic permission and ScreenCaptureKit screen recording permission; run with --ignored on local hardware";
 
 fn repo_root() -> PathBuf {
@@ -22,8 +22,9 @@ fn read_macos_sck_source() -> String {
     .expect("macos_sck_audio.rs must exist")
 }
 
-fn read_compose_source() -> String {
-    std::fs::read_to_string(repo_root().join("src/compose.rs")).expect("compose.rs must exist")
+fn read_compose_tests_source() -> String {
+    std::fs::read_to_string(repo_root().join("src/compose/tests.rs"))
+        .expect("compose/tests.rs must exist")
 }
 
 #[test]
@@ -50,10 +51,10 @@ fn integration_test_2_documents_macos_sck_ci_skip_in_source() {
         "skip reason must be shared via MACOS_SCK_HARDWARE_SKIP const"
     );
 
-    let compose = read_compose_source();
+    let compose = read_compose_tests_source();
     assert!(
         compose.contains("integration_mic_and_sck_reach_capturing_on_hardware"),
-        "compose must define mic+SCK hardware integration test"
+        "compose/tests.rs must define mic+SCK hardware integration test"
     );
     assert!(
         compose.contains("ScreenCaptureKit"),
@@ -61,7 +62,7 @@ fn integration_test_2_documents_macos_sck_ci_skip_in_source() {
     );
     assert!(
         compose.contains(DUAL_CAPTURE_HARDWARE_IGNORE),
-        "dual-capture hardware ignore reason must be documented in compose.rs"
+        "dual-capture hardware ignore reason must be documented in compose/tests.rs"
     );
     assert!(
         compose.contains(&format!(r#"#[ignore = "{DUAL_CAPTURE_HARDWARE_IGNORE}"]"#)),

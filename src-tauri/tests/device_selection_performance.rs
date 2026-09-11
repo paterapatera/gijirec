@@ -3,7 +3,7 @@
 
 use gijirec_lib::test_support::{
     CapturePipelineState, SyntheticMicPort, SyntheticSystemPort, new_pipeline, new_stream_handles,
-    start_processing,
+    processing_is_active, start_processing, stop_processing_for_recapture,
 };
 use gijirec_presentation::application::capture::orchestrator::{
     CaptureOrchestrator, DefaultCaptureOrchestrator,
@@ -79,7 +79,7 @@ impl CaptureSelectionPort for RecaptureCaptureSelectionAdapter {
     }
 
     fn restart_with_selection(&mut self, selection: &DeviceSelection) -> Result<(), CaptureError> {
-        self.pipeline.stop_processing_for_recapture();
+        stop_processing_for_recapture(&self.pipeline);
         let result = self
             .orchestrator
             .lock()
@@ -161,7 +161,7 @@ impl PerformanceStack {
         assert_eq!(orch.phase(), CapturePhase::Capturing);
         drop(orch);
         self.pipeline.on_capture_started();
-        assert!(self.pipeline.processing_is_active());
+        assert!(processing_is_active(&self.pipeline));
     }
 }
 
@@ -188,7 +188,7 @@ fn performance_selection_restart_under_two_seconds_mock_ports() {
         "phase must recover to capturing"
     );
     assert!(
-        stack.pipeline.processing_is_active(),
+        processing_is_active(&stack.pipeline),
         "processing thread must restart after recapture"
     );
     let wall_elapsed_ms = wall_started.elapsed().as_millis();

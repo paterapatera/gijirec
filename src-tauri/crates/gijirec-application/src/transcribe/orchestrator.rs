@@ -1,5 +1,6 @@
 //! Transcribe lifecycle orchestration with phase gates and upstream capture coupling.
 
+use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -36,7 +37,7 @@ pub trait TranscribeOrchestrator: Send {
 pub struct DefaultTranscribeOrchestrator<W, C, S, D> {
     phase: TranscribePhase,
     worker: W,
-    context: C,
+    _context: PhantomData<C>,
     model_orchestrator: Arc<Mutex<ModelOrchestrator<S, D>>>,
     stop_timeout: Duration,
     upstream_capturing: bool,
@@ -46,14 +47,14 @@ pub struct DefaultTranscribeOrchestrator<W, C, S, D> {
 impl<W: TranscribeWorkerPort, C, S, D> DefaultTranscribeOrchestrator<W, C, S, D> {
     pub fn new(
         worker: W,
-        context: C,
+        _context: C,
         model_orchestrator: Arc<Mutex<ModelOrchestrator<S, D>>>,
         stop_timeout: Duration,
     ) -> Self {
         Self {
             phase: TranscribePhase::Idle,
             worker,
-            context,
+            _context: PhantomData,
             model_orchestrator,
             stop_timeout,
             upstream_capturing: false,
@@ -93,13 +94,23 @@ impl<W: TranscribeWorkerPort, C, S, D> DefaultTranscribeOrchestrator<W, C, S, D>
     }
 }
 
-impl<W: TranscribeWorkerPort, C: WhisperContextPort, S, D>
-    DefaultTranscribeOrchestrator<W, C, S, D>
+impl<W: TranscribeWorkerPort, C: WhisperContextPort, S, D> DefaultTranscribeOrchestrator<W, C, S, D>
+where
+    S: super::ports::ModelStorePort,
+    D: super::ports::ModelDownloaderPort,
 {
     fn ensure_model_loaded(&mut self, model_path: &Path) -> Result<(), TranscribeError> {
         // Defer whisper context creation to the worker thread (whisper.cpp is not thread-safe
         // across load/inference when the context is moved between threads).
-        match self.worker.prepare_model_path(model_path) {
+        let result = self.worker.prepare_model_path(model_path);
+        self.apply_worker_prepare_result(result)
+    }
+
+    fn apply_worker_prepare_result(
+        &mut self,
+        result: Result<(), TranscribeError>,
+    ) -> Result<(), TranscribeError> {
+        match result {
             Ok(()) => {
                 self.transition_to(TranscribePhase::Ready)?;
                 Ok(())
@@ -110,13 +121,16 @@ impl<W: TranscribeWorkerPort, C: WhisperContextPort, S, D>
             }
         }
     }
-}
 
-impl<W: TranscribeWorkerPort, C: WhisperContextPort, S, D> DefaultTranscribeOrchestrator<W, C, S, D>
-where
-    S: super::ports::ModelStorePort,
-    D: super::ports::ModelDownloaderPort,
-{
+    fn halt_transcribing_on_upstream_stop(&mut self) {
+        self.upstream_capturing = false;
+        if self.phase != TranscribePhase::Transcribing {
+            return;
+        }
+        self.stop_worker();
+        self.phase = TranscribePhase::Ready;
+    }
+
     pub fn ensure_model_inner(&mut self) -> Result<(), TranscribeError> {
         self.begin_model_loading()?;
         let acquire_result = {
@@ -154,13 +168,7 @@ where
     }
 
     pub fn finish_model_loading_inner(&mut self, model_path: &Path) -> Result<(), TranscribeError> {
-        match self.ensure_model_loaded(model_path) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                self.phase = TranscribePhase::Error;
-                Err(err)
-            }
-        }
+        self.ensure_model_loaded(model_path)
     }
 }
 
@@ -239,21 +247,11 @@ where
     }
 
     fn pause_capture(&mut self) {
-        self.upstream_capturing = false;
-        if self.phase != TranscribePhase::Transcribing {
-            return;
-        }
-        self.stop_worker();
-        self.phase = TranscribePhase::Ready;
+        self.halt_transcribing_on_upstream_stop();
     }
 
     fn on_upstream_capture_error(&mut self) {
-        self.upstream_capturing = false;
-        if self.phase != TranscribePhase::Transcribing {
-            return;
-        }
-        self.stop_worker();
-        self.phase = TranscribePhase::Ready;
+        self.halt_transcribing_on_upstream_stop();
     }
 
     fn set_upstream_capturing(&mut self, capturing: bool) {
@@ -278,12 +276,9 @@ mod tests {
     use gijirec_domain::transcribe::TranscribeErrorCode;
 
     use super::*;
-    use crate::transcribe::model_orchestrator::ModelOrchestratorConfig;
-    use crate::transcribe::ports::{ModelDownloadProgress, ModelDownloaderPort, ModelStorePort};
-
-    const EXPECTED_SHA: &str = "abc123";
-    const MODEL_URL: &str = "https://example.test/model.bin";
-
+    use crate::transcribe::test_support::{
+        NoopModelDownloader, QueueModelStore, default_model_path,
+    };
     struct MockWorker {
         prepare_calls: AtomicUsize,
         spawn_calls: AtomicUsize,
@@ -392,16 +387,6 @@ mod tests {
                 .load_calls
                 .load(Ordering::SeqCst)
         }
-
-        fn loaded_path(context: &Arc<Mutex<Self>>) -> Option<PathBuf> {
-            context
-                .lock()
-                .expect("lock")
-                .last_path
-                .lock()
-                .expect("lock")
-                .clone()
-        }
     }
 
     impl WhisperContextPort for Arc<Mutex<MockContext>> {
@@ -413,86 +398,21 @@ mod tests {
         }
     }
 
-    struct MockStore {
-        model_path: PathBuf,
-        verify_results: Mutex<Vec<Result<PathBuf, TranscribeError>>>,
-    }
-
-    impl MockStore {
-        fn with_valid_model() -> Arc<Self> {
-            let model_path = PathBuf::from("/tmp/models/model.bin");
-            Arc::new(Self {
-                model_path: model_path.clone(),
-                verify_results: Mutex::new(vec![Ok(model_path)]),
-            })
-        }
-    }
-
-    impl ModelStorePort for Arc<MockStore> {
-        fn model_path(&self) -> PathBuf {
-            self.model_path.clone()
-        }
-
-        fn model_path_for(
-            &self,
-            _variant: gijirec_domain::transcribe::WhisperModelVariant,
-        ) -> PathBuf {
-            self.model_path()
-        }
-
-        fn verify(&self, _expected_sha256: Option<&str>) -> Result<PathBuf, TranscribeError> {
-            let mut results = self.verify_results.lock().expect("lock");
-            if results.is_empty() {
-                panic!("unexpected verify call");
-            }
-            results.remove(0)
-        }
-
-        fn verify_variant(
-            &self,
-            _variant: gijirec_domain::transcribe::WhisperModelVariant,
-            expected_sha256: Option<&str>,
-        ) -> Result<PathBuf, TranscribeError> {
-            self.verify(expected_sha256)
-        }
-
-        fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
-            false
-        }
-    }
-
-    struct MockDownloader;
-
-    impl ModelDownloaderPort for MockDownloader {
-        fn download(
-            &self,
-            _url: &str,
-            _destination: &Path,
-            _on_progress: &mut dyn FnMut(ModelDownloadProgress),
-        ) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-    }
-
     type TestOrchestrator = DefaultTranscribeOrchestrator<
         Arc<Mutex<MockWorker>>,
         Arc<Mutex<MockContext>>,
-        Arc<MockStore>,
-        MockDownloader,
+        Arc<QueueModelStore>,
+        NoopModelDownloader,
     >;
 
     fn orchestrator(
         worker: Arc<Mutex<MockWorker>>,
         context: Arc<Mutex<MockContext>>,
-        store: Arc<MockStore>,
+        store: Arc<QueueModelStore>,
     ) -> TestOrchestrator {
         let model_orchestrator = Arc::new(Mutex::new(ModelOrchestrator::new(
             store,
-            MockDownloader,
-            ModelOrchestratorConfig {
-                model_url: MODEL_URL.to_string(),
-                expected_sha256: EXPECTED_SHA.to_string(),
-            },
+            NoopModelDownloader,
         )));
         DefaultTranscribeOrchestrator::new(
             worker,
@@ -502,15 +422,24 @@ mod tests {
         )
     }
 
-    fn ready_orchestrator() -> (
+    fn fresh_orchestrator() -> (
         TestOrchestrator,
         Arc<Mutex<MockWorker>>,
         Arc<Mutex<MockContext>>,
     ) {
         let worker = MockWorker::new();
         let context = MockContext::new();
-        let store = MockStore::with_valid_model();
-        let mut orch = orchestrator(Arc::clone(&worker), Arc::clone(&context), store);
+        let store = QueueModelStore::with_valid_model();
+        let orch = orchestrator(Arc::clone(&worker), Arc::clone(&context), store);
+        (orch, worker, context)
+    }
+
+    fn ready_orchestrator() -> (
+        TestOrchestrator,
+        Arc<Mutex<MockWorker>>,
+        Arc<Mutex<MockContext>>,
+    ) {
+        let (mut orch, worker, context) = fresh_orchestrator();
         orch.ensure_model().expect("ensure model");
         assert_eq!(orch.phase(), TranscribePhase::Ready);
         (orch, worker, context)
@@ -518,10 +447,7 @@ mod tests {
 
     #[test]
     fn ensure_model_transitions_to_ready_and_prepares_worker_model_path() {
-        let worker = MockWorker::new();
-        let context = MockContext::new();
-        let store = MockStore::with_valid_model();
-        let mut orch = orchestrator(Arc::clone(&worker), Arc::clone(&context), store);
+        let (mut orch, worker, context) = fresh_orchestrator();
 
         assert_eq!(orch.phase(), TranscribePhase::Idle);
         orch.ensure_model().expect("ensure model");
@@ -530,7 +456,7 @@ mod tests {
         assert_eq!(MockWorker::prepare_call_count(&worker), 1);
         assert_eq!(
             MockWorker::prepared_path(&worker),
-            Some(PathBuf::from("/tmp/models/model.bin"))
+            Some(default_model_path())
         );
         assert_eq!(MockContext::load_call_count(&context), 0);
         assert_eq!(MockWorker::spawn_call_count(&worker), 0);
@@ -540,22 +466,20 @@ mod tests {
     fn ensure_model_failure_transitions_to_error() {
         let worker = MockWorker::new();
         let context = MockContext::new();
-        let model_path = PathBuf::from("/tmp/models/model.bin");
-        let store = Arc::new(MockStore {
-            model_path,
-            verify_results: Mutex::new(vec![
+        let store = QueueModelStore::without_verify_tracking(
+            default_model_path(),
+            vec![
                 Err(TranscribeError::ModelNotFound {
                     detail: "missing".to_string(),
                 }),
                 Err(TranscribeError::ModelNotFound {
                     detail: "still missing after download".to_string(),
                 }),
-            ]),
-        });
+            ],
+        );
         let model_orchestrator = Arc::new(Mutex::new(ModelOrchestrator::new(
             Arc::clone(&store),
-            MockDownloader,
-            ModelOrchestratorConfig::fp16_from_catalog(),
+            NoopModelDownloader,
         )));
         let mut orch = DefaultTranscribeOrchestrator::new(
             worker,
@@ -586,10 +510,7 @@ mod tests {
 
     #[test]
     fn start_from_non_ready_fails_without_spawning_worker() {
-        let worker = MockWorker::new();
-        let context = MockContext::new();
-        let store = MockStore::with_valid_model();
-        let mut orch = orchestrator(Arc::clone(&worker), Arc::clone(&context), store);
+        let (mut orch, worker, _context) = fresh_orchestrator();
         orch.set_upstream_capturing(true);
 
         let err = orch.start().expect_err("idle start");

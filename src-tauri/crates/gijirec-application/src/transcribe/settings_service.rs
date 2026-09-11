@@ -4,28 +4,12 @@ use gijirec_domain::transcribe::{
     TranscribeSettings, TranscribeSettingsError, TranscribeSettingsLoadIssue,
     TranscribeSettingsLoadResult,
 };
-use std::path::{Path, PathBuf};
 
 const SETTINGS_FILENAME: &str = "transcribe-settings.json";
 
-/// Reads and writes transcribe settings JSON under an injected base directory.
-pub struct TranscribeSettingsService {
-    data_dir: PathBuf,
-}
+crate::settings_service_shell!(pub TranscribeSettingsService, SETTINGS_FILENAME);
 
 impl TranscribeSettingsService {
-    pub fn new(data_dir: PathBuf) -> Self {
-        Self { data_dir }
-    }
-
-    pub fn data_dir(&self) -> &Path {
-        &self.data_dir
-    }
-
-    fn settings_path(&self) -> PathBuf {
-        self.data_dir.join(SETTINGS_FILENAME)
-    }
-
     /// Loads settings. Missing or corrupt files yield FP16 default with a recorded issue.
     pub fn load(&self) -> TranscribeSettingsLoadResult {
         let path = self.settings_path();
@@ -59,21 +43,9 @@ impl TranscribeSettingsService {
     }
 
     pub fn save(&self, settings: &TranscribeSettings) -> Result<(), TranscribeSettingsError> {
-        let path = self.settings_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| persist_error("create settings directory", err))?;
-        }
-
-        let json = serde_json::to_string_pretty(settings)
-            .map_err(|err| persist_error("serialize settings", err))?;
-        std::fs::write(&path, json).map_err(|err| persist_error("write settings", err))
-    }
-}
-
-fn persist_error(action: &str, err: impl std::fmt::Display) -> TranscribeSettingsError {
-    TranscribeSettingsError::SettingsPersistFailed {
-        detail: format!("{action}: {err}"),
+        crate::settings_file::write_json_pretty(&self.settings_path(), settings, |detail| {
+            TranscribeSettingsError::SettingsPersistFailed { detail }
+        })
     }
 }
 

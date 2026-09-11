@@ -121,6 +121,10 @@ impl std::error::Error for TranscribeError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::user_facing_contract_tests::{
+        assert_all_errors_serde_round_trip, assert_contract_error_mappings,
+        assert_serde_produces_contract_json_shape,
+    };
 
     fn all_errors() -> Vec<TranscribeError> {
         vec![
@@ -154,29 +158,7 @@ mod tests {
             "INTERNAL",
         ];
 
-        let errors = all_errors();
-        assert_eq!(
-            errors.len(),
-            expected.len(),
-            "every contract error code must have a TranscribeError mapping"
-        );
-
-        for (error, code) in errors.iter().zip(expected) {
-            let facing = error.to_user_facing();
-            assert_eq!(
-                facing.code.as_str(),
-                code,
-                "unexpected contract code mapping"
-            );
-            assert!(
-                facing.action_ja_is_present(),
-                "action_ja must be non-empty for contract code {code}"
-            );
-            assert!(
-                !facing.message_ja.trim().is_empty(),
-                "message_ja must be non-empty for contract code {code}"
-            );
-        }
+        assert_contract_error_mappings(all_errors(), &expected, TranscribeError::to_user_facing);
     }
 
     #[test]
@@ -253,27 +235,12 @@ mod tests {
             detail: "ignored".to_string(),
         }
         .to_user_facing();
-        let json = serde_json::to_value(&facing).expect("serialize user-facing error");
-        let obj = json.as_object().expect("object payload");
-        assert_eq!(
-            obj.get("code").and_then(|v| v.as_str()),
-            Some("MODEL_DOWNLOAD_FAILED")
-        );
-        assert!(obj.get("message_ja").and_then(|v| v.as_str()).is_some());
-        assert!(obj.get("action_ja").and_then(|v| v.as_str()).is_some());
-        assert_eq!(obj.get("recoverable").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(obj.len(), 4, "payload must contain exactly four fields");
+        assert_serde_produces_contract_json_shape(&facing, "MODEL_DOWNLOAD_FAILED");
     }
 
     #[test]
     fn serde_round_trips_all_contract_codes() {
-        for error in all_errors() {
-            let facing = error.to_user_facing();
-            let json = serde_json::to_string(&facing).expect("serialize");
-            let restored: UserFacingTranscribeError =
-                serde_json::from_str(&json).expect("deserialize");
-            assert_eq!(facing, restored);
-        }
+        assert_all_errors_serde_round_trip(all_errors(), TranscribeError::to_user_facing);
     }
 
     #[test]

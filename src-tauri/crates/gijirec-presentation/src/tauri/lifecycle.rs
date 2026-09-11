@@ -384,17 +384,15 @@ pub fn handle_capture_run_event<R: Runtime>(app: &AppHandle<R>, event: &RunEvent
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::transcribe::model_orchestrator::{
-        ModelOrchestrator, ModelOrchestratorConfig,
-    };
+    use crate::application::transcribe::model_orchestrator::ModelOrchestrator;
     use crate::application::transcribe::orchestrator::{
         DefaultTranscribeOrchestrator, TranscribeOrchestrator,
     };
     use crate::application::transcribe::ports::{
         ModelDownloadProgress, ModelDownloaderPort, ModelStorePort, TranscribeWorkerPort,
-        WhisperContextPort,
     };
     use crate::tauri::events::RecordingEventEmitter;
+    use crate::transcribe::test_support::NoopWhisperContextPort;
     use crate::transcribe::{TranscribeEmitError, TranscribeEventEmitter};
     use gijirec_application::capture::orchestrator::{
         CaptureOrchestrator, DefaultCaptureOrchestrator, MicCapturePort, SystemAudioCapturePort,
@@ -521,92 +519,86 @@ mod tests {
         }
     }
 
-    struct MockMic {
-        state: Arc<Mutex<MockMicState>>,
-    }
-
-    struct MockMicState {
-        open_ok: bool,
-        opened: bool,
-    }
-
-    impl MockMic {
-        fn succeeds() -> Self {
-            Self {
-                state: Arc::new(Mutex::new(MockMicState {
-                    open_ok: true,
-                    opened: false,
-                })),
+    macro_rules! define_lifecycle_mock_capture_port {
+        ($mock:ident, $state:ident, $trait:path, $fail_err:expr) => {
+            struct $mock {
+                state: Arc<Mutex<$state>>,
             }
-        }
 
-        fn is_open(&self) -> bool {
-            self.state.lock().expect("lock").opened
-        }
-    }
-
-    impl MicCapturePort for MockMic {
-        fn open(&mut self) -> Result<(), CaptureError> {
-            let mut s = self.state.lock().expect("lock");
-            if s.open_ok {
-                s.opened = true;
-                Ok(())
-            } else {
-                Err(CaptureError::MicUnavailable)
+            struct $state {
+                open_ok: bool,
+                opened: bool,
             }
-        }
 
-        fn close(&mut self) {
-            self.state.lock().expect("lock").opened = false;
-        }
+            impl $mock {
+                fn succeeds() -> Self {
+                    Self {
+                        state: Arc::new(Mutex::new($state {
+                            open_ok: true,
+                            opened: false,
+                        })),
+                    }
+                }
 
-        fn is_open(&self) -> bool {
-            self.state.lock().expect("lock").opened
-        }
-    }
-
-    struct MockSystem {
-        state: Arc<Mutex<MockSystemState>>,
-    }
-
-    struct MockSystemState {
-        open_ok: bool,
-        opened: bool,
-    }
-
-    impl MockSystem {
-        fn succeeds() -> Self {
-            Self {
-                state: Arc::new(Mutex::new(MockSystemState {
-                    open_ok: true,
-                    opened: false,
-                })),
+                fn is_open(&self) -> bool {
+                    self.state.lock().expect("lock").opened
+                }
             }
-        }
 
-        fn is_open(&self) -> bool {
-            self.state.lock().expect("lock").opened
-        }
+            impl $trait for $mock {
+                fn open(&mut self) -> Result<(), CaptureError> {
+                    let mut s = self.state.lock().expect("lock");
+                    if s.open_ok {
+                        s.opened = true;
+                        Ok(())
+                    } else {
+                        Err($fail_err)
+                    }
+                }
+
+                fn close(&mut self) {
+                    self.state.lock().expect("lock").opened = false;
+                }
+
+                fn is_open(&self) -> bool {
+                    self.state.lock().expect("lock").opened
+                }
+            }
+        };
     }
 
-    impl SystemAudioCapturePort for MockSystem {
-        fn open(&mut self) -> Result<(), CaptureError> {
-            let mut s = self.state.lock().expect("lock");
-            if s.open_ok {
-                s.opened = true;
-                Ok(())
-            } else {
-                Err(CaptureError::SystemAudioUnavailable)
-            }
-        }
+    define_lifecycle_mock_capture_port!(
+        MockMic,
+        MockMicState,
+        MicCapturePort,
+        CaptureError::MicUnavailable
+    );
+    define_lifecycle_mock_capture_port!(
+        MockSystem,
+        MockSystemState,
+        SystemAudioCapturePort,
+        CaptureError::SystemAudioUnavailable
+    );
 
-        fn close(&mut self) {
-            self.state.lock().expect("lock").opened = false;
-        }
+    fn platform_setup_context(
+        supported: bool,
+    ) -> (
+        FixedPlatformSupport,
+        RecordingUnsupportedPlatformNotifier,
+        RecordingEventEmitter,
+        StubSelectionService,
+    ) {
+        (
+            FixedPlatformSupport { supported },
+            RecordingUnsupportedPlatformNotifier::new(),
+            RecordingEventEmitter::new(),
+            StubSelectionService::default_unmodified(),
+        )
+    }
 
-        fn is_open(&self) -> bool {
-            self.state.lock().expect("lock").opened
-        }
+    fn assert_capture_streams_closed(mic: &MockMic, system: &MockSystem) {
+        assert!(!mic.is_open());
+        assert!(!system.is_open());
     }
 
     fn make_orchestrator() -> (
@@ -692,10 +684,7 @@ mod tests {
 
     #[test]
     fn setup_on_supported_platform_starts_capture_and_emits_phases() {
-        let platform = FixedPlatformSupport { supported: true };
-        let notifier = RecordingUnsupportedPlatformNotifier::new();
-        let emitter = RecordingEventEmitter::new();
-        let selection = StubSelectionService::default_unmodified();
+        let (platform, notifier, emitter, selection) = platform_setup_context(true);
         let (mic, system, mut orch) = make_orchestrator();
 
         on_app_setup(&platform, &mut orch, &selection, &emitter, &notifier).expect("setup");
@@ -713,10 +702,7 @@ mod tests {
 
     #[test]
     fn setup_on_unsupported_platform_does_not_start_capture() {
-        let platform = FixedPlatformSupport { supported: false };
-        let notifier = RecordingUnsupportedPlatformNotifier::new();
-        let emitter = RecordingEventEmitter::new();
-        let selection = StubSelectionService::default_unmodified();
+        let (platform, notifier, emitter, selection) = platform_setup_context(false);
         let (mic, system, mut orch) = make_orchestrator();
 
         on_app_setup(&platform, &mut orch, &selection, &emitter, &notifier).expect("setup");
@@ -738,8 +724,7 @@ mod tests {
         on_close_requested(&mut orch, &emitter).expect("close");
 
         assert_eq!(orch.phase(), CapturePhase::Idle);
-        assert!(!mic.is_open());
-        assert!(!system.is_open());
+        assert_capture_streams_closed(&mic, &system);
 
         let phases = emitter.phases();
         assert_eq!(phases.len(), 2);
@@ -756,8 +741,7 @@ mod tests {
         on_app_exit(&mut orch, &emitter).expect("exit");
 
         assert_eq!(orch.phase(), CapturePhase::Idle);
-        assert!(!mic.is_open());
-        assert!(!system.is_open());
+        assert_capture_streams_closed(&mic, &system);
     }
 
     #[test]
@@ -862,8 +846,7 @@ mod tests {
         on_close_requested(&mut orch, &emitter).expect("close");
 
         assert_eq!(orch.phase(), CapturePhase::Idle);
-        assert!(!mic.is_open());
-        assert!(!system.is_open());
+        assert_capture_streams_closed(&mic, &system);
         assert!(!hook.is_active());
 
         let phases = emitter.phases();
@@ -874,14 +857,13 @@ mod tests {
         assert_eq!(phases[3].phase, "idle");
     }
 
-    #[test]
-    #[allow(clippy::too_many_lines)]
-    fn window_close_and_app_exit_calls_transcribe_hook_and_stops_worker() {
-        struct MockWorker {
-            stopped: Arc<Mutex<bool>>,
-            stop_timeout: Arc<Mutex<Option<Duration>>>,
-        }
-        impl TranscribeWorkerPort for MockWorker {
+    struct ExitHookMockWorker {
+        stopped: Arc<Mutex<bool>>,
+        stop_timeout: Arc<Mutex<Option<Duration>>>,
+    }
+
+    macro_rules! noop_transcribe_worker_prelude {
+        () => {
             fn prepare_model_path(
                 &mut self,
                 _path: &std::path::Path,
@@ -892,109 +874,121 @@ mod tests {
             fn spawn(&mut self) -> Result<(), TranscribeError> {
                 Ok(())
             }
-            fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError> {
-                *self.stopped.lock().unwrap() = true;
-                *self.stop_timeout.lock().unwrap() = Some(timeout);
-                Ok(())
-            }
+        };
+    }
+
+    impl TranscribeWorkerPort for ExitHookMockWorker {
+        noop_transcribe_worker_prelude!();
+
+        fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError> {
+            *self.stopped.lock().unwrap() = true;
+            *self.stop_timeout.lock().unwrap() = Some(timeout);
+            Ok(())
         }
-        struct DummyCtx;
-        impl WhisperContextPort for DummyCtx {
-            fn load_model(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
-                Ok(())
-            }
-        }
-        struct DummyStore;
-        impl ModelStorePort for DummyStore {
-            fn model_path(&self) -> std::path::PathBuf {
-                std::path::PathBuf::from("/tmp/model")
-            }
-            fn model_path_for(
-                &self,
-                _variant: gijirec_domain::transcribe::WhisperModelVariant,
-            ) -> std::path::PathBuf {
-                self.model_path()
-            }
-            fn verify(
-                &self,
-                _expected: Option<&str>,
-            ) -> Result<std::path::PathBuf, TranscribeError> {
-                Ok(std::path::PathBuf::from("/tmp/model"))
-            }
-            fn verify_variant(
-                &self,
-                _variant: gijirec_domain::transcribe::WhisperModelVariant,
-                expected: Option<&str>,
-            ) -> Result<std::path::PathBuf, TranscribeError> {
-                self.verify(expected)
-            }
-            fn file_exists(
-                &self,
-                _variant: gijirec_domain::transcribe::WhisperModelVariant,
-            ) -> bool {
-                true
-            }
-        }
-        struct DummyDownloader;
-        impl ModelDownloaderPort for DummyDownloader {
-            fn download(
-                &self,
-                _url: &str,
-                _destination: &std::path::Path,
-                _on_progress: &mut dyn FnMut(ModelDownloadProgress),
-            ) -> Result<(), TranscribeError> {
-                Ok(())
-            }
+    }
+
+    struct ExitHookDummyStore;
+
+    impl ModelStorePort for ExitHookDummyStore {
+        fn model_path(&self) -> std::path::PathBuf {
+            std::path::PathBuf::from("/tmp/model")
         }
 
-        struct DummyEmitter;
-        impl TranscribeEventEmitter for DummyEmitter {
-            fn emit_phase_changed(
-                &self,
-                _phase: TranscribePhase,
-            ) -> Result<(), TranscribeEmitError> {
-                Ok(())
-            }
-            fn emit_model_progress(
-                &self,
-                _progress: &ModelDownloadProgress,
-            ) -> Result<(), TranscribeEmitError> {
-                Ok(())
-            }
-            fn emit_error(&self, _error: &TranscribeError) -> Result<(), TranscribeEmitError> {
-                Ok(())
-            }
+        fn model_path_for(
+            &self,
+            _variant: gijirec_domain::transcribe::WhisperModelVariant,
+        ) -> std::path::PathBuf {
+            self.model_path()
         }
 
+        fn verify(&self, _expected: Option<&str>) -> Result<std::path::PathBuf, TranscribeError> {
+            Ok(std::path::PathBuf::from("/tmp/model"))
+        }
+
+        fn verify_variant(
+            &self,
+            _variant: gijirec_domain::transcribe::WhisperModelVariant,
+            expected: Option<&str>,
+        ) -> Result<std::path::PathBuf, TranscribeError> {
+            self.verify(expected)
+        }
+
+        fn file_exists(&self, _variant: gijirec_domain::transcribe::WhisperModelVariant) -> bool {
+            true
+        }
+    }
+
+    struct ExitHookDummyDownloader;
+
+    impl ModelDownloaderPort for ExitHookDummyDownloader {
+        fn download(
+            &self,
+            _url: &str,
+            _destination: &std::path::Path,
+            _on_progress: &mut dyn FnMut(ModelDownloadProgress),
+        ) -> Result<(), TranscribeError> {
+            Ok(())
+        }
+    }
+
+    struct ExitHookDummyEmitter;
+
+    impl TranscribeEventEmitter for ExitHookDummyEmitter {
+        fn emit_phase_changed(&self, _phase: TranscribePhase) -> Result<(), TranscribeEmitError> {
+            Ok(())
+        }
+
+        fn emit_model_progress(
+            &self,
+            _progress: &ModelDownloadProgress,
+        ) -> Result<(), TranscribeEmitError> {
+            Ok(())
+        }
+
+        fn emit_error(&self, _error: &TranscribeError) -> Result<(), TranscribeEmitError> {
+            Ok(())
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn transcribing_exit_hook_fixture() -> (
+        Arc<TranscribeLifecycleHook>,
+        Arc<Mutex<dyn TranscribeOrchestrator>>,
+        Arc<Mutex<bool>>,
+        Arc<Mutex<Option<Duration>>>,
+    ) {
         let worker_stopped = Arc::new(Mutex::new(false));
         let stop_timeout = Arc::new(Mutex::new(None));
-        let worker = MockWorker {
+        let worker = ExitHookMockWorker {
             stopped: Arc::clone(&worker_stopped),
             stop_timeout: Arc::clone(&stop_timeout),
         };
         let model_orch = Arc::new(Mutex::new(ModelOrchestrator::new(
-            DummyStore,
-            DummyDownloader,
-            ModelOrchestratorConfig {
-                model_url: "url".to_string(),
-                expected_sha256: "hash".to_string(),
-            },
+            ExitHookDummyStore,
+            ExitHookDummyDownloader,
         )));
-        let orch = Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
-            worker,
-            DummyCtx,
-            model_orch,
-            Duration::from_secs(5),
-        )));
+        let orch: Arc<Mutex<dyn TranscribeOrchestrator>> =
+            Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
+                worker,
+                NoopWhisperContextPort,
+                model_orch,
+                Duration::from_secs(5),
+            )));
         orch.lock().unwrap().ensure_model().expect("ensure model");
-        let transcribe_hook = Arc::new(TranscribeLifecycleHook::new(
-            orch.clone() as Arc<Mutex<dyn TranscribeOrchestrator>>,
-            Arc::new(DummyEmitter),
+        let hook = Arc::new(TranscribeLifecycleHook::new(
+            orch.clone(),
+            Arc::new(ExitHookDummyEmitter),
         ));
-        transcribe_hook.on_capture_phase_changed(CapturePhase::Capturing);
+        hook.on_capture_phase_changed(CapturePhase::Capturing);
+        (hook, orch, worker_stopped, stop_timeout)
+    }
+
+    #[test]
+    fn window_close_and_app_exit_calls_transcribe_hook_and_stops_worker() {
+        let (transcribe_hook, orch, worker_stopped, stop_timeout) =
+            transcribing_exit_hook_fixture();
         assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
 
-        // When app exit / window close triggers hook
         transcribe_hook.on_app_exit();
         assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Idle);
         assert!(
@@ -1009,122 +1003,9 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
     fn handle_capture_run_event_exit_and_window_close_invokes_hook_and_stops_worker() {
-        struct MockWorker {
-            stopped: Arc<Mutex<bool>>,
-            stop_timeout: Arc<Mutex<Option<Duration>>>,
-        }
-        impl TranscribeWorkerPort for MockWorker {
-            fn prepare_model_path(
-                &mut self,
-                _path: &std::path::Path,
-            ) -> Result<(), TranscribeError> {
-                Ok(())
-            }
-
-            fn spawn(&mut self) -> Result<(), TranscribeError> {
-                Ok(())
-            }
-            fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError> {
-                *self.stopped.lock().unwrap() = true;
-                *self.stop_timeout.lock().unwrap() = Some(timeout);
-                Ok(())
-            }
-        }
-        struct DummyCtx;
-        impl WhisperContextPort for DummyCtx {
-            fn load_model(&mut self, _path: &std::path::Path) -> Result<(), TranscribeError> {
-                Ok(())
-            }
-        }
-        struct DummyStore;
-        impl ModelStorePort for DummyStore {
-            fn model_path(&self) -> std::path::PathBuf {
-                std::path::PathBuf::from("/tmp/model")
-            }
-            fn model_path_for(
-                &self,
-                _variant: gijirec_domain::transcribe::WhisperModelVariant,
-            ) -> std::path::PathBuf {
-                self.model_path()
-            }
-            fn verify(
-                &self,
-                _expected: Option<&str>,
-            ) -> Result<std::path::PathBuf, TranscribeError> {
-                Ok(std::path::PathBuf::from("/tmp/model"))
-            }
-            fn verify_variant(
-                &self,
-                _variant: gijirec_domain::transcribe::WhisperModelVariant,
-                expected: Option<&str>,
-            ) -> Result<std::path::PathBuf, TranscribeError> {
-                self.verify(expected)
-            }
-            fn file_exists(
-                &self,
-                _variant: gijirec_domain::transcribe::WhisperModelVariant,
-            ) -> bool {
-                true
-            }
-        }
-        struct DummyDownloader;
-        impl ModelDownloaderPort for DummyDownloader {
-            fn download(
-                &self,
-                _url: &str,
-                _destination: &std::path::Path,
-                _on_progress: &mut dyn FnMut(ModelDownloadProgress),
-            ) -> Result<(), TranscribeError> {
-                Ok(())
-            }
-        }
-        struct DummyEmitter;
-        impl TranscribeEventEmitter for DummyEmitter {
-            fn emit_phase_changed(
-                &self,
-                _phase: TranscribePhase,
-            ) -> Result<(), TranscribeEmitError> {
-                Ok(())
-            }
-            fn emit_model_progress(
-                &self,
-                _progress: &ModelDownloadProgress,
-            ) -> Result<(), TranscribeEmitError> {
-                Ok(())
-            }
-            fn emit_error(&self, _error: &TranscribeError) -> Result<(), TranscribeEmitError> {
-                Ok(())
-            }
-        }
-
-        let worker_stopped = Arc::new(Mutex::new(false));
-        let stop_timeout = Arc::new(Mutex::new(None));
-        let worker = MockWorker {
-            stopped: Arc::clone(&worker_stopped),
-            stop_timeout: Arc::clone(&stop_timeout),
-        };
-        let model_orch = Arc::new(Mutex::new(ModelOrchestrator::new(
-            DummyStore,
-            DummyDownloader,
-            ModelOrchestratorConfig {
-                model_url: "url".to_string(),
-                expected_sha256: "hash".to_string(),
-            },
-        )));
-        let orch = Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
-            worker,
-            DummyCtx,
-            model_orch,
-            Duration::from_secs(5),
-        )));
-        orch.lock().unwrap().ensure_model().expect("ensure model");
-        let transcribe_hook = Arc::new(TranscribeLifecycleHook::new(
-            orch.clone() as Arc<Mutex<dyn TranscribeOrchestrator>>,
-            Arc::new(DummyEmitter),
-        ));
-        transcribe_hook.on_capture_phase_changed(CapturePhase::Capturing);
+        let (transcribe_hook, orch, worker_stopped, stop_timeout) =
+            transcribing_exit_hook_fixture();
         assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Transcribing);
 
         let (_, _, capture_orch) = make_orchestrator();

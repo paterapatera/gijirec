@@ -225,13 +225,21 @@ impl<O: TranscribeStallOrchestrator, E: TranscribeEventEmitter> TranscribeStallW
         self.armed.store(false, Ordering::SeqCst);
     }
 
+    fn reset_progress_clock(&self) {
+        *self.last_progress_ms.lock().expect("lock progress") = (self.clock)();
+    }
+
+    fn clear_inference_and_reset_progress(&self) {
+        self.inference_in_flight.store(false, Ordering::SeqCst);
+        self.reset_progress_clock();
+    }
+
     /// Resets the progress clock when a transcript block is appended.
     pub fn on_block_appended(&self) {
         if !self.armed.load(Ordering::SeqCst) {
             return;
         }
-        self.inference_in_flight.store(false, Ordering::SeqCst);
-        *self.last_progress_ms.lock().expect("lock progress") = (self.clock)();
+        self.clear_inference_and_reset_progress();
     }
 
     /// Marks the whisper engine loaded and restarts the no-block window.
@@ -240,7 +248,7 @@ impl<O: TranscribeStallOrchestrator, E: TranscribeEventEmitter> TranscribeStallW
             return;
         }
         self.engine_ready.store(true, Ordering::SeqCst);
-        *self.last_progress_ms.lock().expect("lock progress") = (self.clock)();
+        self.reset_progress_clock();
         observability::log_engine_ready();
     }
 
@@ -249,8 +257,7 @@ impl<O: TranscribeStallOrchestrator, E: TranscribeEventEmitter> TranscribeStallW
         if !self.armed.load(Ordering::SeqCst) {
             return;
         }
-        self.inference_in_flight.store(false, Ordering::SeqCst);
-        *self.last_progress_ms.lock().expect("lock progress") = (self.clock)();
+        self.clear_inference_and_reset_progress();
     }
 
     /// Marks whisper.cpp as busy so CPU inference is not treated as a no-block stall.
@@ -259,7 +266,7 @@ impl<O: TranscribeStallOrchestrator, E: TranscribeEventEmitter> TranscribeStallW
             return;
         }
         self.inference_in_flight.store(true, Ordering::SeqCst);
-        *self.last_progress_ms.lock().expect("lock progress") = (self.clock)();
+        self.reset_progress_clock();
         observability::log_inference_started();
     }
 
@@ -268,7 +275,7 @@ impl<O: TranscribeStallOrchestrator, E: TranscribeEventEmitter> TranscribeStallW
         if !self.armed.load(Ordering::SeqCst) || !self.inference_in_flight.load(Ordering::SeqCst) {
             return;
         }
-        *self.last_progress_ms.lock().expect("lock progress") = (self.clock)();
+        self.reset_progress_clock();
     }
 
     /// Polls stall conditions and fires once when the threshold is exceeded.
@@ -348,9 +355,7 @@ pub fn chunk_rms(samples: &[f32]) -> f32 {
 mod tests {
     use super::*;
     use crate::transcribe::observability::with_isolated_transcribe_observability;
-    use gijirec_application::transcribe::ModelDownloadProgress;
-    use gijirec_domain::transcribe::UserFacingTranscribeError;
-    use std::sync::atomic::AtomicU64;
+    use crate::transcribe::test_support::{MockTranscribeEmitter, mock_stall_clock};
 
     struct MockOrchestrator {
         watchable: bool,
@@ -379,47 +384,43 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct MockEmitter {
-        phases: Mutex<Vec<TranscribePhase>>,
-        errors: Mutex<Vec<UserFacingTranscribeError>>,
+    type WatchdogFixture = (
+        TranscribeStallWatchdog<MockOrchestrator, MockTranscribeEmitter>,
+        Arc<Mutex<MockOrchestrator>>,
+        Arc<MockTranscribeEmitter>,
+        Arc<std::sync::atomic::AtomicU64>,
+    );
+
+    fn armed_watchdog() -> WatchdogFixture {
+        let (clock, time) = mock_stall_clock();
+        let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
+        let emitter = Arc::new(MockTranscribeEmitter::default());
+        let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
+        (watchdog, orch, emitter, time)
     }
 
-    impl TranscribeEventEmitter for MockEmitter {
-        fn emit_phase_changed(
-            &self,
-            phase: TranscribePhase,
-        ) -> Result<(), super::super::event_emitter::TranscribeEmitError> {
-            self.phases.lock().expect("lock phases").push(phase);
-            Ok(())
-        }
-
-        fn emit_model_progress(
-            &self,
-            _progress: &ModelDownloadProgress,
-        ) -> Result<(), super::super::event_emitter::TranscribeEmitError> {
-            Ok(())
-        }
-
-        fn emit_error(
-            &self,
-            error: &TranscribeError,
-        ) -> Result<(), super::super::event_emitter::TranscribeEmitError> {
-            self.errors
+    fn assert_no_stall_errors(emitter: &MockTranscribeEmitter) {
+        assert!(
+            emitter
+                .user_errors
                 .lock()
-                .expect("lock errors")
-                .push(error.to_user_facing());
-            Ok(())
-        }
+                .expect("lock user errors")
+                .is_empty()
+        );
     }
 
-    fn test_clock() -> (StallClock, Arc<AtomicU64>) {
-        let time = Arc::new(AtomicU64::new(0));
-        let clock: StallClock = {
-            let time = Arc::clone(&time);
-            Arc::new(move || time.load(Ordering::SeqCst))
-        };
-        (clock, time)
+    fn assert_stall_error_count(emitter: &MockTranscribeEmitter, count: usize) {
+        assert_eq!(
+            emitter.user_errors.lock().expect("lock user errors").len(),
+            count
+        );
+    }
+
+    fn arm_watchdog_after_engine_ready(
+        watchdog: &TranscribeStallWatchdog<MockOrchestrator, MockTranscribeEmitter>,
+    ) {
+        watchdog.arm();
+        watchdog.on_engine_ready();
     }
 
     #[test]
@@ -434,13 +435,9 @@ mod tests {
     #[test]
     fn does_not_fire_during_batch_interval_idle_without_inference() {
         with_isolated_transcribe_observability(|| {
-            let (clock, time) = test_clock();
-            let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
-            let emitter = Arc::new(MockEmitter::default());
-            let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
+            let (watchdog, _orch, emitter, time) = armed_watchdog();
 
-            watchdog.arm();
-            watchdog.on_engine_ready();
+            arm_watchdog_after_engine_ready(&watchdog);
             watchdog.on_inference_success();
 
             time.store(BATCH_INTERVAL.as_millis() as u64 + 5_000, Ordering::SeqCst);
@@ -448,17 +445,14 @@ mod tests {
                 !watchdog.poll(),
                 "30 s batch idle between cycles must not surface a stall"
             );
-            assert!(emitter.errors.lock().expect("lock errors").is_empty());
+            assert_no_stall_errors(&emitter);
         });
     }
 
     #[test]
     fn does_not_fire_during_noise_without_inference() {
         with_isolated_transcribe_observability(|| {
-            let (clock, time) = test_clock();
-            let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
-            let emitter = Arc::new(MockEmitter::default());
-            let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
+            let (watchdog, orch, emitter, time) = armed_watchdog();
 
             watchdog.arm();
             watchdog.on_engine_ready();
@@ -470,7 +464,7 @@ mod tests {
                 "ambient PCM without a worker inference attempt must not trigger stall detection"
             );
 
-            assert!(emitter.errors.lock().expect("lock errors").is_empty());
+            assert_no_stall_errors(&emitter);
             assert!(emitter.phases.lock().expect("lock phases").is_empty());
             assert_eq!(orch.lock().expect("lock orchestrator").fail_count, 0);
             assert!(!watchdog.has_fired());
@@ -480,10 +474,7 @@ mod tests {
     #[test]
     fn engine_ready_resets_stall_timer_without_pending_inference() {
         with_isolated_transcribe_observability(|| {
-            let (clock, time) = test_clock();
-            let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
-            let emitter = Arc::new(MockEmitter::default());
-            let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
+            let (watchdog, _orch, _emitter, time) = armed_watchdog();
 
             watchdog.arm();
             time.store(7_000, Ordering::SeqCst);
@@ -505,10 +496,7 @@ mod tests {
     #[test]
     fn does_not_fire_block_stall_before_engine_ready() {
         with_isolated_transcribe_observability(|| {
-            let (clock, time) = test_clock();
-            let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
-            let emitter = Arc::new(MockEmitter::default());
-            let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
+            let (watchdog, _orch, emitter, time) = armed_watchdog();
 
             watchdog.arm();
             time.store(8_100, Ordering::SeqCst);
@@ -516,17 +504,14 @@ mod tests {
                 !watchdog.poll(),
                 "whisper context load must not count as a no-block stall"
             );
-            assert!(emitter.errors.lock().expect("lock errors").is_empty());
+            assert_no_stall_errors(&emitter);
         });
     }
 
     #[test]
     fn fires_load_timeout_when_engine_never_ready() {
         with_isolated_transcribe_observability(|| {
-            let (clock, time) = test_clock();
-            let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
-            let emitter = Arc::new(MockEmitter::default());
-            let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
+            let (watchdog, _orch, emitter, time) = armed_watchdog();
 
             watchdog.arm();
             time.store(
@@ -537,17 +522,14 @@ mod tests {
                 watchdog.poll(),
                 "engine load that never completes must surface a stall"
             );
-            assert_eq!(emitter.errors.lock().expect("lock errors").len(), 1);
+            assert_stall_error_count(&emitter, 1);
         });
     }
 
     #[test]
     fn resets_progress_on_block_append_and_inference_success() {
         with_isolated_transcribe_observability(|| {
-            let (clock, time) = test_clock();
-            let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
-            let emitter = Arc::new(MockEmitter::default());
-            let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
+            let (watchdog, _orch, _emitter, time) = armed_watchdog();
 
             watchdog.arm();
             watchdog.on_engine_ready();
@@ -572,13 +554,9 @@ mod tests {
     #[test]
     fn does_not_fire_while_inference_in_flight_until_timeout() {
         with_isolated_transcribe_observability(|| {
-            let (clock, time) = test_clock();
-            let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
-            let emitter = Arc::new(MockEmitter::default());
-            let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
+            let (watchdog, _orch, emitter, time) = armed_watchdog();
 
-            watchdog.arm();
-            watchdog.on_engine_ready();
+            arm_watchdog_after_engine_ready(&watchdog);
             watchdog.on_inference_attempted();
 
             time.store(8_100, Ordering::SeqCst);
@@ -586,27 +564,23 @@ mod tests {
                 !watchdog.poll(),
                 "in-flight CPU inference must not be treated as a no-block stall"
             );
-            assert!(emitter.errors.lock().expect("lock errors").is_empty());
+            assert_no_stall_errors(&emitter);
 
             time.store(INFERENCE_TIMEOUT.as_millis() as u64 + 100, Ordering::SeqCst);
             assert!(
                 watchdog.poll(),
                 "inference that never returns must surface a stall"
             );
-            assert_eq!(emitter.errors.lock().expect("lock errors").len(), 1);
+            assert_stall_error_count(&emitter, 1);
         });
     }
 
     #[test]
     fn inference_progress_extends_in_flight_timeout() {
         with_isolated_transcribe_observability(|| {
-            let (clock, time) = test_clock();
-            let orch = Arc::new(Mutex::new(MockOrchestrator::watchable()));
-            let emitter = Arc::new(MockEmitter::default());
-            let watchdog = TranscribeStallWatchdog::new(orch.clone(), emitter.clone(), clock);
+            let (watchdog, _orch, _emitter, time) = armed_watchdog();
 
-            watchdog.arm();
-            watchdog.on_engine_ready();
+            arm_watchdog_after_engine_ready(&watchdog);
             watchdog.on_inference_attempted();
             time.store(80_000, Ordering::SeqCst);
             watchdog.on_inference_progress();

@@ -144,17 +144,7 @@ impl ResampledSampleConsumer {
     }
 
     pub fn drain_into(&mut self, out: &mut [f32]) -> usize {
-        let mut count = 0;
-        for slot in out.iter_mut() {
-            match self.pop() {
-                Some(sample) => {
-                    *slot = sample;
-                    count += 1;
-                }
-                None => break,
-            }
-        }
-        count
+        super::f32_ring_consumer::drain_f32_slots(|| self.pop(), out)
     }
 }
 
@@ -211,10 +201,7 @@ impl MonoResamplerPipeline {
 
 impl Drop for MonoResamplerPipeline {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(handle) = self.thread.take() {
-            let _ = handle.join();
-        }
+        crate::thread_lifecycle::signal_stop_and_join_thread(&self.stop, &mut self.thread);
     }
 }
 

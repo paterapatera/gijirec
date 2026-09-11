@@ -1,13 +1,10 @@
 //! Microphone capture adapter using cpal with RT-safe rtrb output.
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BuildStreamError, Device, SampleFormat, Stream, StreamConfig};
+use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::{BuildStreamError, Device, Stream};
 use gijirec_domain::audio::{AudioDeviceId, CaptureError};
-use rtrb::RingBuffer;
-use std::sync::Arc;
 
-/// Notifies when a live input stream fails at runtime (req 4.3).
-pub type StreamRuntimeErrorCallback = Arc<dyn Fn() + Send + Sync>;
+pub use super::cpal_mono_input::StreamRuntimeErrorCallback;
 
 /// Default ring buffer capacity for mic samples (f32 mono).
 pub const DEFAULT_RING_CAPACITY: usize = 8_192;
@@ -20,38 +17,7 @@ pub struct MicCaptureAdapter {
 }
 
 /// Consumer side of the mic capture ring buffer.
-pub struct MicSampleConsumer {
-    inner: rtrb::Consumer<f32>,
-}
-
-impl MicSampleConsumer {
-    pub fn pop(&mut self) -> Option<f32> {
-        self.inner.pop().ok()
-    }
-
-    /// Creates a consumer from an existing rtrb queue (synthetic streams in integration tests).
-    pub fn from_ring_consumer(inner: rtrb::Consumer<f32>) -> Self {
-        Self { inner }
-    }
-
-    pub fn drain_into(&mut self, out: &mut [f32]) -> usize {
-        let mut count = 0;
-        for slot in out.iter_mut() {
-            match self.inner.pop() {
-                Ok(sample) => {
-                    *slot = sample;
-                    count += 1;
-                }
-                Err(_) => break,
-            }
-        }
-        count
-    }
-
-    pub fn slots(&self) -> usize {
-        self.inner.slots()
-    }
-}
+pub type MicSampleConsumer = super::f32_ring_consumer::F32RingConsumer;
 
 impl MicCaptureAdapter {
     /// Opens the default input device and starts streaming mono f32 samples.
@@ -112,48 +78,22 @@ impl MicCaptureAdapter {
         let supported = device
             .default_input_config()
             .map_err(|err| map_config_error(err, selected))?;
-        let config: StreamConfig = supported.clone().into();
-        let sample_rate_hz = config.sample_rate.0;
-        let channels = supported.channels() as usize;
-        let (producer, consumer) = RingBuffer::<f32>::new(ring_capacity);
-
-        let stream = match supported.sample_format() {
-            SampleFormat::F32 => build_f32_stream(
+        let (stream, consumer, sample_rate_hz) =
+            super::cpal_mono_input::build_and_play_mono_input_stream(
                 device,
-                &config,
-                channels,
-                producer,
+                &supported,
+                ring_capacity,
+                "mic",
                 selected,
                 on_stream_error,
-            )?,
-            SampleFormat::I16 => build_i16_stream(
-                device,
-                &config,
-                channels,
-                producer,
-                selected,
-                on_stream_error,
-            )?,
-            SampleFormat::U16 => build_u16_stream(
-                device,
-                &config,
-                channels,
-                producer,
-                selected,
-                on_stream_error,
-            )?,
-            other => {
-                return Err(CaptureError::Internal {
-                    detail: format!("unsupported input sample format: {other:?}"),
-                });
-            }
-        };
-
-        stream.play().map_err(|err| map_play_error(err, selected))?;
+                map_build_error,
+                map_play_error,
+                |other| format!("unsupported input sample format: {other:?}"),
+            )?;
 
         Ok((
             Self { stream },
-            MicSampleConsumer { inner: consumer },
+            MicSampleConsumer::from_ring_consumer(consumer),
             sample_rate_hz,
         ))
     }
@@ -164,165 +104,17 @@ pub(crate) fn find_input_device<H: HostTrait<Device = Device>>(
     host: &H,
     device_id: &AudioDeviceId,
 ) -> Result<Device, CaptureError> {
-    let target = device_id.as_str();
-    let devices = host.input_devices().map_err(|err| CaptureError::Internal {
-        detail: format!("failed to enumerate input devices: {err}"),
-    })?;
-
-    for device in devices {
-        match device.name() {
-            Ok(name) if name == target => return Ok(device),
-            Ok(_) => continue,
-            Err(err) => {
-                return Err(CaptureError::Internal {
-                    detail: format!("failed to read input device name: {err}"),
-                });
-            }
-        }
-    }
-
-    Err(CaptureError::SelectedMicUnavailable)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_f32_stream(
-    device: &Device,
-    config: &StreamConfig,
-    channels: usize,
-    mut producer: rtrb::Producer<f32>,
-    selected: bool,
-    on_stream_error: Option<StreamRuntimeErrorCallback>,
-) -> Result<Stream, CaptureError> {
-    device
-        .build_input_stream(
-            config,
-            move |data: &[f32], _| push_mono_f32(data, channels, &mut producer),
-            move |err| invoke_stream_runtime_error("mic", &err, on_stream_error.as_ref()),
-            None,
-        )
-        .map_err(|err| map_build_error(err, selected))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_i16_stream(
-    device: &Device,
-    config: &StreamConfig,
-    channels: usize,
-    mut producer: rtrb::Producer<f32>,
-    selected: bool,
-    on_stream_error: Option<StreamRuntimeErrorCallback>,
-) -> Result<Stream, CaptureError> {
-    device
-        .build_input_stream(
-            config,
-            move |data: &[i16], _| push_mono_i16(data, channels, &mut producer),
-            move |err| invoke_stream_runtime_error("mic", &err, on_stream_error.as_ref()),
-            None,
-        )
-        .map_err(|err| map_build_error(err, selected))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_u16_stream(
-    device: &Device,
-    config: &StreamConfig,
-    channels: usize,
-    mut producer: rtrb::Producer<f32>,
-    selected: bool,
-    on_stream_error: Option<StreamRuntimeErrorCallback>,
-) -> Result<Stream, CaptureError> {
-    device
-        .build_input_stream(
-            config,
-            move |data: &[u16], _| push_mono_u16(data, channels, &mut producer),
-            move |err| invoke_stream_runtime_error("mic", &err, on_stream_error.as_ref()),
-            None,
-        )
-        .map_err(|err| map_build_error(err, selected))
-}
-
-fn invoke_stream_runtime_error(
-    port: &str,
-    err: &cpal::StreamError,
-    on_stream_error: Option<&StreamRuntimeErrorCallback>,
-) {
-    let _ = (port, err);
-    if let Some(callback) = on_stream_error {
-        callback();
-    }
-}
-
-pub(crate) fn invoke_loopback_stream_runtime_error(
-    port: &str,
-    err: &cpal::StreamError,
-    on_stream_error: Option<&StreamRuntimeErrorCallback>,
-) {
-    invoke_stream_runtime_error(port, err, on_stream_error);
-}
-
-pub(crate) fn push_mono_f32(data: &[f32], channels: usize, producer: &mut rtrb::Producer<f32>) {
-    if channels <= 1 {
-        for sample in data {
-            let _ = producer.push(*sample);
-        }
-        return;
-    }
-
-    let frames = data.len() / channels;
-    for frame in 0..frames {
-        let base = frame * channels;
-        let mut sum = 0.0_f32;
-        for ch in 0..channels {
-            sum += data[base + ch];
-        }
-        let _ = producer.push(sum / channels as f32);
-    }
-}
-
-pub(crate) fn push_mono_i16(data: &[i16], channels: usize, producer: &mut rtrb::Producer<f32>) {
-    if channels <= 1 {
-        for sample in data {
-            let _ = producer.push(i16_to_f32(*sample));
-        }
-        return;
-    }
-
-    let frames = data.len() / channels;
-    for frame in 0..frames {
-        let base = frame * channels;
-        let mut sum = 0.0_f32;
-        for ch in 0..channels {
-            sum += i16_to_f32(data[base + ch]);
-        }
-        let _ = producer.push(sum / channels as f32);
-    }
-}
-
-pub(crate) fn push_mono_u16(data: &[u16], channels: usize, producer: &mut rtrb::Producer<f32>) {
-    if channels <= 1 {
-        for sample in data {
-            let _ = producer.push(u16_to_f32(*sample));
-        }
-        return;
-    }
-
-    let frames = data.len() / channels;
-    for frame in 0..frames {
-        let base = frame * channels;
-        let mut sum = 0.0_f32;
-        for ch in 0..channels {
-            sum += u16_to_f32(data[base + ch]);
-        }
-        let _ = producer.push(sum / channels as f32);
-    }
-}
-
-fn i16_to_f32(sample: i16) -> f32 {
-    sample as f32 / i16::MAX as f32
-}
-
-fn u16_to_f32(sample: u16) -> f32 {
-    (sample as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
+    super::cpal_mono_input::find_device_matching_id(
+        host.input_devices().map_err(|err| CaptureError::Internal {
+            detail: format!("failed to enumerate input devices: {err}"),
+        })?,
+        device_id,
+        |device| device.name(),
+        |err| CaptureError::Internal {
+            detail: format!("failed to read input device name: {err}"),
+        },
+        CaptureError::SelectedMicUnavailable,
+    )
 }
 
 fn map_config_error(err: cpal::DefaultStreamConfigError, selected: bool) -> CaptureError {
@@ -335,82 +127,36 @@ fn map_config_error(err: cpal::DefaultStreamConfigError, selected: bool) -> Capt
     }
 }
 
-fn map_build_error(err: BuildStreamError, selected: bool) -> CaptureError {
-    if selected {
-        return match err {
-            BuildStreamError::DeviceNotAvailable | BuildStreamError::StreamConfigNotSupported => {
-                CaptureError::SelectedMicUnavailable
-            }
-            BuildStreamError::InvalidArgument => CaptureError::Internal {
-                detail: err.to_string(),
-            },
-            BuildStreamError::BackendSpecific { err } => {
-                if is_permission_denied(&err) {
-                    CaptureError::MicPermissionDenied
-                } else {
-                    CaptureError::SelectedMicUnavailable
-                }
-            }
-            other => CaptureError::Internal {
-                detail: other.to_string(),
-            },
-        };
-    }
-
-    match err {
-        BuildStreamError::DeviceNotAvailable => CaptureError::MicUnavailable,
-        BuildStreamError::StreamConfigNotSupported => CaptureError::MicUnavailable,
-        BuildStreamError::InvalidArgument => CaptureError::Internal {
+fn map_mic_backend_error(err: cpal::BackendSpecificError, selected: bool) -> CaptureError {
+    if super::cpal_mono_input::is_permission_denied(&err) {
+        CaptureError::MicPermissionDenied
+    } else if selected {
+        CaptureError::SelectedMicUnavailable
+    } else {
+        CaptureError::Internal {
             detail: err.to_string(),
-        },
-        BuildStreamError::BackendSpecific { err } => {
-            if is_permission_denied(&err) {
-                CaptureError::MicPermissionDenied
-            } else {
-                CaptureError::Internal {
-                    detail: err.to_string(),
-                }
-            }
         }
-        other => CaptureError::Internal {
-            detail: other.to_string(),
-        },
     }
+}
+
+fn map_build_error(err: BuildStreamError, selected: bool) -> CaptureError {
+    super::cpal_mono_input::map_stream_error(
+        super::cpal_mono_input::CpalStreamError::Build(err),
+        selected,
+        CaptureError::SelectedMicUnavailable,
+        CaptureError::MicUnavailable,
+        |err| map_mic_backend_error(err, selected),
+    )
 }
 
 fn map_play_error(err: cpal::PlayStreamError, selected: bool) -> CaptureError {
-    if selected {
-        return match err {
-            cpal::PlayStreamError::DeviceNotAvailable => CaptureError::SelectedMicUnavailable,
-            cpal::PlayStreamError::BackendSpecific { err } => {
-                if is_permission_denied(&err) {
-                    CaptureError::MicPermissionDenied
-                } else {
-                    CaptureError::SelectedMicUnavailable
-                }
-            }
-        };
-    }
-
-    match err {
-        cpal::PlayStreamError::DeviceNotAvailable => CaptureError::MicUnavailable,
-        cpal::PlayStreamError::BackendSpecific { err } => {
-            if is_permission_denied(&err) {
-                CaptureError::MicPermissionDenied
-            } else {
-                CaptureError::Internal {
-                    detail: err.to_string(),
-                }
-            }
-        }
-    }
-}
-
-fn is_permission_denied(err: &cpal::BackendSpecificError) -> bool {
-    let message = err.to_string().to_ascii_lowercase();
-    message.contains("permission")
-        || message.contains("access denied")
-        || message.contains("not authorized")
+    super::cpal_mono_input::map_stream_error(
+        super::cpal_mono_input::CpalStreamError::Play(err),
+        selected,
+        CaptureError::SelectedMicUnavailable,
+        CaptureError::MicUnavailable,
+        |err| map_mic_backend_error(err, selected),
+    )
 }
 
 // cpal 0.16 の CoreAudio `Stream` は property listener 用 `Box<dyn FnMut()>` を
@@ -422,7 +168,9 @@ unsafe impl Send for MicCaptureAdapter {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::cpal_mono_input::push_mono_f32;
     use gijirec_domain::audio::AudioDeviceId;
+    use rtrb::RingBuffer;
 
     #[test]
     fn push_mono_downmixes_stereo_frames() {
@@ -444,20 +192,15 @@ mod tests {
 
     #[test]
     fn find_input_device_returns_selected_mic_unavailable_for_unknown_id() {
-        let host = cpal::default_host();
-        let device_id =
-            AudioDeviceId::new("gijirec-nonexistent-mic-id-xyz".to_string()).expect("valid id");
-
-        assert!(matches!(
-            find_input_device(&host, &device_id),
-            Err(CaptureError::SelectedMicUnavailable)
-        ));
+        crate::audio::cpal_device_test_support::assert_find_device_returns_error_for_unknown_id(
+            find_input_device,
+            CaptureError::SelectedMicUnavailable,
+        );
     }
 
     #[test]
     fn open_with_device_id_returns_selected_mic_unavailable_for_unknown_id() {
-        let device_id =
-            AudioDeviceId::new("gijirec-nonexistent-mic-id-xyz".to_string()).expect("valid id");
+        let device_id = crate::audio::cpal_device_test_support::unknown_device_id();
 
         let err = MicCaptureAdapter::open_with_device_id(Some(&device_id), DEFAULT_RING_CAPACITY)
             .err()
@@ -471,44 +214,43 @@ mod tests {
 
     #[test]
     fn find_input_device_resolves_device_when_name_matches() {
-        let host = cpal::default_host();
-        let default_device = match host.default_input_device() {
-            Some(device) => device,
-            None => return,
-        };
-        let name = match default_device.name() {
-            Ok(name) => name,
-            Err(_) => return,
-        };
-        let device_id = AudioDeviceId::new(name).expect("valid id");
+        use cpal::traits::HostTrait;
 
-        let found = find_input_device(&host, &device_id).expect("device found");
-        assert_eq!(found.name().expect("name"), device_id.as_str());
+        crate::audio::cpal_device_test_support::assert_resolves_device_when_default_name_matches(
+            |host| host.default_input_device(),
+            find_input_device,
+        );
     }
 
     #[test]
     #[ignore = "requires default input device and OS mic permission"]
     fn opens_default_input_device_on_hardware() {
-        let (_adapter, mut consumer, sample_rate_hz) =
+        let (_adapter, consumer, sample_rate_hz) =
             MicCaptureAdapter::open(DEFAULT_RING_CAPACITY).expect("default mic");
-        assert!(sample_rate_hz > 0);
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        assert!(consumer.slots() > 0 || consumer.pop().is_some());
+        crate::audio::cpal_device_test_support::assert_cpal_consumer_receives_samples(
+            sample_rate_hz,
+            consumer,
+            100,
+        );
     }
 
     #[test]
     #[ignore = "requires default input device and OS mic permission"]
     fn opens_selected_input_device_on_hardware() {
+        use cpal::traits::HostTrait;
+
         let host = cpal::default_host();
         let default_device = host.default_input_device().expect("default input device");
         let name = default_device.name().expect("device name");
         let device_id = AudioDeviceId::new(name).expect("valid device id");
 
-        let (_adapter, mut consumer, sample_rate_hz) =
+        let (_adapter, consumer, sample_rate_hz) =
             MicCaptureAdapter::open_with_device_id(Some(&device_id), DEFAULT_RING_CAPACITY)
                 .expect("selected default mic by name");
-        assert!(sample_rate_hz > 0);
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        assert!(consumer.slots() > 0 || consumer.pop().is_some());
+        crate::audio::cpal_device_test_support::assert_cpal_consumer_receives_samples(
+            sample_rate_hz,
+            consumer,
+            100,
+        );
     }
 }

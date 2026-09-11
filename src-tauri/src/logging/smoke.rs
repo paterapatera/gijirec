@@ -3,24 +3,26 @@
 #[cfg(test)]
 mod tests {
     use super::super::{
-        ReleaseLogConfig, apply_persistence_if_allowed, build_release_file_tracing_stack, cli,
-        run_session_id, setup_release_file_logging,
+        ReleaseLogConfig, apply_persistence_if_allowed, cli, run_session_id,
+        setup_release_file_logging,
     };
+    use std::path::Path;
+
+    #[cfg(not(debug_assertions))]
     use crate::capture_observability::TracingCaptureObservability;
-    use crate::editor_observability::TracingEditorObservability;
-    use crate::transcribe_observability::TracingTranscribeObservability;
+    #[cfg(not(debug_assertions))]
     use gijirec_presentation::domain::audio::CapturePhase;
-    use gijirec_presentation::domain::transcribe::{TranscribeError, TranscribePhase};
-    use gijirec_presentation::editor::observability::{
-        EditorObservability, EditorSaveCompletion, EditorSaveLogFields,
+    #[cfg(not(debug_assertions))]
+    use gijirec_presentation::tauri::observability::CaptureObservability;
+
+    use crate::logging::test_support::{
+        emit_release_logging_smoke_events, read_log_file, record_release_tracing_session,
+        unique_temp_dir,
     };
-    use gijirec_presentation::tauri::observability::{CaptureObservability, init_session_id};
-    use gijirec_presentation::transcribe::observability::TranscribeObservability;
-    use std::path::{Path, PathBuf};
 
     #[test]
     fn release_log_enabled_session_writes_observability_categories_to_gijirec_log() {
-        let app_data = unique_temp_dir("enabled-session");
+        let app_data = unique_temp_dir("release-logging-smoke", "enabled-session");
         let run_id = run_session_id("capture-0");
         let log_path = record_session_observability_smoke(&app_data, &run_id);
         let contents = read_log_file(&log_path);
@@ -75,7 +77,7 @@ mod tests {
         let config = ReleaseLogConfig {
             file_logging_enabled: false,
         };
-        let app_data = unique_temp_dir("disabled-release-log");
+        let app_data = unique_temp_dir("release-logging-smoke", "disabled-release-log");
         let run_id = "20260906T074500Z-capture-0";
 
         apply_persistence_if_allowed(&app_data, &config, run_id).expect("disabled apply is no-op");
@@ -96,7 +98,7 @@ mod tests {
 
     #[test]
     fn multiple_sessions_use_independent_log_files() {
-        let app_data = unique_temp_dir("multi-session");
+        let app_data = unique_temp_dir("release-logging-smoke", "multi-session");
         let run_a = "20260906T070000Z-capture-0";
         let run_b = "20260906T080000Z-capture-1";
 
@@ -121,7 +123,7 @@ mod tests {
         let config = parse_release_log_config(["gijirec"]);
         assert!(!config.file_logging_enabled);
 
-        let app_data = unique_temp_dir("release-cli-no-log");
+        let app_data = unique_temp_dir("release-logging-smoke", "release-cli-no-log");
         let run_id = run_session_id("capture-0");
 
         apply_persistence_if_allowed(&app_data, &config, &run_id).expect("release no-op apply");
@@ -145,7 +147,7 @@ mod tests {
             "release --log must enable persistence"
         );
 
-        let app_data = unique_temp_dir("release-cli-with-log");
+        let app_data = unique_temp_dir("release-logging-smoke", "release-cli-with-log");
         let run_id = run_session_id("capture-0");
         apply_persistence_if_allowed(&app_data, &config, &run_id).expect("release apply");
 
@@ -173,7 +175,7 @@ mod tests {
         };
         assert!(persistence_side_effects_allowed(&config));
 
-        let app_data = unique_temp_dir("release-config-with-log");
+        let app_data = unique_temp_dir("release-logging-smoke", "release-config-with-log");
         let run_id = run_session_id("capture-0");
         apply_persistence_if_allowed(&app_data, &config, &run_id).expect("release apply");
 
@@ -222,49 +224,15 @@ mod tests {
         TracingCaptureObservability.log_phase_transition(CapturePhase::Capturing);
     }
 
-    fn record_session_observability_smoke(app_data: &Path, run_session_id: &str) -> PathBuf {
-        let stack =
-            build_release_file_tracing_stack(app_data, run_session_id).expect("tracing stack");
-        let log_path = stack.log_path().to_path_buf();
-        let (_, guard) = stack.run_with_default(|| {
-            init_session_id();
-            emit_contract_observability_events();
-        });
-        drop(guard);
-        log_path
+    fn record_session_observability_smoke(
+        app_data: &Path,
+        run_session_id: &str,
+    ) -> std::path::PathBuf {
+        record_release_tracing_session(app_data, run_session_id, emit_contract_observability_events)
     }
 
     fn emit_contract_observability_events() {
-        let capture = TracingCaptureObservability;
-        capture.log_phase_transition(CapturePhase::Idle);
-        capture.log_phase_transition(CapturePhase::Capturing);
-        capture.log_buffer_drop(3);
-        capture.log_rt_callback_max_us(1_200);
-
-        let transcribe = TracingTranscribeObservability;
-        transcribe.log_phase_transition(TranscribePhase::Ready);
-        transcribe.log_pcm_sequence_gaps(1, 4);
-        transcribe.log_block_buffer_drop(2);
-        transcribe.log_inference_latency(42);
-        transcribe.log_transcribe_error(&TranscribeError::InferenceFailed {
-            detail: "smoke test".to_string(),
-        });
-        transcribe.log_stall_detected();
-
-        let editor = TracingEditorObservability;
-        let fields = EditorSaveLogFields {
-            session_id: "capture-0".to_string(),
-            handwriting_markdown_len: 10,
-            ai_transcription_markdown_len: 20,
-            jsonl_record_count: 1,
-        };
-        let completion = EditorSaveCompletion {
-            success: true,
-            files_written_count: 1,
-            error_code: None,
-        };
-        editor.log_save_started(&fields);
-        editor.log_save_completed(&fields, &completion);
+        emit_release_logging_smoke_events();
     }
 
     #[cfg(not(debug_assertions))]
@@ -274,18 +242,5 @@ mod tests {
             .join("sessions")
             .join(run_id)
             .join("gijirec.log")
-    }
-
-    fn read_log_file(log_path: &Path) -> String {
-        std::fs::read_to_string(log_path).unwrap_or_default()
-    }
-
-    fn unique_temp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "gijirec-release-logging-smoke-{label}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
     }
 }

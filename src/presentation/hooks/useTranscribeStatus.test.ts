@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../../test-setup";
 import type {
   ModelDownloadProgress,
@@ -62,17 +63,19 @@ describe("useTranscribeStatus", () => {
 
   test("syncs initial phase from invoke on mount", async () => {
     const { listenFn } = createMockListen();
-    const invokeFn = async () =>
-      ({
-        phase: {
-          phase: "ready",
-          timestamp_ms: 42,
+    const invokeFn = asInjectableInvokeFn(
+      async () =>
+        ({
+          phase: {
+            phase: "ready",
+            timestamp_ms: 42,
+          },
+          model_progress: null,
+        }) satisfies {
+          phase: TranscribePhaseChanged;
+          model_progress: ModelDownloadProgress | null;
         },
-        model_progress: null,
-      }) satisfies {
-        phase: TranscribePhaseChanged;
-        model_progress: ModelDownloadProgress | null;
-      };
+    );
 
     const { result } = renderHook(() => useTranscribeStatus({ listenFn, invokeFn }));
 

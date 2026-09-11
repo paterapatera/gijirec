@@ -83,7 +83,10 @@ impl<R: Runtime> TauriDeviceSelectionEventEmitter<R> {
 
 impl<R: Runtime> DeviceSelectionEvents for TauriDeviceSelectionEventEmitter<R> {
     fn emit_selection_changed(&self, selection: &DeviceSelection) {
-        let payload = build_selection_changed_payload(selection, current_timestamp_ms());
+        let payload = build_selection_changed_payload(
+            selection,
+            crate::tauri::invoke_contract::current_timestamp_ms(),
+        );
         let _ = self.app.emit(SELECTION_CHANGED_EVENT, payload);
     }
 
@@ -121,7 +124,7 @@ impl DeviceSelectionEvents for RecordingDeviceSelectionEventEmitter {
             .expect("lock")
             .push(build_selection_changed_payload(
                 selection,
-                current_timestamp_ms(),
+                crate::tauri::invoke_contract::current_timestamp_ms(),
             ));
     }
 
@@ -131,14 +134,6 @@ impl DeviceSelectionEvents for RecordingDeviceSelectionEventEmitter {
             .expect("lock")
             .push(build_devices_changed_payload(devices, timestamp_ms));
     }
-}
-
-fn current_timestamp_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 /// Lists available audio devices.
@@ -206,32 +201,13 @@ pub fn set_device_selection_with_capture_feedback(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gijirec_domain::audio::{AudioDeviceId, AudioDeviceInfo, AudioDeviceKind};
+    use gijirec_domain::audio::AudioDeviceId;
+    use gijirec_domain::audio::fixtures::sample_device_list;
+    use gijirec_domain::user_facing_contract_tests::assert_invoke_error_serializes_contract_shape;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    fn mic(id: &str, default: bool) -> AudioDeviceInfo {
-        AudioDeviceInfo::new(
-            AudioDeviceId::new(id.to_string()).expect("id"),
-            format!("Mic {id}"),
-            AudioDeviceKind::Input,
-            default,
-        )
-    }
-
-    fn speaker(id: &str, default: bool) -> AudioDeviceInfo {
-        AudioDeviceInfo::new(
-            AudioDeviceId::new(id.to_string()).expect("id"),
-            format!("Speaker {id}"),
-            AudioDeviceKind::Output,
-            default,
-        )
-    }
-
     fn sample_list() -> AudioDeviceList {
-        AudioDeviceList {
-            inputs: vec![mic("mic-default", true), mic("mic-usb", false)],
-            outputs: vec![speaker("spk-default", true), speaker("spk-hdmi", false)],
-        }
+        sample_device_list()
     }
 
     struct MockDeviceSelectionService {
@@ -393,15 +369,7 @@ mod tests {
     fn invoke_error_serializes_contract_shape() {
         let err =
             DeviceSelectionInvokeError::from_service_error(DeviceSelectionError::invalid_device());
-        let json = serde_json::to_value(&err).expect("serialize");
-        let obj = json.as_object().expect("object");
-        assert_eq!(
-            obj.get("code").and_then(|v| v.as_str()),
-            Some("INVALID_DEVICE")
-        );
-        assert!(obj.get("message_ja").and_then(|v| v.as_str()).is_some());
-        assert!(obj.get("action_ja").and_then(|v| v.as_str()).is_some());
-        assert_eq!(obj.len(), 3);
+        assert_invoke_error_serializes_contract_shape(&err, "INVALID_DEVICE");
     }
 
     #[test]

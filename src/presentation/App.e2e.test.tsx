@@ -9,6 +9,7 @@ import { Editor, Range, Transforms } from "slate";
 import { lockSelection } from "../application/transcript/lockManager";
 import type { TranscriptBlockElement } from "../domain/transcript/slateTypes";
 import type { SaveTranscriptSessionResult } from "../infrastructure/tauri/editorCommands";
+import { asInjectableInvokeFn } from "../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../test-setup";
 import { App } from "./App";
 import {
@@ -130,7 +131,11 @@ function createStatefulMockInvoke(
     }
   };
 
-  return { invokeFn, calls, getPersisted: () => ({ ...persisted }) };
+  return {
+    invokeFn: asInjectableInvokeFn(invokeFn),
+    calls,
+    getPersisted: () => ({ ...persisted }),
+  };
 }
 
 function makeBlockAppended(
@@ -319,7 +324,10 @@ describe("E2E 3: save success shows path (req 7.6)", () => {
       expect(mockToastSuccess).toHaveBeenCalledTimes(1);
     });
 
-    const [, options] = mockToastSuccess.mock.calls[0]! as [string, { description?: string }];
+    const [, options] = mockToastSuccess.mock.calls[0]! as unknown as [
+      string,
+      { description?: string },
+    ];
     expect(options.description).toBe(`${selectedPath}\\2026\\09\\06\\14_30_00`);
     expect(mockToastError).not.toHaveBeenCalled();
   });
@@ -341,7 +349,10 @@ describe("E2E 4: unset save dir notification (req 5.5)", () => {
       expect(mockToastError).toHaveBeenCalledTimes(1);
     });
 
-    const [title, options] = mockToastError.mock.calls[0]! as [string, { description?: string }];
+    const [title, options] = mockToastError.mock.calls[0]! as unknown as [
+      string,
+      { description?: string },
+    ];
     expect(title).toBe("保存先が設定されていません");
     expect(options.description).toBe("保存先フォルダを選択してください");
     expect(mockToastSuccess).not.toHaveBeenCalled();

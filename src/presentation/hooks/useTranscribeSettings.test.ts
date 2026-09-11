@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import {
   DEFAULT_TRANSCRIBE_SETTINGS,
   type LocalAvailability,
@@ -49,7 +50,11 @@ function createMockInvoke(
     }
   };
 
-  return { invokeFn, calls, getPersisted: () => ({ ...persisted }) };
+  return {
+    invokeFn: asInjectableInvokeFn(invokeFn),
+    calls,
+    getPersisted: () => ({ ...persisted }),
+  };
 }
 
 describe("useTranscribeSettings", () => {

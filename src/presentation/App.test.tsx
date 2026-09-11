@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type { SaveTranscriptSessionResult } from "../infrastructure/tauri/editorCommands";
+import { asInjectableInvokeFn } from "../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../test-setup";
 import { App } from "./App";
 import type {
@@ -69,7 +70,7 @@ const defaultTranscribeStatusResponse = {
   model_progress: null,
 };
 
-const mockInvokeFn = async (cmd: string, _args?: Record<string, unknown>) => {
+const mockInvokeFn = asInjectableInvokeFn(async (cmd: string, _args?: Record<string, unknown>) => {
   if (cmd === "get_editor_settings") {
     return { save_directory: null, export_jsonl_enabled: false };
   }
@@ -89,7 +90,7 @@ const mockInvokeFn = async (cmd: string, _args?: Record<string, unknown>) => {
     return;
   }
   return {};
-};
+});
 
 type InvokeCall = { cmd: string; args?: Record<string, unknown> };
 
@@ -142,7 +143,11 @@ function createStatefulMockInvoke(
     }
   };
 
-  return { invokeFn, calls, getPersisted: () => ({ ...persisted }) };
+  return {
+    invokeFn: asInjectableInvokeFn(invokeFn),
+    calls,
+    getPersisted: () => ({ ...persisted }),
+  };
 }
 
 async function waitForToolbarReady(getByTestId: (id: string) => HTMLElement): Promise<void> {
@@ -438,7 +443,7 @@ describe("App", () => {
   });
 
   test("syncs transcribe phase from get_transcribe_status on mount (req 5.1)", async () => {
-    const invokeFn = async (cmd: string) => {
+    const invokeFn = asInjectableInvokeFn(async (cmd: string) => {
       if (cmd === "get_transcribe_status") {
         return {
           phase: { phase: "loading_model", timestamp_ms: 42 },
@@ -446,7 +451,7 @@ describe("App", () => {
         };
       }
       return mockInvokeFn(cmd);
-    };
+    });
     const { listenFn } = createMockListen();
     const { getByTestId } = render(<App listenFn={listenFn} invokeFn={invokeFn} />);
 
@@ -456,7 +461,7 @@ describe("App", () => {
   });
 
   test("disables model variant select while loading_model (req 3.2)", async () => {
-    const invokeFn = async (cmd: string) => {
+    const invokeFn = asInjectableInvokeFn(async (cmd: string) => {
       if (cmd === "get_transcribe_status") {
         return {
           phase: { phase: "loading_model", timestamp_ms: 42 },
@@ -464,7 +469,7 @@ describe("App", () => {
         };
       }
       return mockInvokeFn(cmd);
-    };
+    });
     const { listenFn } = createMockListen();
     const { getByTestId } = render(<App listenFn={listenFn} invokeFn={invokeFn} />);
 

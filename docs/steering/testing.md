@@ -24,7 +24,7 @@ gijirec のテスト方針。何をどこで検証し、何を CI に載せな�
 | Rust ユニット | 各 crate の `#[cfg(test)] mod tests` | モジュール内 |
 | Rust 統合 | `src-tauri/crates/*/tests/*.rs`、`src-tauri/tests/*.rs` | crate 外統合テスト（device selection 性能・observability・バッチ transcribe パイプライン・モデルバリアント切替・`capture_audio_controls_integration.rs` 含む） |
 
-`src/**/*.test.*` は `tsconfig.json` の `exclude` に入れ、型チェック対象外とする（本番ビルドに含めない）。
+本番ソースは `tsconfig.json`、テストは `tsconfig.test.json` で型チェックする（`bun run typecheck` + `bun run typecheck:test`）。Vite 本番ビルドにはテストファイルを含めない。
 
 ### 実行
 
@@ -37,7 +37,7 @@ bun run verify
 bun test src/presentation src/application src/domain src/infrastructure
 
 # 品質ゲート（CI 相当の静的解析）
-bun run check          # format / typecheck / lint / arch / knip
+bun run check          # format / typecheck / typecheck:test / lint / arch / knip / dup
 bun run test           # フロント4レイヤ（capture / transcribe / editor）
 bun run test:arch      # depcruise レイヤルール fixture
 bun run rust:check     # fmt / clippy / bylaw / machete
@@ -77,6 +77,14 @@ emit(PHASE_CHANGED_EVENT, { phase: "capturing", timestamp_ms: 1 });
 - **dependency-cruiser**: `scripts/verify-depcruise-layers.test.ts` が一時 fixture でレイヤ違反を再現
 - **cargo bylaw**: `bun run rust:arch` — レイヤ crate の依存方向
 - **意図的違反テスト** — ルールが生きていることの証拠として維持
+
+### Hardware / permission tests（`#[ignore]`）
+
+マイク権限・WASAPI ループバック・ScreenCaptureKit・Whisper モデルファイルが必要な Rust テストは `#[ignore]` と contract test で理由を固定。CI / `bun run verify` では実行しない。ローカル実機:
+
+```bash
+cd src-tauri && cargo test --workspace -- --ignored
+```
 
 ### E2E / Performance / Manual（CI 対象外）
 

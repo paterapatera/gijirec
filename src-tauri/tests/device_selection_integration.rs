@@ -3,7 +3,7 @@
 
 use gijirec_lib::test_support::{
     CapturePipelineState, SyntheticMicPort, SyntheticSystemPort, new_pipeline, new_stream_handles,
-    start_processing,
+    processing_is_active, start_processing, stop_processing_for_recapture,
 };
 use gijirec_presentation::application::capture::orchestrator::{
     CaptureOrchestrator, DefaultCaptureOrchestrator, MicCapturePort, SystemAudioCapturePort,
@@ -464,7 +464,7 @@ impl CaptureSelectionPort for RecaptureCaptureSelectionAdapter {
     }
 
     fn restart_with_selection(&mut self, selection: &DeviceSelection) -> Result<(), CaptureError> {
-        self.pipeline.stop_processing_for_recapture();
+        stop_processing_for_recapture(&self.pipeline);
         let result = self
             .orchestrator
             .lock()
@@ -563,7 +563,7 @@ impl PcmSequenceStack {
         assert_eq!(orch.phase(), CapturePhase::Capturing);
         drop(orch);
         self.pipeline.on_capture_started();
-        assert!(self.pipeline.processing_is_active());
+        assert!(processing_is_active(&self.pipeline));
     }
 
     fn pump_samples(&self, samples: usize) {
@@ -602,6 +602,7 @@ fn assert_strictly_increasing_sequences(sequences: &[u64]) {
 
 /// Integration Test 4: selection change → `PcmChunk.sequence` monotonic continuity (req 3.2).
 #[test]
+#[allow(clippy::too_many_lines)] // Integration test: full capture + selection-change sequence assertions.
 fn integration_pcm_sequence_continues_after_selection_change() {
     let stack = PcmSequenceStack::new();
     stack.start_capturing();
@@ -641,7 +642,7 @@ fn integration_pcm_sequence_continues_after_selection_change() {
         CapturePhase::Capturing
     );
     assert!(
-        stack.pipeline.processing_is_active(),
+        processing_is_active(&stack.pipeline),
         "processing must restart after recapture"
     );
     assert!(

@@ -1,9 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
 import type {
   SaveTranscriptSessionRequest,
   SaveTranscriptSessionResult,
 } from "../../domain/transcript/saveSession";
 import type { EditorSettings } from "../../domain/transcript/types";
+import { defaultInvoke, type InjectableInvokeFn } from "./injectableInvoke";
 
 export type { SaveTranscriptSessionRequest, SaveTranscriptSessionResult };
 
@@ -18,14 +18,14 @@ export type SetEditorSettingsResponse = EditorSettings;
 export type PickSaveDirectoryResponse = string | null;
 
 export interface EditorCommandsOptions {
-  invokeFn?: typeof invoke;
+  invokeFn?: InjectableInvokeFn;
 }
 
 export async function saveTranscriptSession(
   request: SaveTranscriptSessionRequest,
   options: EditorCommandsOptions = {},
 ): Promise<SaveTranscriptSessionResult> {
-  const { invokeFn = invoke } = options;
+  const { invokeFn = defaultInvoke } = options;
   // Keys stay snake_case; host commands use `rename_all = "snake_case"`.
   return invokeFn<SaveTranscriptSessionResult>("save_transcript_session", { ...request });
 }
@@ -33,7 +33,7 @@ export async function saveTranscriptSession(
 export async function getEditorSettings(
   options: EditorCommandsOptions = {},
 ): Promise<GetEditorSettingsResponse> {
-  const { invokeFn = invoke } = options;
+  const { invokeFn = defaultInvoke } = options;
   return invokeFn<GetEditorSettingsResponse>("get_editor_settings");
 }
 
@@ -41,13 +41,13 @@ export async function setEditorSettings(
   request: SetEditorSettingsRequest,
   options: EditorCommandsOptions = {},
 ): Promise<SetEditorSettingsResponse> {
-  const { invokeFn = invoke } = options;
+  const { invokeFn = defaultInvoke } = options;
   return invokeFn<SetEditorSettingsResponse>("set_editor_settings", { ...request });
 }
 
 export async function pickSaveDirectory(
   options: EditorCommandsOptions = {},
 ): Promise<PickSaveDirectoryResponse> {
-  const { invokeFn = invoke } = options;
+  const { invokeFn = defaultInvoke } = options;
   return invokeFn<PickSaveDirectoryResponse>("pick_save_directory");
 }

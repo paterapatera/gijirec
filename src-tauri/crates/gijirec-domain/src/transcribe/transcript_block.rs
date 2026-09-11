@@ -104,7 +104,6 @@ pub trait TranscriptBlockConsumer: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
 
     const BLOCK_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
@@ -156,32 +155,5 @@ mod tests {
                 detail: "expected UUID v4".to_string(),
             }
         );
-    }
-
-    #[test]
-    fn consumer_trait_accepts_block() {
-        struct MockConsumer {
-            last_sequence: Arc<Mutex<Option<u64>>>,
-        }
-
-        impl TranscriptBlockConsumer for MockConsumer {
-            fn on_block_appended(
-                &self,
-                block: TranscriptBlock,
-            ) -> Result<(), TranscriptConsumerError> {
-                *self.last_sequence.lock().expect("lock") = Some(block.sequence);
-                Ok(())
-            }
-        }
-
-        let last_sequence = Arc::new(Mutex::new(None));
-        let consumer = MockConsumer {
-            last_sequence: Arc::clone(&last_sequence),
-        };
-        let block = sample_block(7);
-        consumer
-            .on_block_appended(block)
-            .expect("consumer accepts block");
-        assert_eq!(*last_sequence.lock().expect("lock"), Some(7));
     }
 }

@@ -1,5 +1,6 @@
 //! Downstream PCM chunk bus with bounded backpressure.
 
+use crate::tauri::bounded_bus::{ConsumerDeliverOutcome, flush_registered_consumer_queue};
 use crate::tauri::observability;
 use gijirec_domain::audio::pcm_chunk::{
     CHUNK_FRAME_COUNT, PcmChunk, PcmChunkConsumer, PcmConsumerError, SAMPLE_RATE_HZ,
@@ -63,28 +64,18 @@ impl PcmChunkBus {
     }
 
     fn flush_queue(&self) {
-        let consumer = self.consumer.lock().expect("lock").clone();
-        if consumer.is_none() {
-            return;
-        }
-        let consumer = consumer.expect("checked");
-        let mut queue = self.queue.lock().expect("lock");
-        let mut remaining = Vec::new();
-        for chunk in queue.drain(..) {
+        flush_registered_consumer_queue(&self.consumer, &self.queue, |consumer, chunk| {
             match consumer.on_pcm_chunk(chunk.clone()) {
-                Ok(()) => {}
-                Err(PcmConsumerError::Disconnected) => {
-                    remaining.push(chunk);
-                    break;
-                }
+                Ok(()) => ConsumerDeliverOutcome::Consumed,
+                Err(PcmConsumerError::Disconnected) => ConsumerDeliverOutcome::Stop(chunk),
                 Err(PcmConsumerError::Internal(_)) => {
                     let mut drops = self.drops_total.lock().expect("lock");
                     *drops += 1;
                     observability::log_buffer_drop(*drops);
+                    ConsumerDeliverOutcome::Consumed
                 }
             }
-        }
-        *queue = remaining;
+        });
     }
 }
 
@@ -97,17 +88,8 @@ impl Default for PcmChunkBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gijirec_domain::audio::pcm_chunk::CHUNK_FRAME_COUNT;
+    use gijirec_domain::audio::fixtures::sample_pcm_chunk;
     use std::time::{Duration, Instant};
-
-    fn sample_chunk(sequence: u64) -> PcmChunk {
-        PcmChunk::new(
-            sequence,
-            vec![0_i16; CHUNK_FRAME_COUNT as usize],
-            sequence * 100,
-        )
-        .expect("chunk")
-    }
 
     struct MockConsumer {
         received: Mutex<Vec<u64>>,
@@ -147,7 +129,7 @@ mod tests {
     #[test]
     fn delivers_first_chunk_within_100ms_after_register() {
         let bus = PcmChunkBus::new();
-        bus.publish(sample_chunk(0));
+        bus.publish(sample_pcm_chunk(0));
 
         let consumer = Arc::new(MockConsumer::immediate());
         let start = Instant::now();
@@ -175,7 +157,7 @@ mod tests {
     fn pre_register_publish_at_capacity_does_not_drop_oldest() {
         let bus = PcmChunkBus::new();
         for seq in 0..MAX_QUEUED_CHUNKS as u64 {
-            bus.publish(sample_chunk(seq));
+            bus.publish(sample_pcm_chunk(seq));
         }
         assert_eq!(
             bus.buffer_drops_total(),
@@ -194,7 +176,7 @@ mod tests {
         let bus = PcmChunkBus::new();
         let overflow = 2usize;
         for seq in 0..(MAX_QUEUED_CHUNKS as u64 + overflow as u64) {
-            bus.publish(sample_chunk(seq));
+            bus.publish(sample_pcm_chunk(seq));
         }
         assert_eq!(
             bus.buffer_drops_total(),
@@ -211,7 +193,7 @@ mod tests {
         bus.register(Arc::clone(&consumer) as Arc<dyn PcmChunkConsumer>);
 
         for seq in 0..3 {
-            bus.publish(sample_chunk(seq));
+            bus.publish(sample_pcm_chunk(seq));
         }
 
         assert_eq!(consumer.sequences().len(), 3);
@@ -223,7 +205,7 @@ mod tests {
         let bus = PcmChunkBus::new();
         let count = 10u64;
         for seq in 0..count {
-            bus.publish(sample_chunk(seq));
+            bus.publish(sample_pcm_chunk(seq));
         }
         assert_eq!(
             bus.buffer_drops_total(),

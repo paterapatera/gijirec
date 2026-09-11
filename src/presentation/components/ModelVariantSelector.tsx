@@ -1,5 +1,5 @@
-import type { invoke } from "@tauri-apps/api/core";
 import type { ChangeEvent } from "react";
+import type { InjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import {
   WHISPER_MODEL_VARIANT_LABELS,
   WHISPER_MODEL_VARIANTS,
@@ -17,7 +17,7 @@ interface ModelVariantSelectorInjectedProps {
 }
 
 interface ModelVariantSelectorRuntimeProps {
-  readonly invokeFn?: typeof invoke;
+  readonly invokeFn?: InjectableInvokeFn;
   readonly listenFn?: TranscribeEventListenFn;
 }
 

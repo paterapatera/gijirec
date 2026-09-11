@@ -1,7 +1,5 @@
 //! Capture audio controls validation, store updates, and live apply coordination.
 
-use std::fmt;
-
 use gijirec_domain::audio::{
     CaptureAudioControls, CaptureError, CapturePhase, validate_manual_ingest_gain,
 };
@@ -32,13 +30,7 @@ pub struct CaptureAudioControlsError {
     pub action_ja: String,
 }
 
-impl fmt::Display for CaptureAudioControlsError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.code.as_str(), self.message_ja)
-    }
-}
-
-impl std::error::Error for CaptureAudioControlsError {}
+crate::user_facing_error::impl_message_ja_error_display!(CaptureAudioControlsError);
 
 impl CaptureAudioControlsError {
     pub fn invalid_gain() -> Self {

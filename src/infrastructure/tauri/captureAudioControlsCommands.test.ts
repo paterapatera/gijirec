@@ -12,6 +12,7 @@ import {
   INGEST_LEVEL_EVENT,
 } from "../../presentation/hooks/capture-audio-controls-types";
 import { getCaptureAudioControls, setCaptureAudioControls } from "./captureAudioControlsCommands";
+import { asInjectableInvokeFn } from "./injectableInvoke";
 
 type InvokeCall = {
   command: string;
@@ -24,7 +25,7 @@ function createMockInvoke<T>(response: T) {
     calls.push({ command, args });
     return response;
   };
-  return { invokeFn, calls };
+  return { invokeFn: asInjectableInvokeFn(invokeFn), calls };
 }
 
 const sampleControls: CaptureAudioControls = {

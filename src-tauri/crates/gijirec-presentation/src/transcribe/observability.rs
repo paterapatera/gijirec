@@ -7,9 +7,9 @@ use std::sync::{OnceLock, RwLock};
 #[allow(clippy::too_many_arguments)]
 pub trait TranscribeObservability: Send + Sync {
     fn log_phase_transition(&self, phase: TranscribePhase);
-    fn log_pcm_sequence_gaps(&self, from: u64, to: u64);
-    fn log_block_buffer_drop(&self, drops_total: u64);
-    fn log_inference_latency(&self, latency_ms: u64);
+    fn log_pcm_sequence_gaps(&self, _from: u64, _to: u64) {}
+    fn log_block_buffer_drop(&self, _drops_total: u64) {}
+    fn log_inference_latency(&self, _latency_ms: u64) {}
     fn log_transcribe_error(&self, error: &TranscribeError);
     fn log_stall_detected(&self);
     fn log_engine_ready(&self) {}
@@ -54,9 +54,6 @@ struct NoopTranscribeObservability;
 
 impl TranscribeObservability for NoopTranscribeObservability {
     fn log_phase_transition(&self, _phase: TranscribePhase) {}
-    fn log_pcm_sequence_gaps(&self, _from: u64, _to: u64) {}
-    fn log_block_buffer_drop(&self, _drops_total: u64) {}
-    fn log_inference_latency(&self, _latency_ms: u64) {}
     fn log_transcribe_error(&self, _error: &TranscribeError) {}
     fn log_stall_detected(&self) {}
     fn log_engine_ready(&self) {}
@@ -243,12 +240,6 @@ impl TranscribeObservability for RecordingTranscribeObservability {
         self.phases.lock().expect("lock").push(phase);
     }
 
-    fn log_pcm_sequence_gaps(&self, _from: u64, _to: u64) {}
-
-    fn log_block_buffer_drop(&self, _drops_total: u64) {}
-
-    fn log_inference_latency(&self, _latency_ms: u64) {}
-
     fn log_transcribe_error(&self, error: &TranscribeError) {
         self.errors.lock().expect("lock").push(error.clone());
     }
@@ -257,45 +248,6 @@ impl TranscribeObservability for RecordingTranscribeObservability {
         self.stall_detected_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
-
-    fn log_batch_cycle_started(
-        &self,
-        _cycle_id: u64,
-        _samples_count: usize,
-        _pcm_backlog_seconds: f64,
-        _rtrb_overflow_count: u64,
-    ) {
-    }
-
-    fn log_batch_cycle_completed(
-        &self,
-        _cycle_id: u64,
-        _duration_ms: u64,
-        _samples_count: usize,
-        _segments_count: usize,
-    ) {
-    }
-
-    fn log_inference_window_level(
-        &self,
-        _window_rms: f32,
-        _samples_count: usize,
-        _inference_skipped: bool,
-    ) {
-    }
-
-    fn log_pcm_ingest_rms_summary(
-        &self,
-        _min_rms: f32,
-        _max_rms: f32,
-        _mean_rms: f32,
-        _chunk_count: u64,
-    ) {
-    }
-
-    fn log_model_variant_selected(&self, _variant: WhisperModelVariant) {}
-
-    fn log_model_variant_applied(&self, _variant: WhisperModelVariant) {}
 }
 
 /// Serializes tests that touch the process-wide transcribe observability backend.

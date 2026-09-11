@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { type Ref, useCallback, useMemo, useRef } from "react";
 import type { SaveTranscriptSessionResult } from "../infrastructure/tauri/editorCommands";
+import { defaultInvoke } from "../infrastructure/tauri/injectableInvoke";
 import type { AiTranscriptEditorRef } from "./components/AiTranscriptEditor";
 import { AppStatusPanels } from "./components/AppStatusPanels";
 import { DeviceSelectorPanel } from "./components/DeviceSelectorPanel";
@@ -41,7 +41,7 @@ export interface AppProps {
 
 export function App({
   listenFn,
-  invokeFn = invoke,
+  invokeFn = defaultInvoke,
   handwritingEditorRef: externalHandwritingRef,
   aiTranscriptEditorRef: externalAiRef,
   showSaveResultFn,

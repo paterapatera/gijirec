@@ -2,7 +2,8 @@
 
 use gijirec_lib::test_support::{
     CapturePipelineState, SyntheticMicPort, SyntheticSystemPort, new_pipeline, new_stream_handles,
-    notify_stream_disconnected, start_processing,
+    notify_stream_disconnected, processing_is_active, set_stream_disconnect_handler,
+    start_processing,
 };
 use gijirec_presentation::application::capture::orchestrator::{
     CaptureOrchestrator, DefaultCaptureOrchestrator,
@@ -99,9 +100,12 @@ impl DisconnectStack {
             as Arc<dyn gijirec_presentation::tauri::lifecycle::CaptureProcessingHook>);
 
         let lifecycle_for_stream = Arc::clone(&lifecycle);
-        pipeline.set_stream_disconnect_handler(Arc::new(move || {
-            lifecycle_for_stream.handle_stream_disconnected();
-        }));
+        set_stream_disconnect_handler(
+            &pipeline,
+            Arc::new(move || {
+                lifecycle_for_stream.handle_stream_disconnected();
+            }),
+        );
 
         Self {
             streams,
@@ -119,7 +123,7 @@ impl DisconnectStack {
         assert_eq!(orch.phase(), CapturePhase::Capturing);
         drop(orch);
         start_processing(&self.pipeline);
-        assert!(self.pipeline.processing_is_active());
+        assert!(processing_is_active(&self.pipeline));
     }
 }
 
@@ -137,7 +141,7 @@ fn integration_stream_disconnect_emits_device_disconnected() {
         "orchestrator must enter error phase after stream disconnect"
     );
     assert!(
-        !stack.pipeline.processing_is_active(),
+        !processing_is_active(&stack.pipeline),
         "processing thread must stop after disconnect"
     );
     assert!(

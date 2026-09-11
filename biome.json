@@ -30,6 +30,7 @@
       "!!**/node_modules",
       "!!**/dist",
       "!!**/coverage",
+      "!!**/.jscpd-report",
       "!!**/src-tauri"
     ]
   },
@@ -45,6 +46,16 @@
         "rules": {
           "suspicious": {
             "noUnknownAtRules": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["**/*.test.ts", "**/*.test.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
           }
         }
       }

@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 import { Editor, Transforms } from "slate";
+import type { SaveTranscriptSessionResult } from "../../infrastructure/tauri/editorCommands";
 import { setupTestDom } from "../../test-setup";
 import { DEFAULT_EDITOR_SETTINGS } from "../hooks/editor-settings";
 import type { TranscribeUserError } from "../hooks/transcribe-status";
@@ -33,7 +34,7 @@ function typeIntoHandwriting(ref: HandwritingEditorRef | null, text: string): vo
   });
 }
 
-const noopSave = async () => {};
+const noopSave = async (): Promise<SaveTranscriptSessionResult | undefined> => undefined;
 
 const defaultSettingsProps = {
   settings: DEFAULT_EDITOR_SETTINGS,

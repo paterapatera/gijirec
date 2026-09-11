@@ -1,8 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Dispatch, SetStateAction } from "react";
 import { useEffect, useState } from "react";
 import { getCaptureAudioControls } from "../../infrastructure/tauri/captureAudioControlsCommands";
+import {
+  defaultInvoke,
+  type InjectableInvokeFn,
+} from "../../infrastructure/tauri/injectableInvoke";
 import type {
   CaptureAudioControlsChanged,
   CaptureAudioControlsEventListenFn,
@@ -22,7 +25,7 @@ type CapturePhase = CapturePhaseChanged["phase"];
 
 export interface UseCaptureAudioControlsOptions {
   listenFn?: CaptureAudioControlsEventListenFn;
-  invokeFn?: typeof invoke;
+  invokeFn?: InjectableInvokeFn;
   /**
    * When set, overrides `useCaptureStatus` for the disabled gate (req 1.6 / 3.5).
    * When omitted, phase comes from `useCaptureStatus`.
@@ -80,7 +83,7 @@ function applyDisabled(
 }
 
 async function syncInitialControls(
-  invokeFn: typeof invoke,
+  invokeFn: InjectableInvokeFn,
   setState: Dispatch<SetStateAction<CaptureAudioControlsHookState>>,
 ): Promise<void> {
   try {
@@ -132,7 +135,11 @@ async function subscribeCaptureAudioControlsEvents(
 export function useCaptureAudioControls(
   options: UseCaptureAudioControlsOptions = {},
 ): CaptureAudioControlsHookState {
-  const { listenFn = listen, invokeFn = invoke, capturePhase: capturePhaseOverride } = options;
+  const {
+    listenFn = listen,
+    invokeFn = defaultInvoke,
+    capturePhase: capturePhaseOverride,
+  } = options;
   const captureStatus = useCaptureStatus({
     invokeFn,
     listenFn: listenFn as CaptureEventListenFn,

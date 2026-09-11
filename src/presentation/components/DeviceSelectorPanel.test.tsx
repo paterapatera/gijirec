@@ -1,5 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import type { InjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
+import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../../test-setup";
 import type {
   AudioDeviceInfo,
@@ -64,7 +66,7 @@ const sampleError: CaptureUserError = {
 
 const defaultListenFn = async () => () => {};
 
-async function defaultInvokeFn(command: string): Promise<unknown> {
+const defaultInvokeFn = asInjectableInvokeFn(async (command: string): Promise<unknown> => {
   if (command === "get_capture_phase") {
     return { phase: "idle", timestamp_ms: 0 };
   }
@@ -79,7 +81,7 @@ async function defaultInvokeFn(command: string): Promise<unknown> {
     };
   }
   return null;
-}
+});
 
 function renderPanel(
   overrides: {
@@ -89,7 +91,7 @@ function renderPanel(
     onSelectionChange?: (selection: DeviceSelection) => void;
     isMacos?: boolean;
     detectMacos?: () => boolean;
-    invokeFn?: (command: string, args?: unknown) => Promise<unknown>;
+    invokeFn?: InjectableInvokeFn;
     listenFn?: (
       event: string,
       handler: (event: { payload: unknown }) => void,
@@ -240,13 +242,13 @@ describe("DeviceSelectorPanel", () => {
 
   test("calls set_device_selection via invokeFn when onSelectionChange is omitted", async () => {
     const calls: { command: string; args?: unknown }[] = [];
-    const invokeFn = async (command: string, args?: unknown) => {
+    const invokeFn = asInjectableInvokeFn(async (command: string, args?: unknown) => {
       calls.push({ command, args });
       if (command === "set_device_selection") {
         return args;
       }
       return defaultInvokeFn(command);
-    };
+    });
 
     const { getByTestId } = renderPanel({
       detectMacos: () => false,
@@ -300,7 +302,7 @@ describe("DeviceSelectorPanel", () => {
   });
 
   test("disables capture audio controls when capture phase is idle", async () => {
-    const invokeFn = async (command: string) => {
+    const invokeFn = asInjectableInvokeFn(async (command: string) => {
       if (command === "get_capture_phase") {
         return { phase: "idle", timestamp_ms: 0 };
       }
@@ -315,7 +317,7 @@ describe("DeviceSelectorPanel", () => {
         };
       }
       return null;
-    };
+    });
 
     const { getByTestId } = renderPanel({
       detectMacos: () => false,
@@ -331,7 +333,7 @@ describe("DeviceSelectorPanel", () => {
 
   test("calls set_capture_audio_controls when mic switch toggled while capturing", async () => {
     const calls: { command: string; args?: unknown }[] = [];
-    const invokeFn = async (command: string, args?: unknown) => {
+    const invokeFn = asInjectableInvokeFn(async (command: string, args?: unknown) => {
       calls.push({ command, args });
       if (command === "get_capture_phase") {
         return { phase: "capturing", timestamp_ms: 0 };
@@ -357,7 +359,7 @@ describe("DeviceSelectorPanel", () => {
         };
       }
       return null;
-    };
+    });
 
     const { getByTestId } = renderPanel({
       detectMacos: () => false,
@@ -380,7 +382,7 @@ describe("DeviceSelectorPanel", () => {
   });
 
   test("renders capture audio controls row in device selector panel", async () => {
-    const invokeFn = async (command: string) => {
+    const invokeFn = asInjectableInvokeFn(async (command: string) => {
       if (command === "get_capture_audio_controls") {
         return {
           controls: {
@@ -395,7 +397,7 @@ describe("DeviceSelectorPanel", () => {
         return { phase: "idle", timestamp_ms: 0 };
       }
       return null;
-    };
+    });
     const listenFn = async () => () => {};
 
     const { getByTestId } = renderPanel({

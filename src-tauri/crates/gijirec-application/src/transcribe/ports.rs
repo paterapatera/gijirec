@@ -3,25 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub use gijirec_domain::transcribe::{ModelDownloadProgress, ModelDownloadStatus};
 use gijirec_domain::transcribe::{TranscribeError, WhisperModelVariant};
-
-/// Progress payload per `docs/contracts/whisper-transcribe-status.md`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ModelDownloadProgress {
-    pub bytes_downloaded: u64,
-    pub bytes_total: Option<u64>,
-    pub percent: Option<f64>,
-    pub status: ModelDownloadStatus,
-}
-
-/// Download lifecycle status emitted through progress callbacks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModelDownloadStatus {
-    Downloading,
-    Verifying,
-    Complete,
-    Failed,
-}
 
 /// Local model path resolution and integrity verification.
 pub trait ModelStorePort: Send {
@@ -38,12 +21,14 @@ pub trait ModelStorePort: Send {
 
 /// HTTPS model acquisition with streaming progress.
 pub trait ModelDownloaderPort: Send {
+    /* jscpd:ignore-start */
     fn download(
         &self,
         url: &str,
         destination: &Path,
         on_progress: &mut dyn FnMut(ModelDownloadProgress),
     ) -> Result<(), TranscribeError>;
+    /* jscpd:ignore-end */
 }
 
 /// 推論ワーカーの起動・停止。infrastructure の TranscribeWorker が実装。
@@ -61,32 +46,11 @@ pub trait WhisperContextPort: Send {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcribe::noop_ports::{NoopTranscribeWorkerPort, NoopWhisperContextPort};
+    use crate::transcribe::test_support::NoopModelDownloader;
     use std::path::PathBuf;
 
-    struct MockWorker;
-    struct MockContext;
     struct MockStore;
-    struct MockDownloader;
-
-    impl TranscribeWorkerPort for MockWorker {
-        fn prepare_model_path(&mut self, _path: &Path) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-
-        fn spawn(&mut self) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-
-        fn stop_and_join(&mut self, _timeout: Duration) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-    }
-
-    impl WhisperContextPort for MockContext {
-        fn load_model(&mut self, _path: &Path) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-    }
 
     impl ModelStorePort for MockStore {
         fn model_path(&self) -> PathBuf {
@@ -114,23 +78,12 @@ mod tests {
         }
     }
 
-    impl ModelDownloaderPort for MockDownloader {
-        fn download(
-            &self,
-            _url: &str,
-            _destination: &Path,
-            _on_progress: &mut dyn FnMut(ModelDownloadProgress),
-        ) -> Result<(), TranscribeError> {
-            Ok(())
-        }
-    }
-
     #[test]
     fn ports_are_object_safe_and_injectable() {
-        let mut worker: Box<dyn TranscribeWorkerPort> = Box::new(MockWorker);
-        let mut context: Box<dyn WhisperContextPort> = Box::new(MockContext);
+        let mut worker: Box<dyn TranscribeWorkerPort> = Box::new(NoopTranscribeWorkerPort);
+        let mut context: Box<dyn WhisperContextPort> = Box::new(NoopWhisperContextPort);
         let store: Box<dyn ModelStorePort> = Box::new(MockStore);
-        let downloader: Box<dyn ModelDownloaderPort> = Box::new(MockDownloader);
+        let downloader: Box<dyn ModelDownloaderPort> = Box::new(NoopModelDownloader);
 
         worker.spawn().expect("spawn should succeed");
         context

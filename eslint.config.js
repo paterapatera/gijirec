@@ -43,10 +43,43 @@ export default defineConfig(
     // Node CLI wrappers: declare Node globals and allow spawning `cargo` from PATH.
     files: ["scripts/**/*.mjs"],
     languageOptions: {
-      globals: { process: "readonly" },
+      globals: { console: "readonly", process: "readonly" },
     },
     rules: {
       "sonarjs/no-os-command-from-path": "off",
+      "sonarjs/super-linear-regex": "off",
+      "sonarjs/no-nested-template-literals": "off",
+    },
+  },
+  {
+    files: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test-setup.ts"],
+    languageOptions: {
+      parserOptions: {
+        project: ["./tsconfig.test.json"],
+        projectService: false,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      "max-lines-per-function": "off",
+      "max-params": "off",
+      complexity: "off",
+      "sonarjs/cognitive-complexity": "off",
+      "sonarjs/no-nested-functions": "off",
+      "sonarjs/publicly-writable-directories": "off",
+      "sonarjs/no-floating-point-equality": "off",
+      "sonarjs/prefer-specific-assertions": "off",
+      "sonarjs/prefer-read-only-props": "off",
+      "@typescript-eslint/no-non-null-assertion": "off",
+      "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/require-await": "off",
+      "@typescript-eslint/no-floating-promises": "off",
+      "@typescript-eslint/no-unnecessary-type-assertion": "off",
+      "@typescript-eslint/no-unnecessary-condition": "off",
+      "@typescript-eslint/no-unnecessary-type-parameters": "off",
+      "@typescript-eslint/restrict-template-expressions": "off",
+      "@typescript-eslint/no-redundant-type-constituents": "off",
+      "@typescript-eslint/unbound-method": "off",
     },
   },
   {
@@ -59,9 +92,6 @@ export default defineConfig(
       ".agents/**",
       "**/*.cjs",
       "scripts/**/*.test.ts",
-      "src/**/*.test.ts",
-      "src/**/*.test.tsx",
-      "src/test-setup.ts",
     ],
   },
 );

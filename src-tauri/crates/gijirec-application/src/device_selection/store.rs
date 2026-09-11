@@ -41,18 +41,13 @@ impl Default for DeviceSelectionStore {
 #[cfg(test)]
 mod tests {
     use super::DeviceSelectionStore;
+    use gijirec_domain::audio::fixtures::assert_both_channels_resolve_to_os_default;
     use gijirec_domain::audio::{AudioDeviceId, DeviceSelection};
 
     /// Design unit test 8: initial store selection uses `None` → OS default resolution.
     #[test]
     fn none_selection_is_passed_as_default_resolvable() {
-        let store = DeviceSelectionStore::new();
-        let selection = store.get_selection();
-
-        assert!(selection.microphone_id().is_none());
-        assert!(selection.speaker_id().is_none());
-        assert!(selection.resolves_microphone_to_os_default());
-        assert!(selection.resolves_speaker_to_os_default());
+        assert_both_channels_resolve_to_os_default(&DeviceSelectionStore::new().get_selection());
     }
 
     /// Design unit test 8 (per-field): stored `None` on one channel only resolves that channel to OS default.

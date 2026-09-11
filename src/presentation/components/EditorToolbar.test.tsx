@@ -4,6 +4,7 @@ import {
   type SaveTranscriptSessionResult,
   saveTranscriptSession,
 } from "../../infrastructure/tauri/editorCommands";
+import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../../test-setup";
 import type { EditorSettings } from "../hooks/editor-settings";
 import { DEFAULT_EDITOR_SETTINGS } from "../hooks/editor-settings";
@@ -58,7 +59,7 @@ function createMockInvoke(
   };
 
   return {
-    invokeFn,
+    invokeFn: asInjectableInvokeFn(invokeFn),
     calls,
     getPersisted: () => ({ ...persisted }),
     setPickResult: (path: string | null) => {

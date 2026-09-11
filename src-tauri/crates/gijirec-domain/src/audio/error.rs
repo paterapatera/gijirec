@@ -166,6 +166,7 @@ impl std::error::Error for CaptureError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::user_facing_contract_tests::assert_contract_error_mappings;
 
     fn all_errors() -> Vec<CaptureError> {
         vec![
@@ -200,29 +201,9 @@ mod tests {
             "INTERNAL",
         ];
 
-        let errors = all_errors();
-        assert_eq!(
-            errors.len(),
-            expected.len(),
-            "every contract error code must have a CaptureError mapping"
-        );
-
-        for (error, code) in errors.into_iter().zip(expected) {
-            let facing = error.to_user_facing();
-            assert_eq!(
-                facing.code.as_str(),
-                code,
-                "unexpected contract code mapping"
-            );
-            assert!(
-                facing.action_ja_is_present(),
-                "action_ja must be non-empty for contract code {code}"
-            );
-            assert!(
-                !facing.message_ja.trim().is_empty(),
-                "message_ja must be non-empty for contract code {code}"
-            );
-        }
+        assert_contract_error_mappings(all_errors(), &expected, |error| {
+            error.clone().to_user_facing()
+        });
     }
 
     #[test]

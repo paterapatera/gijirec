@@ -32,7 +32,8 @@ function percentile(sorted: number[], p: number): number {
     return 0;
   }
   const index = Math.ceil((p / 100) * sorted.length) - 1;
-  return sorted[Math.max(0, Math.min(index, sorted.length - 1))];
+  const clampedIndex = Math.max(0, Math.min(index, sorted.length - 1));
+  return sorted[clampedIndex] ?? 0;
 }
 
 describe("block append performance", () => {

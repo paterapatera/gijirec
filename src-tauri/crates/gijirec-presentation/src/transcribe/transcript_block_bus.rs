@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::tauri::bounded_bus::{ConsumerDeliverOutcome, flush_registered_consumer_queue};
 use gijirec_domain::transcribe::{
     TranscriptBlock, TranscriptBlockConsumer, TranscriptConsumerError,
 };
@@ -206,21 +207,13 @@ impl TranscriptBlockBus {
     }
 
     fn flush_queue(&self) {
-        let consumer = self.consumer.lock().expect("lock").clone();
-        if consumer.is_none() {
-            return;
-        }
-        let consumer = consumer.expect("checked");
-        let mut queue = self.queue.lock().expect("lock");
-        let mut remaining = Vec::new();
-        for block in queue.drain(..) {
-            if let Err(_err) = consumer.on_block_appended(block.clone()) {
-                remaining.push(block);
+        flush_registered_consumer_queue(&self.consumer, &self.queue, |consumer, block| {
+            if consumer.on_block_appended(block.clone()).is_err() {
+                ConsumerDeliverOutcome::Retain(block)
+            } else {
+                ConsumerDeliverOutcome::Consumed
             }
-        }
-        if !remaining.is_empty() {
-            *queue = remaining;
-        }
+        });
     }
 }
 

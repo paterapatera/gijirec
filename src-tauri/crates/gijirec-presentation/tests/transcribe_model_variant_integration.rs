@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use gijirec_presentation::application::transcribe::TranscribeSettingsService;
 use gijirec_presentation::application::transcribe::model_orchestrator::{
-    ApplyVariantOutcome, ModelOrchestrator, ModelOrchestratorConfig,
+    ApplyVariantOutcome, ModelOrchestrator,
 };
 use gijirec_presentation::application::transcribe::ports::{
     ModelDownloadProgress, ModelDownloadStatus, ModelDownloaderPort, ModelStorePort,
@@ -34,11 +34,13 @@ impl SequenceStore {
 
 impl ModelStorePort for SequenceStore {
     fn model_path(&self) -> PathBuf {
-        self.path.clone()
+        gijirec_presentation::transcribe::test_support::clone_store_model_path(&self.path)
     }
 
-    fn model_path_for(&self, _variant: WhisperModelVariant) -> PathBuf {
-        self.path.clone()
+    fn model_path_for(&self, variant: WhisperModelVariant) -> PathBuf {
+        gijirec_presentation::transcribe::test_support::clone_store_model_path_for(
+            &self.path, variant,
+        )
     }
 
     fn verify(&self, expected: Option<&str>) -> Result<PathBuf, TranscribeError> {
@@ -116,7 +118,6 @@ fn startup_persisted_settings_initialize_orchestrator_variant() {
         OkDownloader {
             calls: AtomicUsize::new(0),
         },
-        ModelOrchestratorConfig::fp16_from_catalog(),
     );
     orchestrator.initialize_selected_variant(load.settings.model_variant);
     assert_eq!(orchestrator.selected_variant(), WhisperModelVariant::Q8_0);
@@ -130,11 +131,8 @@ fn set_variant_persists_and_downloads_when_local_model_missing() {
     let downloader = OkDownloader {
         calls: AtomicUsize::new(0),
     };
-    let mut orchestrator = ModelOrchestrator::new(
-        SequenceStore::missing_then_ok(path.clone()),
-        downloader,
-        ModelOrchestratorConfig::fp16_from_catalog(),
-    );
+    let mut orchestrator =
+        ModelOrchestrator::new(SequenceStore::missing_then_ok(path.clone()), downloader);
 
     let settings =
         persist_transcribe_model_variant(&service, WhisperModelVariant::Q5_0).expect("persist");

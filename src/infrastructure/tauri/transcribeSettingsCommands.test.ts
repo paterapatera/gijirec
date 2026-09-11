@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { asInjectableInvokeFn } from "./injectableInvoke";
 import {
   DEFAULT_TRANSCRIBE_SETTINGS,
   getTranscribeSettings,
@@ -8,13 +9,13 @@ import {
 
 describe("transcribeSettingsCommands", () => {
   test("getTranscribeSettings invokes contract command", async () => {
-    const invokeFn = async (cmd: string) => {
+    const invokeFn = asInjectableInvokeFn(async (cmd: string) => {
       expect(cmd).toBe("get_transcribe_settings");
       return {
         settings: { model_variant: "q8_0" },
         local_availability: { q5_0: false, q8_0: true, fp16: true },
       };
-    };
+    });
 
     const response = await getTranscribeSettings({ invokeFn });
     expect(response.settings.model_variant).toBe("q8_0");
@@ -22,11 +23,11 @@ describe("transcribeSettingsCommands", () => {
   });
 
   test("setTranscribeModelVariant invokes contract command", async () => {
-    const invokeFn = async (cmd: string, args?: Record<string, unknown>) => {
+    const invokeFn = asInjectableInvokeFn(async (cmd: string, args?: Record<string, unknown>) => {
       expect(cmd).toBe("set_transcribe_model_variant");
       expect(args).toEqual({ model_variant: "q5_0" });
       return { settings: { model_variant: "q5_0" } };
-    };
+    });
 
     const response = await setTranscribeModelVariant({ model_variant: "q5_0" }, { invokeFn });
     expect(response.settings.model_variant).toBe("q5_0");

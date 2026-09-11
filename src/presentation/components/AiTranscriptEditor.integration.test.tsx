@@ -9,6 +9,7 @@ import { Transforms } from "slate";
 import { lockSelection } from "../../application/transcript/lockManager";
 import type { TranscriptBlockElement } from "../../domain/transcript/slateTypes";
 import type { TranscriptBlockView } from "../../domain/transcript/types";
+import type { SaveTranscriptSessionResult } from "../../infrastructure/tauri/editorCommands";
 import { setupTestDom } from "../../test-setup";
 import { DEFAULT_EDITOR_SETTINGS } from "../hooks/editor-settings";
 import type { TranscriptBlockAppended } from "../hooks/transcript-blocks";
@@ -19,6 +20,7 @@ import {
   getAiTranscriptEditorForTest,
 } from "./AiTranscriptEditor";
 import { TranscriptEditorView } from "./TranscriptEditorView";
+import { createMockListen, type MockTranscriptEditorListenFn } from "./transcriptEditorTestHelpers";
 
 beforeAll(() => {
   setupTestDom();
@@ -27,33 +29,6 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
 });
-
-type EventHandler = (event: { payload: unknown }) => void;
-
-function createMockListen() {
-  const listeners = new Map<string, EventHandler[]>();
-
-  const listenFn = async (event: string, handler: EventHandler) => {
-    const handlers = listeners.get(event) ?? [];
-    handlers.push(handler);
-    listeners.set(event, handlers);
-    return () => {
-      const list = listeners.get(event) ?? [];
-      const index = list.indexOf(handler);
-      if (index >= 0) {
-        list.splice(index, 1);
-      }
-    };
-  };
-
-  const emit = (event: string, payload: unknown) => {
-    for (const handler of listeners.get(event) ?? []) {
-      handler({ payload });
-    }
-  };
-
-  return { listenFn, emit, listeners };
-}
 
 function makeBlockAppended(
   overrides: Partial<TranscriptBlockAppended["block"]> &
@@ -104,7 +79,7 @@ function lockTextRange(ref: AiTranscriptEditorRef | null, start: number, end: nu
   });
 }
 
-const noopSave = async () => {};
+const noopSave = async (): Promise<SaveTranscriptSessionResult | undefined> => undefined;
 
 const defaultSettingsProps = {
   settings: DEFAULT_EDITOR_SETTINGS,
@@ -163,7 +138,7 @@ describe("Integration 1: block-appended → AI editor end append", () => {
 
   test("flushes blocks received before AI editor ref attaches", async () => {
     const { listenFn, emit } = createMockListen();
-    const gatedListenFn = async (event: string, handler: EventHandler) => {
+    const gatedListenFn: MockTranscriptEditorListenFn = async (event, handler) => {
       const unlisten = await listenFn(event, handler);
       if (event === BLOCK_APPENDED_EVENT) {
         emit(

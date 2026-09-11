@@ -1567,6 +1567,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "gijirec-domain",
+ "serde",
  "serde_json",
  "uuid",
 ]
@@ -1590,7 +1591,6 @@ dependencies = [
  "rtrb",
  "rubato",
  "screencapturekit",
- "serde",
  "sha2",
  "whisper-rs",
 ]

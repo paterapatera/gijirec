@@ -4,7 +4,11 @@ mod model_store;
 mod transcribe_worker;
 mod whisper_adapter;
 
-pub use model_downloader::{ModelDownloadProgress, ModelDownloadStatus, ModelDownloader};
+#[cfg(test)]
+mod test_temp;
+
+pub use gijirec_domain::transcribe::{ModelDownloadProgress, ModelDownloadStatus};
+pub use model_downloader::ModelDownloader;
 pub use model_store::{MODEL_FILENAME, ModelStore};
 pub use transcribe_worker::{
     BatchCycleCompleted, BatchCycleStarted, InferenceWindowLevel, MAX_PCM_BUFFER_SAMPLES,

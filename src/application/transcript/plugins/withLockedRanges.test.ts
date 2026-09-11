@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ReactElement } from "react";
 import { createEditor, Transforms } from "slate";
 import type { TranscriptBlockElement } from "../../../domain/transcript/slateTypes";
 import { lockSelection } from "../lockManager";
@@ -217,7 +218,7 @@ describe("renderLockedLeaf", () => {
       children: "locked",
       leaf: { text: "locked", locked: true },
       text: { text: "locked", locked: true },
-    });
+    }) as ReactElement<{ style?: Record<string, string> }>;
 
     expect(element.props.style).toEqual({
       backgroundColor: "var(--classic-rose)",
@@ -232,7 +233,7 @@ describe("renderLockedLeaf", () => {
       children: "plain",
       leaf: { text: "plain" },
       text: { text: "plain" },
-    });
+    }) as ReactElement<{ style?: Record<string, string> }>;
 
     expect(element.props.style).toBeUndefined();
   });

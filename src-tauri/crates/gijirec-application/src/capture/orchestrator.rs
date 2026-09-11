@@ -2,37 +2,34 @@
 
 use gijirec_domain::audio::{AudioDeviceId, CaptureError, CapturePhase, DeviceSelection};
 
-/// Port for opening/closing the microphone capture stream.
-pub trait MicCapturePort: Send {
-    fn open(&mut self) -> Result<(), CaptureError>;
+macro_rules! define_capture_stream_port {
+    ($(#[$meta:meta])* $trait_name:ident) => {
+        $(#[$meta])*
+        pub trait $trait_name: Send {
+            fn open(&mut self) -> Result<(), CaptureError>;
 
-    fn open_with_selection(
-        &mut self,
-        device_id: Option<&AudioDeviceId>,
-    ) -> Result<(), CaptureError> {
-        let _ = device_id;
-        self.open()
-    }
+            fn open_with_selection(
+                &mut self,
+                device_id: Option<&AudioDeviceId>,
+            ) -> Result<(), CaptureError> {
+                let _ = device_id;
+                self.open()
+            }
 
-    fn close(&mut self);
-    fn is_open(&self) -> bool;
+            fn close(&mut self);
+            fn is_open(&self) -> bool;
+        }
+    };
 }
 
-/// Port for opening/closing the system audio capture stream.
-pub trait SystemAudioCapturePort: Send {
-    fn open(&mut self) -> Result<(), CaptureError>;
-
-    fn open_with_selection(
-        &mut self,
-        device_id: Option<&AudioDeviceId>,
-    ) -> Result<(), CaptureError> {
-        let _ = device_id;
-        self.open()
-    }
-
-    fn close(&mut self);
-    fn is_open(&self) -> bool;
-}
+define_capture_stream_port!(
+    /// Port for opening/closing the microphone capture stream.
+    MicCapturePort
+);
+define_capture_stream_port!(
+    /// Port for opening/closing the system audio capture stream.
+    SystemAudioCapturePort
+);
 
 /// Orchestrates mic + system audio capture lifecycle.
 pub trait CaptureOrchestrator: Send {
@@ -189,6 +186,17 @@ impl<M: MicCapturePort, S: SystemAudioCapturePort> CaptureOrchestrator
 mod tests {
     use super::*;
 
+    fn record_device_selection(device_id: Option<&AudioDeviceId>) -> Option<String> {
+        device_id.map(|id| id.as_str().to_string())
+    }
+
+    fn close_open_capture_port(opened: &mut bool, close_count: &mut usize) {
+        if *opened {
+            *close_count += 1;
+        }
+        *opened = false;
+    }
+
     struct MockMic {
         open_ok: bool,
         opened: bool,
@@ -216,35 +224,42 @@ mod tests {
         }
     }
 
-    impl MicCapturePort for MockMic {
-        fn open(&mut self) -> Result<(), CaptureError> {
-            self.open_with_selection(None)
-        }
+    macro_rules! impl_mock_capture_port_shell {
+        ($trait:path, $ty:ty, |$self:ident, $device_id:ident| $open_with_selection:block) => {
+            impl $trait for $ty {
+                fn open(&mut self) -> Result<(), CaptureError> {
+                    self.open_with_selection(None)
+                }
 
-        fn open_with_selection(
-            &mut self,
-            device_id: Option<&AudioDeviceId>,
-        ) -> Result<(), CaptureError> {
-            self.last_selection = device_id.map(|id| id.as_str().to_string());
-            if self.open_ok {
-                self.opened = true;
-                Ok(())
-            } else {
-                Err(CaptureError::MicUnavailable)
+                fn open_with_selection(
+                    &mut self,
+                    device_id: Option<&AudioDeviceId>,
+                ) -> Result<(), CaptureError> {
+                    let $self = self;
+                    let $device_id = device_id;
+                    $open_with_selection
+                }
+
+                fn close(&mut self) {
+                    close_open_capture_port(&mut self.opened, &mut self.close_count);
+                }
+
+                fn is_open(&self) -> bool {
+                    self.opened
+                }
             }
-        }
-
-        fn close(&mut self) {
-            if self.opened {
-                self.close_count += 1;
-            }
-            self.opened = false;
-        }
-
-        fn is_open(&self) -> bool {
-            self.opened
-        }
+        };
     }
+
+    impl_mock_capture_port_shell!(MicCapturePort, MockMic, |mock, device_id| {
+        mock.last_selection = record_device_selection(device_id);
+        if mock.open_ok {
+            mock.opened = true;
+            Ok(())
+        } else {
+            Err(CaptureError::MicUnavailable)
+        }
+    });
 
     struct MockSystem {
         opens_before_success: usize,
@@ -306,39 +321,19 @@ mod tests {
         }
     }
 
-    impl SystemAudioCapturePort for MockSystem {
-        fn open(&mut self) -> Result<(), CaptureError> {
-            self.open_with_selection(None)
+    impl_mock_capture_port_shell!(SystemAudioCapturePort, MockSystem, |system, device_id| {
+        system.last_selection = record_device_selection(device_id);
+        system.open_attempts += 1;
+        if system.open_attempts <= system.opens_before_success {
+            return Err(system.error.clone());
         }
-
-        fn open_with_selection(
-            &mut self,
-            device_id: Option<&AudioDeviceId>,
-        ) -> Result<(), CaptureError> {
-            self.last_selection = device_id.map(|id| id.as_str().to_string());
-            self.open_attempts += 1;
-            if self.open_attempts <= self.opens_before_success {
-                return Err(self.error.clone());
-            }
-            if self.fail_on_attempt == Some(self.open_attempts) {
-                self.opened = false;
-                return Err(self.error.clone());
-            }
-            self.opened = true;
-            Ok(())
+        if system.fail_on_attempt == Some(system.open_attempts) {
+            system.opened = false;
+            return Err(system.error.clone());
         }
-
-        fn close(&mut self) {
-            if self.opened {
-                self.close_count += 1;
-            }
-            self.opened = false;
-        }
-
-        fn is_open(&self) -> bool {
-            self.opened
-        }
-    }
+        system.opened = true;
+        Ok(())
+    });
 
     #[test]
     fn start_to_capturing_to_stop_to_idle() {

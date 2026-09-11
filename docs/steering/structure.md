@@ -139,6 +139,7 @@ feature 完了後、spec ディレクトリを削除する前に次を行う（�
 | 対象 | コマンド | 検証内容 |
 |------|----------|----------|
 | **完成判定** | `bun run verify` | 下記 lint・テスト一式 |
+| エージェント修正ループ | `bun run verify:agent` | `verify` 相当を構造化出力で実行（詳細: `AGENTS.md`） |
 | TS 全体 | `bun run check` | format, types, lint, arch, dead code |
 | TS テスト | `bun run test` | フロント4レイヤ（capture / transcribe / editor） |
 | TS arch fixture | `bun run test:arch` | dependency-cruiser レイヤルールの回帰テスト |
@@ -146,5 +147,5 @@ feature 完了後、spec ディレクトリを削除する前に次を行う（�
 | Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-10（status-panels-horizontal / capture-gain-value-display の presentation パターンを反映）_
+_updated_at: 2026-09-11（verify:agent / AGENTS.md を反映）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_

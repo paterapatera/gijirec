@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../../test-setup";
 import type {
   CaptureAudioControlsChanged,
@@ -67,7 +68,7 @@ function createMockInvoke(handlers: Record<string, (args?: unknown) => unknown>)
     }
     return handler(args);
   };
-  return { invokeFn, calls };
+  return { invokeFn: asInjectableInvokeFn(invokeFn), calls };
 }
 
 const idlePhase = { phase: "idle" as const, timestamp_ms: 0 };

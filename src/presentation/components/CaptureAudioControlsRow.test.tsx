@@ -1,8 +1,11 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import type { InjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
+import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../../test-setup";
 import type {
   CaptureAudioControls,
+  CaptureAudioControlsEventListenFn,
   CaptureAudioControlsState,
   IngestLevelSnapshot,
 } from "../hooks/capture-audio-controls-types";
@@ -37,7 +40,7 @@ type RenderOverrides = {
   ingest_level?: IngestLevelSnapshot | null;
   disabled?: boolean;
   capturePhase?: "idle" | "capturing";
-  invokeFn?: (command: string, args?: unknown) => Promise<unknown>;
+  invokeFn?: InjectableInvokeFn;
   listenFn?: (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void>;
 };
 
@@ -61,9 +64,9 @@ function renderRow(overrides: RenderOverrides = {}) {
 
 function createMockListen() {
   const listeners = new Map<string, ((event: { payload: unknown }) => void)[]>();
-  const listenFn = async (event: string, handler: (event: { payload: unknown }) => void) => {
+  const listenFn: CaptureAudioControlsEventListenFn = async (event, handler) => {
     const handlers = listeners.get(event) ?? [];
-    handlers.push(handler);
+    handlers.push(handler as (event: { payload: unknown }) => void);
     listeners.set(event, handlers);
     return () => {
       const list = listeners.get(event) ?? [];
@@ -101,7 +104,7 @@ function createConnectedInvoke(
     }
   };
 
-  return { invokeFn, calls, getState: () => state };
+  return { invokeFn: asInjectableInvokeFn(invokeFn), calls, getState: () => state };
 }
 
 describe("CaptureAudioControlsRow", () => {
@@ -232,7 +235,7 @@ describe("CaptureAudioControlsRow", () => {
 
   test("calls set_capture_audio_controls when mic switch is toggled", async () => {
     const calls: { command: string; args?: unknown }[] = [];
-    const invokeFn = async (command: string, args?: unknown) => {
+    const invokeFn = asInjectableInvokeFn(async (command: string, args?: unknown) => {
       calls.push({ command, args });
       if (command === "set_capture_audio_controls") {
         return {
@@ -241,7 +244,7 @@ describe("CaptureAudioControlsRow", () => {
         };
       }
       return undefined;
-    };
+    });
 
     const { getByTestId } = renderRow({ invokeFn });
 
@@ -260,7 +263,7 @@ describe("CaptureAudioControlsRow", () => {
 
   test("calls set_capture_audio_controls when gain slider changes", async () => {
     const calls: { command: string; args?: unknown }[] = [];
-    const invokeFn = async (command: string, args?: unknown) => {
+    const invokeFn = asInjectableInvokeFn(async (command: string, args?: unknown) => {
       calls.push({ command, args });
       if (command === "set_capture_audio_controls") {
         return {
@@ -269,7 +272,7 @@ describe("CaptureAudioControlsRow", () => {
         };
       }
       return undefined;
-    };
+    });
 
     const { getByTestId } = renderRow({ invokeFn });
     const slider = getByTestId("ingest-gain-slider") as HTMLInputElement;

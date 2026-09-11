@@ -1,6 +1,6 @@
-import type { invoke } from "@tauri-apps/api/core";
 import type { ChangeEvent } from "react";
 import { setDeviceSelection } from "../../infrastructure/tauri/audioDeviceCommands";
+import type { InjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import type {
   AudioDeviceEventListenFn,
   AudioDeviceInfo,
@@ -36,7 +36,7 @@ interface DeviceSelectorPanelInjectedProps {
 
 interface DeviceSelectorPanelRuntimeProps {
   readonly detectMacos?: () => boolean;
-  readonly invokeFn?: typeof invoke;
+  readonly invokeFn?: InjectableInvokeFn;
   readonly listenFn?: (
     event: string,
     handler: (event: { payload: unknown }) => void,
@@ -127,7 +127,7 @@ type CapturePhase = CapturePhaseChanged["phase"];
 
 interface DeviceSelectorPanelViewProps extends DeviceSelectorPanelInjectedProps {
   readonly capturePhase?: CapturePhase;
-  readonly invokeFn?: typeof invoke;
+  readonly invokeFn?: InjectableInvokeFn;
   readonly captureAudioControlsListenFn?: CaptureAudioControlsEventListenFn;
 }
 

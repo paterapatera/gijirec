@@ -65,9 +65,22 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 ### Code Quality
 
 - **Format**: Biome（`bun run format`）— フロントエンドのみ、`src-tauri` は除外
-- **Lint**: ESLint + sonarjs（フロント）、Clippy `-D clippy::all`（Rust）
-- **Complexity**: 関数 80 行・パラメータ 4 個・認知複雑度 15 を warn 上限
-- **Dead code**: knip（TS）、cargo machete（Rust）
+- **Lint**: ESLint + sonarjs（フロント、複雑度は error）、Clippy `-D clippy::all`（Rust）
+- **Complexity**: 関数 80 行・パラメータ 4 個・認知複雑度 15（TS error / Rust clippy deny）
+- **Duplication**: jscpd — `dup:ts`（`src/`、threshold 0%）、`dup:rust`（`src-tauri/` 全体・threshold 0%・実測 0% / 0 clones）。共有 fixture: `gijirec_domain::audio::fixtures`（`sample_pcm_chunk`）、`gijirec_domain::transcribe`（`missing_whisper_model_path` / `missing_whisper_model_load_err` / `ModelDownloadProgress`）、`user_facing_contract_tests`（`contract-test-support` feature）、`tauri::bounded_bus` / `invoke_contract`、`pump_rtrb_mic_sys_producers`、`late_bound_events_shell` / `LateBoundEmitter` / `tracking_capture_port_lifecycle`、`transcribe::test_temp`、`map_mic_backend_error` / `map_stream_error`、`F32RingConsumer` / `drain_f32_slots`、`cpal_mono_input`、`cpal_device_test_support`、`define_capture_stream_port` / `impl_selection_adapter_capture_port` / `impl_mock_capture_port_shell`、`user_facing_error`、`transcribe::test_support`（`QueueModelStore` / `NoopModelDownloader`）、`WorkerHooks` / `drain_front_samples`、`settings_file`、`SyntheticPortCounters`、`logging::test_support`、`download_failure_context`。trait シグネチャ重複は `jscpd:ignore` で除外（`device_selection` bounds / `ModelDownloaderPort::download`）。`dup` は両方を実行
+- **Dead code**: knip（TS）、cargo machete（Rust）、rustc `unused` / `dead_code` / `unreachable_pub` deny（integration test 向け `pub` は明示 `allow`）
+- **Typecheck**: `bun run typecheck`（本番 `src/`）+ `bun run typecheck:test`（`tsconfig.test.json` で `*.test.*` を含む）
+- **Release verify**: `bun run verify:release` = `verify` + `rust:test:release`（リリース最適化テスト。通常 CI は `verify` のみ）
+
+### 品質ゲートの明示的例外
+
+| 例外 | 理由 | 再検討トリガー |
+|------|------|----------------|
+| `jscpd:ignore`（`ModelDownloaderPort::download` ×3） | trait + adapter の定型シグネチャ | 新 downloader 実装時 |
+| `jscpd:ignore`（`device_selection` impl ヘッダ ×2） | inherent / trait の同一 `where` bounds | inherent impl 統合時 |
+| `#[allow(clippy::too_many_arguments)]` on `save_transcript_session` | Tauri IPC が flat `SaveTranscriptSessionRequest` フィールドを要求 | 契約を nested request に変更可能になったら |
+| `knip` `ignoreDependencies: happy-dom` | `@happy-dom/global-registrator` 経由利用 | knip が解決したら削除 |
+| `#[ignore]` ハードウェア / モデル依存テスト | CI で権限・実機が不要な決定的ゲートを維持 | self-hosted 週次ジョブ追加時 |
 
 ### Architecture Enforcement
 
@@ -80,7 +93,8 @@ bun run rust:arch     # cargo bylaw（Rust レイヤ）
 
 - **Frontend**: Bun 組み込みテスト（`bun:test`）+ happy-dom + Testing Library。フックは injectable `listenFn` / `invokeFn` で Tauri なし単体テスト
 - **Rust**: crate 内ユニットテスト、presentation の統合テスト（合成 rtrb・パイプラインスモーク）
-- **品質ゲート**: `bun run verify` が完成判定（`check` + `test` + `test:arch` + `rust:check` + `rust:test`）。`bun run check` は format / typecheck / lint / arch（depcruise）/ knip。`bun run test` は `src/{presentation,application,domain,infrastructure}`。`bun run test:arch` は `scripts/verify-depcruise-layers.test.ts`。長時間性能・E2E は手動チェックリスト（CI 対象外）
+- **品質ゲート**: `bun run verify` が完成判定（`check` + `test` + `test:arch` + `rust:check` + `rust:test`）。`bun run check` は format / typecheck / typecheck:test / lint / arch（depcruise）/ knip / dup（`dup:ts` + `dup:rust`）。`bun run test` は `src/{presentation,application,domain,infrastructure}`。`bun run test:arch` は `scripts/verify-depcruise-layers.test.ts`。長時間性能・E2E・`#[ignore]` ハードウェアテストは手動（CI 対象外）
+- **エージェント修正ループ**: `bun run verify:agent`（同じゲートを構造化出力で実行）。完了宣言前は必ず `bun run verify` で最終確認。詳細はルート `AGENTS.md`
 - **方針**: 契約形状は `docs/contracts/` を正本とし、feature spec の Validation フェーズでテストを追加
 
 ## Development Environment
@@ -98,8 +112,11 @@ bun run rust:arch     # cargo bylaw（Rust レイヤ）
 # 完成判定（lint + test 一式）
 bun run verify
 
+# エージェント修正ループ（詳細は AGENTS.md）
+bun run verify:agent
+
 # Frontend quality gate
-bun run check          # format + typecheck + lint + arch + knip
+bun run check          # format + typecheck + lint + arch + knip + dup
 bun run test           # src/{presentation,application,domain,infrastructure}
 bun run test:arch      # depcruise layer fixture
 
@@ -112,6 +129,8 @@ cd src-tauri && cargo tauri dev   # beforeDevCommand で bun run dev を自動�
 
 # Individual
 bun run typecheck
+bun run typecheck:test
+bun run verify:release   # verify + rust:test:release
 bun run rust:typecheck
 ```
 
@@ -145,5 +164,5 @@ bun run rust:typecheck
 永続的な技術判断は `docs/architecture/adr/` に ADR として記録する。
 
 ---
-_updated_at: 2026-09-10（capture-audio-controls / 動的 ingest ゲイン・dBFS メーターを反映）_
+_updated_at: 2026-09-11（jscpd threshold 0%・tests scan 含む・typecheck:test・品質例外一覧・compose/transcribe_worker 分割）_
 _Document standards and patterns, not every dependency_

@@ -217,14 +217,22 @@ mod tests {
     use gijirec_domain::transcribe::TranscribeErrorCode;
     use std::fs;
 
+    fn loaded_whisper_adapter() -> WhisperCppAdapter {
+        let model_path = std::env::var("GIJIREC_WHISPER_TEST_MODEL")
+            .expect("set GIJIREC_WHISPER_TEST_MODEL to a valid ggml whisper model path");
+        let mut adapter = WhisperCppAdapter::new();
+        adapter
+            .load_model(Path::new(&model_path))
+            .expect("load local whisper model");
+        adapter
+    }
+
     #[test]
     fn load_model_failure_maps_to_model_corrupt() {
         let mut adapter = WhisperCppAdapter::new();
-        let err = adapter
-            .load_model(Path::new("/nonexistent/gijirec-model.bin"))
-            .expect_err("missing model should fail");
-
-        assert!(matches!(err, TranscribeError::ModelCorrupt { .. }));
+        let err = gijirec_domain::transcribe::missing_whisper_model_load_err(|path| {
+            adapter.load_model(path)
+        });
         assert_eq!(err.to_user_facing().code, TranscribeErrorCode::ModelCorrupt);
         assert!(!adapter.is_loaded());
     }
@@ -308,14 +316,7 @@ mod tests {
     #[test]
     #[ignore = "requires GIJIREC_WHISPER_TEST_MODEL pointing to a valid ggml whisper model"]
     fn smoke_transcribe_one_second_silence() {
-        let model_path = std::env::var("GIJIREC_WHISPER_TEST_MODEL")
-            .expect("set GIJIREC_WHISPER_TEST_MODEL to a valid ggml whisper model path");
-
-        let mut adapter = WhisperCppAdapter::new();
-        adapter
-            .load_model(Path::new(&model_path))
-            .expect("load local whisper model");
-
+        let mut adapter = loaded_whisper_adapter();
         adapter
             .transcribe_pcm(&vec![0.0_f32; 16_000])
             .expect("transcribe one second of silence");
@@ -324,14 +325,7 @@ mod tests {
     #[test]
     #[ignore = "requires GIJIREC_WHISPER_TEST_MODEL pointing to a valid ggml whisper model"]
     fn smoke_transcribe_five_second_silence() {
-        let model_path = std::env::var("GIJIREC_WHISPER_TEST_MODEL")
-            .expect("set GIJIREC_WHISPER_TEST_MODEL to a valid ggml whisper model path");
-
-        let mut adapter = WhisperCppAdapter::new();
-        adapter
-            .load_model(Path::new(&model_path))
-            .expect("load local whisper model");
-
+        let mut adapter = loaded_whisper_adapter();
         adapter
             .transcribe_pcm(&vec![0.0_f32; 80_000])
             .expect("transcribe five seconds of silence");
@@ -340,13 +334,7 @@ mod tests {
     #[test]
     #[ignore = "requires GIJIREC_WHISPER_TEST_MODEL pointing to a valid ggml whisper model"]
     fn smoke_load_and_transcribe_synthetic_pcm() {
-        let model_path = std::env::var("GIJIREC_WHISPER_TEST_MODEL")
-            .expect("set GIJIREC_WHISPER_TEST_MODEL to a valid ggml whisper model path");
-
-        let mut adapter = WhisperCppAdapter::new();
-        adapter
-            .load_model(Path::new(&model_path))
-            .expect("load local whisper model");
+        let mut adapter = loaded_whisper_adapter();
         assert!(adapter.is_loaded());
 
         let pcm = synthetic_pcm_with_activity(6.0);

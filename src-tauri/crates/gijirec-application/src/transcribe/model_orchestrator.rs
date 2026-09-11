@@ -30,19 +30,16 @@ impl ModelOrchestratorConfig {
 pub struct ModelOrchestrator<S, D> {
     store: S,
     downloader: D,
-    /// Legacy config retained for callers still passing explicit URL/SHA.
-    config: ModelOrchestratorConfig,
     selected_variant: WhisperModelVariant,
     active_variant: Option<WhisperModelVariant>,
     pending_variant: Option<WhisperModelVariant>,
 }
 
 impl<S, D> ModelOrchestrator<S, D> {
-    pub fn new(store: S, downloader: D, config: ModelOrchestratorConfig) -> Self {
+    pub fn new(store: S, downloader: D) -> Self {
         Self {
             store,
             downloader,
-            config,
             selected_variant: WhisperModelVariant::default(),
             active_variant: None,
             pending_variant: None,
@@ -92,7 +89,7 @@ impl<S: ModelStorePort, D> ModelOrchestrator<S, D> {
 
 impl<S: ModelStorePort, D: ModelDownloaderPort> ModelOrchestrator<S, D> {
     /// Ensures the currently selected variant exists locally (legacy entry point).
-    pub fn ensure_model<F>(&self, mut on_progress: F) -> Result<PathBuf, TranscribeError>
+    pub fn ensure_model<F>(&self, on_progress: F) -> Result<PathBuf, TranscribeError>
     where
         F: FnMut(ModelDownloadProgress),
     {
@@ -230,152 +227,71 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
-    use gijirec_domain::transcribe::{
-        ModelVariantCatalog, TranscribeErrorCode, WhisperModelVariant,
-    };
+    use gijirec_domain::transcribe::{TranscribeErrorCode, WhisperModelVariant};
 
     use super::*;
-    use crate::transcribe::ports::ModelDownloadProgress;
-
-    fn fp16_descriptor() -> &'static gijirec_domain::transcribe::ModelVariantDescriptor {
-        ModelVariantCatalog::fp16()
-    }
-
-    struct MockStore {
-        model_path: PathBuf,
-        verify_results: Mutex<Vec<Result<PathBuf, TranscribeError>>>,
-        verify_calls: AtomicUsize,
-    }
-
-    impl MockStore {
-        fn new(
-            model_path: PathBuf,
-            verify_results: Vec<Result<PathBuf, TranscribeError>>,
-        ) -> Arc<Self> {
-            Arc::new(Self {
-                model_path,
-                verify_results: Mutex::new(verify_results),
-                verify_calls: AtomicUsize::new(0),
-            })
-        }
-
-        fn verify_call_count(self: &Arc<Self>) -> usize {
-            self.verify_calls.load(Ordering::SeqCst)
-        }
-    }
-
-    impl ModelStorePort for Arc<MockStore> {
-        fn model_path(&self) -> PathBuf {
-            self.model_path.clone()
-        }
-
-        fn model_path_for(&self, _variant: WhisperModelVariant) -> PathBuf {
-            self.model_path.clone()
-        }
-
-        fn verify(&self, expected_sha256: Option<&str>) -> Result<PathBuf, TranscribeError> {
-            self.verify_variant(WhisperModelVariant::Fp16, expected_sha256)
-        }
-
-        fn verify_variant(
-            &self,
-            _variant: WhisperModelVariant,
-            expected_sha256: Option<&str>,
-        ) -> Result<PathBuf, TranscribeError> {
-            self.verify_calls.fetch_add(1, Ordering::SeqCst);
-            assert_eq!(expected_sha256, Some(fp16_descriptor().expected_sha256));
-
-            let mut results = self.verify_results.lock().expect("lock verify results");
-            if results.is_empty() {
-                panic!("unexpected verify call");
-            }
-            results.remove(0)
-        }
-
-        fn file_exists(&self, _variant: WhisperModelVariant) -> bool {
-            false
-        }
-    }
-
-    struct MockDownloader {
-        download_calls: AtomicUsize,
-        result: Mutex<Result<(), TranscribeError>>,
-    }
-
-    impl MockDownloader {
-        fn success() -> Arc<Self> {
-            Arc::new(Self {
-                download_calls: AtomicUsize::new(0),
-                result: Mutex::new(Ok(())),
-            })
-        }
-
-        fn failure(err: TranscribeError) -> Arc<Self> {
-            Arc::new(Self {
-                download_calls: AtomicUsize::new(0),
-                result: Mutex::new(Err(err)),
-            })
-        }
-
-        fn download_call_count(self: &Arc<Self>) -> usize {
-            self.download_calls.load(Ordering::SeqCst)
-        }
-    }
-
-    impl ModelDownloaderPort for Arc<MockDownloader> {
-        fn download(
-            &self,
-            url: &str,
-            destination: &Path,
-            on_progress: &mut dyn FnMut(ModelDownloadProgress),
-        ) -> Result<(), TranscribeError> {
-            self.download_calls.fetch_add(1, Ordering::SeqCst);
-            assert_eq!(url, fp16_descriptor().url);
-            assert_eq!(destination, Path::new("/tmp/models/model.bin"));
-
-            on_progress(ModelDownloadProgress {
-                bytes_downloaded: 100,
-                bytes_total: Some(100),
-                percent: Some(100.0),
-                status: ModelDownloadStatus::Downloading,
-            });
-
-            let result = self.result.lock().expect("lock download result").clone();
-            if result.is_ok() {
-                on_progress(ModelDownloadProgress {
-                    bytes_downloaded: 100,
-                    bytes_total: Some(100),
-                    percent: Some(100.0),
-                    status: ModelDownloadStatus::Complete,
-                });
-            }
-            result
-        }
-    }
-
-    fn config() -> ModelOrchestratorConfig {
-        ModelOrchestratorConfig::fp16_from_catalog()
-    }
+    use crate::transcribe::test_support::{
+        QueueModelDownloader, QueueModelStore, default_model_path,
+    };
 
     fn orchestrator(
-        store: Arc<MockStore>,
-        downloader: Arc<MockDownloader>,
-    ) -> ModelOrchestrator<Arc<MockStore>, Arc<MockDownloader>> {
-        ModelOrchestrator::new(store, downloader, config())
+        store: Arc<QueueModelStore>,
+        downloader: Arc<QueueModelDownloader>,
+    ) -> ModelOrchestrator<Arc<QueueModelStore>, Arc<QueueModelDownloader>> {
+        ModelOrchestrator::new(store, downloader)
+    }
+
+    fn ensure_model(
+        store: Arc<QueueModelStore>,
+        downloader: Arc<QueueModelDownloader>,
+    ) -> Result<PathBuf, TranscribeError> {
+        orchestrator(store, downloader).ensure_model(|_| {})
+    }
+
+    fn queue_store(
+        model_path: PathBuf,
+        verify_results: Vec<Result<PathBuf, TranscribeError>>,
+    ) -> Arc<QueueModelStore> {
+        QueueModelStore::new(model_path, verify_results)
+    }
+
+    fn assert_download_and_verify_counts(
+        store: &Arc<QueueModelStore>,
+        downloader: &Arc<QueueModelDownloader>,
+        downloads: usize,
+        verifications: usize,
+    ) {
+        assert_eq!(downloader.download_call_count(), downloads);
+        assert_eq!(store.verify_call_count(), verifications);
+    }
+
+    fn model_not_found(detail: &str) -> TranscribeError {
+        TranscribeError::ModelNotFound {
+            detail: detail.to_string(),
+        }
+    }
+
+    fn store_missing_then(
+        second_verify: TranscribeError,
+    ) -> (Arc<QueueModelStore>, Arc<QueueModelDownloader>) {
+        let store = queue_store(
+            default_model_path(),
+            vec![Err(model_not_found("missing")), Err(second_verify)],
+        );
+        let downloader = QueueModelDownloader::success();
+        (store, downloader)
     }
 
     #[test]
     fn existing_valid_model_skips_download() {
-        let model_path = PathBuf::from("/tmp/models/model.bin");
-        let store = MockStore::new(model_path.clone(), vec![Ok(model_path.clone())]);
-        let downloader = MockDownloader::success();
+        let model_path = default_model_path();
+        let store = queue_store(model_path.clone(), vec![Ok(model_path.clone())]);
+        let downloader = Arc::new(QueueModelDownloader::success());
 
-        let path = orchestrator(Arc::clone(&store), Arc::clone(&downloader))
-            .ensure_model(|_| {})
+        let path = ensure_model(Arc::clone(&store), Arc::clone(&downloader))
             .expect("valid model should succeed");
 
         assert_eq!(path, model_path);
@@ -385,8 +301,8 @@ mod tests {
 
     #[test]
     fn missing_model_triggers_download_and_progress_callback() {
-        let model_path = PathBuf::from("/tmp/models/model.bin");
-        let store = MockStore::new(
+        let model_path = default_model_path();
+        let store = QueueModelStore::new(
             model_path.clone(),
             vec![
                 Err(TranscribeError::ModelNotFound {
@@ -395,7 +311,7 @@ mod tests {
                 Ok(model_path.clone()),
             ],
         );
-        let downloader = MockDownloader::success();
+        let downloader = QueueModelDownloader::success();
         let progress = Arc::new(Mutex::new(Vec::new()));
 
         let path = orchestrator(Arc::clone(&store), Arc::clone(&downloader))
@@ -423,8 +339,8 @@ mod tests {
 
     #[test]
     fn corrupted_model_triggers_redownload_and_verification() {
-        let model_path = PathBuf::from("/tmp/models/model.bin");
-        let store = MockStore::new(
+        let model_path = default_model_path();
+        let store = queue_store(
             model_path.clone(),
             vec![
                 Err(TranscribeError::ModelCorrupt {
@@ -433,10 +349,9 @@ mod tests {
                 Ok(model_path.clone()),
             ],
         );
-        let downloader = MockDownloader::success();
+        let downloader = Arc::new(QueueModelDownloader::success());
 
-        let path = orchestrator(Arc::clone(&store), Arc::clone(&downloader))
-            .ensure_model(|_| {})
+        let path = ensure_model(Arc::clone(&store), Arc::clone(&downloader))
             .expect("redownload should succeed");
 
         assert_eq!(path, model_path);
@@ -446,19 +361,20 @@ mod tests {
 
     #[test]
     fn download_failure_returns_model_download_failed() {
-        let model_path = PathBuf::from("/tmp/models/model.bin");
-        let store = MockStore::new(
+        let model_path = default_model_path();
+        let store = queue_store(
             model_path,
             vec![Err(TranscribeError::ModelNotFound {
                 detail: "missing".to_string(),
             })],
         );
-        let downloader = MockDownloader::failure(TranscribeError::ModelDownloadFailed {
-            detail: "network timeout".to_string(),
-        });
+        let downloader = Arc::new(QueueModelDownloader::failure(
+            TranscribeError::ModelDownloadFailed {
+                detail: "network timeout".to_string(),
+            },
+        ));
 
-        let err = orchestrator(Arc::clone(&store), Arc::clone(&downloader))
-            .ensure_model(|_| {})
+        let err = ensure_model(Arc::clone(&store), Arc::clone(&downloader))
             .expect_err("download failure should propagate");
 
         assert!(matches!(err, TranscribeError::ModelDownloadFailed { .. }));
@@ -466,65 +382,40 @@ mod tests {
             err.to_user_facing().code,
             TranscribeErrorCode::ModelDownloadFailed
         );
-        assert_eq!(downloader.download_call_count(), 1);
+        assert_download_and_verify_counts(&store, &downloader, 1, 1);
     }
 
     #[test]
     fn post_download_checksum_failure_returns_model_corrupt() {
-        let model_path = PathBuf::from("/tmp/models/model.bin");
-        let store = MockStore::new(
-            model_path,
-            vec![
-                Err(TranscribeError::ModelNotFound {
-                    detail: "missing".to_string(),
-                }),
-                Err(TranscribeError::ModelCorrupt {
-                    detail: "checksum mismatch after download".to_string(),
-                }),
-            ],
-        );
-        let downloader = MockDownloader::success();
+        let (store, downloader) = store_missing_then(TranscribeError::ModelCorrupt {
+            detail: "checksum mismatch after download".to_string(),
+        });
 
-        let err = orchestrator(Arc::clone(&store), Arc::clone(&downloader))
-            .ensure_model(|_| {})
+        let err = ensure_model(Arc::clone(&store), Arc::clone(&downloader))
             .expect_err("post-download checksum failure should propagate");
 
         assert!(matches!(err, TranscribeError::ModelCorrupt { .. }));
         assert_eq!(err.to_user_facing().code, TranscribeErrorCode::ModelCorrupt);
-        assert_eq!(downloader.download_call_count(), 1);
-        assert_eq!(store.verify_call_count(), 2);
+        assert_download_and_verify_counts(&store, &downloader, 1, 2);
     }
 
     #[test]
     fn offline_first_launch_without_local_model_attempts_catalog_download() {
-        let model_path = PathBuf::from("/tmp/models/model.bin");
-        let store = MockStore::new(
-            model_path.clone(),
-            vec![
-                Err(TranscribeError::ModelNotFound {
-                    detail: "missing".to_string(),
-                }),
-                Err(TranscribeError::ModelNotFound {
-                    detail: "still missing after download".to_string(),
-                }),
-            ],
-        );
-        let downloader = MockDownloader::success();
+        let (store, downloader) =
+            store_missing_then(model_not_found("still missing after download"));
 
-        let err = orchestrator(Arc::clone(&store), Arc::clone(&downloader))
-            .ensure_model(|_| {})
+        let err = ensure_model(Arc::clone(&store), Arc::clone(&downloader))
             .expect_err("missing local model should attempt download then verify");
 
         assert!(matches!(err, TranscribeError::ModelNotFound { .. }));
-        assert_eq!(downloader.download_call_count(), 1);
-        assert_eq!(store.verify_call_count(), 2);
+        assert_download_and_verify_counts(&store, &downloader, 1, 2);
     }
 
     #[test]
     fn apply_same_active_variant_skips_download() {
-        let model_path = PathBuf::from("/tmp/models/model.bin");
-        let store = MockStore::new(model_path.clone(), vec![Ok(model_path.clone())]);
-        let downloader = MockDownloader::success();
+        let model_path = default_model_path();
+        let store = QueueModelStore::new(model_path.clone(), vec![Ok(model_path.clone())]);
+        let downloader = QueueModelDownloader::success();
         let mut orchestrator = orchestrator(Arc::clone(&store), Arc::clone(&downloader));
         orchestrator.mark_active_variant(WhisperModelVariant::Fp16);
 
@@ -580,8 +471,8 @@ mod tests {
             fp16: fp16_path.clone(),
             q8: q8_path.clone(),
         };
-        let downloader = MockDownloader::success();
-        let mut orchestrator = ModelOrchestrator::new(store, downloader, config());
+        let downloader = QueueModelDownloader::success();
+        let mut orchestrator = ModelOrchestrator::new(store, downloader);
         orchestrator.mark_active_variant(WhisperModelVariant::Fp16);
 
         let outcome = orchestrator

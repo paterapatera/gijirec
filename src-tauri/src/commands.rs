@@ -1,5 +1,6 @@
 //! Tauri IPC commands for capture and transcribe status.
 
+use gijirec_presentation::application::capture_audio_controls::CaptureAudioControlsService;
 use gijirec_presentation::application::editor::SettingsService;
 use gijirec_presentation::application::transcribe::TranscribeSettingsService;
 use gijirec_presentation::application::transcribe::orchestrator::TranscribeOrchestrator;
@@ -11,6 +12,7 @@ use gijirec_presentation::editor::{
     get_editor_settings_impl, pick_save_directory_from_selection, save_transcript_session_impl,
     set_editor_settings_impl,
 };
+use gijirec_presentation::tauri::capture_audio_controls::IngestLevelSnapshotCache;
 use gijirec_presentation::tauri::events::CapturePhaseChangedPayload;
 use gijirec_presentation::tauri::lifecycle::CaptureLifecycleState;
 use gijirec_presentation::transcribe::event_emitter::TranscribePhaseChangedPayload;
@@ -37,6 +39,19 @@ pub struct EditorState {
 pub struct TranscribeSettingsState {
     pub settings_service: Arc<TranscribeSettingsService>,
     pub model_orchestrator: crate::compose::SharedModelOrchestrator,
+}
+
+/// Orchestrator, cache, and emitter used when applying a model variant change.
+pub struct TranscribeVariantApplyState {
+    pub transcribe_orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
+    pub cache: Arc<TranscribeStatusCache>,
+    pub emitter: Arc<dyn TranscribeEventEmitter>,
+}
+
+/// Capture audio controls service and ingest meter cache for IPC commands.
+pub struct CaptureAudioControlsCommandState {
+    pub service: Arc<dyn CaptureAudioControlsService>,
+    pub ingest_level_cache: IngestLevelSnapshotCache,
 }
 
 /// Editor IPC commands (`docs/contracts/transcript-editor-save.md`, `transcript-editor-settings.md`).
@@ -125,20 +140,19 @@ pub mod transcribe_settings {
     }
 
     #[tauri::command(rename_all = "snake_case")]
-    #[allow(clippy::too_many_arguments)] // Tauri IPC injects orchestrator, cache, and emitter state.
     pub fn set_transcribe_model_variant(
         state: State<'_, TranscribeSettingsState>,
-        transcribe_orchestrator: State<'_, Arc<Mutex<dyn TranscribeOrchestrator>>>,
-        cache: State<'_, Arc<TranscribeStatusCache>>,
-        emitter: State<'_, Arc<dyn TranscribeEventEmitter>>,
+        apply: State<'_, TranscribeVariantApplyState>,
         model_variant: gijirec_presentation::domain::transcribe::WhisperModelVariant,
     ) -> Result<SetTranscribeModelVariantResponse, TranscribeSettingsUserError> {
         let settings = persist_transcribe_model_variant(&state.settings_service, model_variant)?;
         crate::spawn_transcribe_model_variant_apply(
             Arc::clone(&state.model_orchestrator),
-            Arc::clone(transcribe_orchestrator.inner()),
-            Arc::clone(cache.inner()),
-            Arc::clone(emitter.inner()),
+            crate::TranscribeVariantApplyDeps {
+                transcribe_orchestrator: Arc::clone(&apply.transcribe_orchestrator),
+                cache: Arc::clone(&apply.cache),
+                emitter: Arc::clone(&apply.emitter),
+            },
             model_variant,
         );
         Ok(SetTranscribeModelVariantResponse { settings })
@@ -217,33 +231,29 @@ pub mod device_selection {
 /// Capture audio controls IPC commands (`docs/contracts/capture-audio-controls.md`).
 pub mod capture_audio_controls {
     use super::*;
-    use gijirec_presentation::application::capture_audio_controls::CaptureAudioControlsService;
     use gijirec_presentation::tauri::capture_audio_controls::{
         CaptureAudioControlsInvokeError, CaptureAudioControlsPatchRequest,
-        CaptureAudioControlsStateResponse, IngestLevelSnapshotCache,
-        get_capture_audio_controls_impl, set_capture_audio_controls_impl,
+        CaptureAudioControlsStateResponse, get_capture_audio_controls_impl,
+        set_capture_audio_controls_impl,
     };
 
     #[tauri::command(rename_all = "snake_case")]
     pub fn get_capture_audio_controls(
-        service: State<'_, Arc<dyn CaptureAudioControlsService>>,
-        ingest_level_cache: State<'_, IngestLevelSnapshotCache>,
+        state: State<'_, CaptureAudioControlsCommandState>,
     ) -> CaptureAudioControlsStateResponse {
-        get_capture_audio_controls_impl(service.inner().as_ref(), ingest_level_cache.inner())
+        get_capture_audio_controls_impl(state.service.as_ref(), &state.ingest_level_cache)
     }
 
     #[tauri::command(rename_all = "snake_case")]
-    #[allow(clippy::too_many_arguments)] // Tauri IPC injects service, cache, and patch fields.
     pub fn set_capture_audio_controls(
-        service: State<'_, Arc<dyn CaptureAudioControlsService>>,
-        ingest_level_cache: State<'_, IngestLevelSnapshotCache>,
+        state: State<'_, CaptureAudioControlsCommandState>,
         mic_ingest_enabled: Option<bool>,
         manual_ingest_gain: Option<f32>,
         gain_user_adjusted: Option<bool>,
     ) -> Result<CaptureAudioControlsStateResponse, CaptureAudioControlsInvokeError> {
         set_capture_audio_controls_impl(
-            service.inner().as_ref(),
-            ingest_level_cache.inner(),
+            state.service.as_ref(),
+            &state.ingest_level_cache,
             CaptureAudioControlsPatchRequest {
                 mic_ingest_enabled,
                 manual_ingest_gain,
