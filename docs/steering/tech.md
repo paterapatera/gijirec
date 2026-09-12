@@ -46,13 +46,7 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 - 転写中切替: `pending_variant` を次バッチサイクル（`on_batch_cycle_started`）で適用。同一バリアント再選択は no-op（永続化のみ）
 - 可観測性: `batch_cycle_started` / `batch_cycle_completed`、`transcribe_pcm_backlog_seconds`、`transcribe_rtrb_overflow_count`（ingest 共有 `AtomicU64` を worker がサイクル開始時に読む。PCM 全文・転写全文はログに出さない）
 - スレッド数: CPU コア数に応じた動的設定、**上限 4**
-- VAD 区切り定数（`TRAILING_SILENCE_FRAMES` 等）はユニットテスト用レガシー経路に残存。本番は `take_batch_window` 経路
-
-### Whisper 推論パラメータ（レガシー VAD 経路の調整時）
-
-- 窓長・スレッド・VAD は **1 軸ずつ** 変更し、`bun run verify` + 実機で確認してから次へ
-- 繰り返し発話・区切り不良は、窓長変更と `single_segment` / `entropy_thold` を同時に変えない
-- 大きく戻す前に revert 条件をメモする（調整セッションで全 revert が起きやすい）
+- 無音窓: `window_rms` が `SILENCE_RMS_THRESHOLD`（0.008）未満のバッチは whisper 推論をスキップ（VAD 窓切りは ADR-0012 以前のレガシーで削除済み）
 
 ## Development Standards
 

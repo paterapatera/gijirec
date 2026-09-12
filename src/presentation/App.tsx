@@ -8,14 +8,15 @@ import type { HandwritingEditorRef } from "./components/HandwritingEditor";
 import { ModelVariantSelector } from "./components/ModelVariantSelector";
 import { TranscriptEditorView } from "./components/TranscriptEditorView";
 import { Toaster } from "./components/ui/sonner";
+import { AppStatusProviders } from "./hooks/AppStatusProviders";
+import { useCaptureStatusContext } from "./hooks/CaptureStatusContext";
 import type { CaptureEventListenFn } from "./hooks/capture-status";
+import { useTranscribeStatusContext } from "./hooks/TranscribeStatusContext";
 import type { TranscribeEventListenFn } from "./hooks/transcribe-status";
 import type { TranscriptBlockEventListenFn } from "./hooks/transcript-blocks";
-import { useCaptureStatus } from "./hooks/useCaptureStatus";
 import type { UseEditorSettingsOptions } from "./hooks/useEditorSettings";
 import { useEditorSettings } from "./hooks/useEditorSettings";
 import { useSaveTranscript } from "./hooks/useSaveTranscript";
-import { useTranscribeStatus } from "./hooks/useTranscribeStatus";
 import "./App.css";
 
 const SESSION_ID = "gijirec-session";
@@ -39,18 +40,15 @@ export interface AppProps {
   showSaveResultFn?: (result: SaveTranscriptSessionResult) => void;
 }
 
-export function App({
+function AppContent({
   listenFn,
   invokeFn = defaultInvoke,
   handwritingEditorRef: externalHandwritingRef,
   aiTranscriptEditorRef: externalAiRef,
   showSaveResultFn,
-}: AppProps = {}) {
-  const captureStatus = useCaptureStatus(listenFn === undefined ? {} : { listenFn });
-  const transcribeStatus = useTranscribeStatus({
-    ...(listenFn === undefined ? {} : { listenFn }),
-    invokeFn,
-  });
+}: Readonly<AppProps>) {
+  const captureStatus = useCaptureStatusContext();
+  const transcribeStatus = useTranscribeStatusContext();
 
   const settingsHook = useEditorSettings({ invokeFn });
 
@@ -107,9 +105,11 @@ export function App({
       />
       <DeviceSelectorPanel
         invokeFn={invokeFn}
-        {...(listenFn !== undefined ? { listenFn, captureListenFn: listenFn } : {})}
+        capturePhase={captureStatus.phase}
+        captureError={captureStatus.error}
+        {...(listenFn !== undefined ? { listenFn } : {})}
       />
-      <ModelVariantSelector invokeFn={invokeFn} {...(listenFn !== undefined ? { listenFn } : {})} />
+      <ModelVariantSelector invokeFn={invokeFn} transcribePhase={transcribeStatus.phase} />
       <TranscriptEditorView
         onSave={onSave}
         isSaving={isSaving}
@@ -123,5 +123,16 @@ export function App({
       />
       <Toaster />
     </main>
+  );
+}
+
+export function App(props: Readonly<AppProps> = {}) {
+  return (
+    <AppStatusProviders
+      {...(props.listenFn !== undefined ? { listenFn: props.listenFn } : {})}
+      {...(props.invokeFn !== undefined ? { invokeFn: props.invokeFn } : {})}
+    >
+      <AppContent {...props} />
+    </AppStatusProviders>
   );
 }

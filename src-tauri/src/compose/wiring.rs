@@ -112,13 +112,123 @@ type StallProgressSlot = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
 type InferencePercentSlot = Arc<Mutex<Option<Arc<dyn Fn(i32) + Send + Sync>>>>;
 type WorkerFatalSlot = Arc<Mutex<Option<Arc<dyn Fn(TranscribeError) + Send + Sync>>>>;
 
-struct StallProgressSlots {
+/// Late-bound callback slots bridging transcribe worker events and the stall watchdog.
+struct StallWatchdogWiring {
     block: StallProgressSlot,
     inference: StallProgressSlot,
     engine_ready: StallProgressSlot,
     inference_attempted: StallProgressSlot,
     inference_pct: InferencePercentSlot,
     worker_fatal: WorkerFatalSlot,
+}
+
+impl StallWatchdogWiring {
+    fn new() -> Self {
+        Self {
+            block: Arc::new(Mutex::new(None)),
+            inference: Arc::new(Mutex::new(None)),
+            engine_ready: Arc::new(Mutex::new(None)),
+            inference_attempted: Arc::new(Mutex::new(None)),
+            inference_pct: Arc::new(Mutex::new(None)),
+            worker_fatal: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn block_slot(&self) -> &StallProgressSlot {
+        &self.block
+    }
+
+    /// Populates stall-watchdog and lifecycle fatal-error handlers into the slots.
+    fn bind_lifecycle(&self, lifecycle: &Arc<TranscribeLifecycleHook>) {
+        if let Some(watchdog) = lifecycle.stall_watchdog() {
+            let block_watchdog = Arc::clone(&watchdog);
+            *self.block.lock().expect("lock block progress") =
+                Some(Arc::new(move || block_watchdog.on_block_appended()));
+
+            let inference_watchdog = Arc::clone(&watchdog);
+            *self.inference.lock().expect("lock inference progress") =
+                Some(Arc::new(move || inference_watchdog.on_inference_success()));
+
+            let engine_watchdog = Arc::clone(&watchdog);
+            *self.engine_ready.lock().expect("lock engine ready slot") =
+                Some(Arc::new(move || engine_watchdog.on_engine_ready()));
+
+            let attempted_watchdog = Arc::clone(&watchdog);
+            *self
+                .inference_attempted
+                .lock()
+                .expect("lock inference attempted slot") = Some(Arc::new(move || {
+                attempted_watchdog.on_inference_attempted()
+            }));
+
+            let progress_watchdog = Arc::clone(&watchdog);
+            *self
+                .inference_pct
+                .lock()
+                .expect("lock inference progress slot") = Some(Arc::new(move |_percent| {
+                progress_watchdog.on_inference_progress()
+            }));
+        }
+
+        let lifecycle_for_fatal = Arc::clone(lifecycle);
+        *self.worker_fatal.lock().expect("lock worker fatal slot") = Some(Arc::new(move |err| {
+            lifecycle_for_fatal.on_worker_engine_failed(err)
+        }));
+    }
+
+    /// Wires observability logging and stall-watchdog notification callbacks on the worker.
+    fn register_worker_callbacks(
+        &self,
+        worker: &mut TranscribeWorker,
+        model_orchestrator: &SharedModelOrchestrator,
+    ) {
+        let model_orchestrator_for_cycles = Arc::clone(model_orchestrator);
+        worker.set_batch_cycle_started_callback(Arc::new(move |event| {
+            gijirec_presentation::transcribe::observability::log_batch_cycle_started(
+                event.cycle_id,
+                event.samples_count,
+                event.pcm_backlog_seconds,
+                event.rtrb_overflow_count,
+            );
+            pending_variant_path_at_cycle(&model_orchestrator_for_cycles)
+        }));
+        worker.set_batch_cycle_completed_callback(Arc::new(|event| {
+            gijirec_presentation::transcribe::observability::log_batch_cycle_completed(
+                event.cycle_id,
+                event.duration_ms,
+                event.samples_count,
+                event.segments_count,
+            );
+        }));
+        worker.set_inference_window_level_callback(Arc::new(|level| {
+            gijirec_presentation::transcribe::observability::log_inference_window_level(
+                level.window_rms,
+                level.samples_count,
+                level.inference_skipped,
+            );
+        }));
+        worker.set_inference_latency_callback({
+            let slot = Arc::clone(&self.inference);
+            Arc::new(move |ms| {
+                gijirec_presentation::transcribe::observability::log_inference_latency(ms);
+                notify_void_slot(&slot, "lock inference progress");
+            })
+        });
+        worker
+            .set_engine_ready_callback(void_slot_callback(&self.engine_ready, "lock engine ready"));
+        worker.set_inference_attempted_callback(void_slot_callback(
+            &self.inference_attempted,
+            "lock inference attempted",
+        ));
+        worker.set_inference_progress_callback({
+            let slot = Arc::clone(&self.inference_pct);
+            Arc::new(move |percent| notify_inference_progress(percent, &slot))
+        });
+        worker.set_fatal_error_callback({
+            let slot = Arc::clone(&self.worker_fatal);
+            Arc::new(move |err| notify_worker_fatal(&slot, err))
+        });
+    }
 }
 
 fn stall_watchdog_clock() -> StallClock {
@@ -130,22 +240,59 @@ fn stall_watchdog_clock() -> StallClock {
     })
 }
 
-fn wire_stall_watchdog_inputs(
-    lifecycle: &TranscribeLifecycleHook,
-    block_progress: &StallProgressSlot,
-    inference_progress: &StallProgressSlot,
-) {
-    let Some(watchdog) = lifecycle.stall_watchdog() else {
-        return;
-    };
+fn pending_variant_path_at_cycle(
+    model_orchestrator: &SharedModelOrchestrator,
+) -> Option<std::path::PathBuf> {
+    match model_orchestrator
+        .lock()
+        .expect("lock model orchestrator")
+        .try_apply_pending_variant()
+    {
+        Ok(Some(ApplyVariantOutcome::Applied { path })) => {
+            log_active_model_variant(model_orchestrator);
+            Some(path)
+        }
+        Ok(_) | Err(_) => None,
+    }
+}
 
-    let block_watchdog = Arc::clone(&watchdog);
-    *block_progress.lock().expect("lock block progress") =
-        Some(Arc::new(move || block_watchdog.on_block_appended()));
+fn log_active_model_variant(model_orchestrator: &SharedModelOrchestrator) {
+    let variant = model_orchestrator
+        .lock()
+        .expect("lock model orchestrator")
+        .active_variant();
+    if let Some(variant) = variant {
+        gijirec_presentation::transcribe::observability::log_model_variant_applied(variant);
+    }
+}
 
-    let inference_watchdog = Arc::clone(&watchdog);
-    *inference_progress.lock().expect("lock inference progress") =
-        Some(Arc::new(move || inference_watchdog.on_inference_success()));
+fn notify_inference_progress(percent: i32, slot: &InferencePercentSlot) {
+    if percent == 0 || percent == 100 || percent % 10 == 0 {
+        gijirec_presentation::transcribe::observability::log_inference_progress(percent);
+    }
+    if let Some(notify) = slot.lock().expect("lock inference progress pct").as_ref() {
+        notify(percent);
+    }
+}
+
+fn notify_worker_fatal(slot: &WorkerFatalSlot, err: TranscribeError) {
+    if let Some(notify) = slot.lock().expect("lock worker fatal").as_ref() {
+        notify(err);
+    }
+}
+
+fn void_slot_callback(
+    slot: &StallProgressSlot,
+    lock_name: &'static str,
+) -> Arc<dyn Fn() + Send + Sync> {
+    let slot = Arc::clone(slot);
+    Arc::new(move || notify_void_slot(&slot, lock_name))
+}
+
+fn notify_void_slot(slot: &StallProgressSlot, lock_name: &'static str) {
+    if let Some(notify) = slot.lock().expect(lock_name).as_ref() {
+        notify();
+    }
 }
 
 struct CaptureFoundation {
@@ -310,112 +457,11 @@ fn init_block_bus(block_progress_slot: &StallProgressSlot) -> Arc<TranscriptBloc
     block_bus.set_drop_callback(Arc::new(|drops| {
         gijirec_presentation::transcribe::observability::log_block_buffer_drop(drops);
     }));
-    block_bus.set_publish_callback({
-        let slot = Arc::clone(block_progress_slot);
-        Arc::new(move || {
-            if let Some(notify) = slot.lock().expect("lock block progress").as_ref() {
-                notify();
-            }
-        })
-    });
+    block_bus.set_publish_callback(void_slot_callback(
+        block_progress_slot,
+        "lock block progress",
+    ));
     Arc::new(block_bus)
-}
-
-fn wire_worker_observability_callbacks(
-    worker: &mut TranscribeWorker,
-    model_orchestrator: &SharedModelOrchestrator,
-    inference_progress_slot: &StallProgressSlot,
-) {
-    let model_orchestrator_for_cycles = Arc::clone(model_orchestrator);
-    worker.set_batch_cycle_started_callback(Arc::new(move |event| {
-        gijirec_presentation::transcribe::observability::log_batch_cycle_started(
-            event.cycle_id,
-            event.samples_count,
-            event.pcm_backlog_seconds,
-            event.rtrb_overflow_count,
-        );
-        match model_orchestrator_for_cycles
-            .lock()
-            .expect("lock model orchestrator")
-            .try_apply_pending_variant()
-        {
-            Ok(Some(ApplyVariantOutcome::Applied { path })) => {
-                if let Some(variant) = model_orchestrator_for_cycles
-                    .lock()
-                    .expect("lock model orchestrator")
-                    .active_variant()
-                {
-                    gijirec_presentation::transcribe::observability::log_model_variant_applied(
-                        variant,
-                    );
-                }
-                Some(path)
-            }
-            Ok(_) | Err(_) => None,
-        }
-    }));
-    worker.set_batch_cycle_completed_callback(Arc::new(|event| {
-        gijirec_presentation::transcribe::observability::log_batch_cycle_completed(
-            event.cycle_id,
-            event.duration_ms,
-            event.samples_count,
-            event.segments_count,
-        );
-    }));
-    worker.set_inference_window_level_callback(Arc::new(|level| {
-        gijirec_presentation::transcribe::observability::log_inference_window_level(
-            level.window_rms,
-            level.samples_count,
-            level.inference_skipped,
-        );
-    }));
-    worker.set_inference_latency_callback({
-        let slot = Arc::clone(inference_progress_slot);
-        Arc::new(move |ms| {
-            gijirec_presentation::transcribe::observability::log_inference_latency(ms);
-            if let Some(notify) = slot.lock().expect("lock inference progress").as_ref() {
-                notify();
-            }
-        })
-    });
-}
-
-fn wire_worker_stall_callbacks(worker: &mut TranscribeWorker, slots: &StallProgressSlots) {
-    worker.set_engine_ready_callback({
-        let slot = Arc::clone(&slots.engine_ready);
-        Arc::new(move || {
-            if let Some(notify) = slot.lock().expect("lock engine ready").as_ref() {
-                notify();
-            }
-        })
-    });
-    worker.set_inference_attempted_callback({
-        let slot = Arc::clone(&slots.inference_attempted);
-        Arc::new(move || {
-            if let Some(notify) = slot.lock().expect("lock inference attempted").as_ref() {
-                notify();
-            }
-        })
-    });
-    worker.set_inference_progress_callback({
-        let slot = Arc::clone(&slots.inference_pct);
-        Arc::new(move |percent| {
-            if percent == 0 || percent == 100 || percent % 10 == 0 {
-                gijirec_presentation::transcribe::observability::log_inference_progress(percent);
-            }
-            if let Some(notify) = slot.lock().expect("lock inference progress pct").as_ref() {
-                notify(percent);
-            }
-        })
-    });
-    worker.set_fatal_error_callback({
-        let slot = Arc::clone(&slots.worker_fatal);
-        Arc::new(move |err| {
-            if let Some(notify) = slot.lock().expect("lock worker fatal").as_ref() {
-                notify(err);
-            }
-        })
-    });
 }
 
 struct TranscribeWorkerWiring<'a, C> {
@@ -423,7 +469,7 @@ struct TranscribeWorkerWiring<'a, C> {
     pcm_cons: rtrb::Consumer<f32>,
     rtrb_overflow_counter: Arc<std::sync::atomic::AtomicU64>,
     model_orchestrator: &'a SharedModelOrchestrator,
-    slots: &'a StallProgressSlots,
+    stall_wiring: &'a StallWatchdogWiring,
 }
 
 fn init_transcribe_worker<C: TranscriptBlockConsumer + 'static>(
@@ -433,12 +479,9 @@ fn init_transcribe_worker<C: TranscriptBlockConsumer + 'static>(
         TranscribeWorker::new(Arc::clone(&wiring.block_emitter) as Arc<dyn TranscriptSegmentSink>);
     worker.attach_pcm_consumer(wiring.pcm_cons);
     worker.set_rtrb_overflow_counter(wiring.rtrb_overflow_counter);
-    wire_worker_observability_callbacks(
-        &mut worker,
-        wiring.model_orchestrator,
-        &wiring.slots.inference,
-    );
-    wire_worker_stall_callbacks(&mut worker, wiring.slots);
+    wiring
+        .stall_wiring
+        .register_worker_callbacks(&mut worker, wiring.model_orchestrator);
     TranscribeWorkerPortAdapter::from_worker(worker)
 }
 
@@ -467,7 +510,7 @@ impl TranscribeEventEmitter for MockEmitter {
 
 fn init_transcribe_lifecycle(
     transcribe_orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
-    slots: &StallProgressSlots,
+    stall_wiring: &StallWatchdogWiring,
 ) -> Arc<TranscribeLifecycleHook> {
     let dummy_emitter = Arc::new(MockEmitter);
     let transcribe_lifecycle = Arc::new(TranscribeLifecycleHook::with_stall_watchdog(
@@ -475,35 +518,7 @@ fn init_transcribe_lifecycle(
         dummy_emitter,
         stall_watchdog_clock(),
     ));
-    wire_stall_watchdog_inputs(
-        transcribe_lifecycle.as_ref(),
-        &slots.block,
-        &slots.inference,
-    );
-    if let Some(watchdog) = transcribe_lifecycle.stall_watchdog() {
-        *slots.engine_ready.lock().expect("lock engine ready slot") =
-            Some(Arc::new(move || watchdog.on_engine_ready()));
-    }
-    if let Some(watchdog) = transcribe_lifecycle.stall_watchdog() {
-        *slots
-            .inference_attempted
-            .lock()
-            .expect("lock inference attempted slot") =
-            Some(Arc::new(move || watchdog.on_inference_attempted()));
-    }
-    if let Some(watchdog) = transcribe_lifecycle.stall_watchdog() {
-        *slots
-            .inference_pct
-            .lock()
-            .expect("lock inference progress slot") =
-            Some(Arc::new(move |_percent| watchdog.on_inference_progress()));
-    }
-    {
-        let lifecycle = Arc::clone(&transcribe_lifecycle);
-        *slots.worker_fatal.lock().expect("lock worker fatal slot") = Some(Arc::new(move |err| {
-            lifecycle.on_worker_engine_failed(err);
-        }));
-    }
+    stall_wiring.bind_lifecycle(&transcribe_lifecycle);
     transcribe_lifecycle
 }
 
@@ -520,18 +535,11 @@ where
     let foundation = init_capture_foundation(mic, system, streams);
     let (device_selection, device_selection_events) = init_device_selection(&foundation);
 
-    let slots = StallProgressSlots {
-        block: Arc::new(Mutex::new(None)),
-        inference: Arc::new(Mutex::new(None)),
-        engine_ready: Arc::new(Mutex::new(None)),
-        inference_attempted: Arc::new(Mutex::new(None)),
-        inference_pct: Arc::new(Mutex::new(None)),
-        worker_fatal: Arc::new(Mutex::new(None)),
-    };
+    let stall_wiring = StallWatchdogWiring::new();
 
     let pcm = init_pcm_pipeline(&foundation, &foundation.ingest_level_emitter);
     let audio_controls = init_audio_controls(&foundation, &pcm);
-    let block_bus = init_block_bus(&slots.block);
+    let block_bus = init_block_bus(stall_wiring.block_slot());
     let block_emitter = Arc::new(BlockEmitter::new(Arc::clone(&block_bus)));
 
     let worker_adapter = init_transcribe_worker(TranscribeWorkerWiring {
@@ -539,7 +547,7 @@ where
         pcm_cons: pcm.pcm_cons,
         rtrb_overflow_counter: pcm.rtrb_overflow_counter,
         model_orchestrator: &model_orchestrator,
-        slots: &slots,
+        stall_wiring: &stall_wiring,
     });
     let context_adapter = WhisperContextPortAdapter::new();
     let transcribe_orchestrator = Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
@@ -550,7 +558,7 @@ where
     )));
     let transcribe_lifecycle = init_transcribe_lifecycle(
         Arc::clone(&transcribe_orchestrator) as Arc<Mutex<dyn TranscribeOrchestrator>>,
-        &slots,
+        &stall_wiring,
     );
 
     ComposedCapture {

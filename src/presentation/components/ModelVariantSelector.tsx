@@ -5,6 +5,7 @@ import {
   WHISPER_MODEL_VARIANTS,
   type WhisperModelVariant,
 } from "../../infrastructure/tauri/transcribeSettingsCommands";
+import { useOptionalTranscribeStatusContext } from "../hooks/TranscribeStatusContext";
 import type { TranscribeEventListenFn, TranscribePhase } from "../hooks/transcribe-status";
 import { useTranscribeSettings } from "../hooks/useTranscribeSettings";
 import { useTranscribeStatus } from "../hooks/useTranscribeStatus";
@@ -19,6 +20,7 @@ interface ModelVariantSelectorInjectedProps {
 interface ModelVariantSelectorRuntimeProps {
   readonly invokeFn?: InjectableInvokeFn;
   readonly listenFn?: TranscribeEventListenFn;
+  readonly transcribePhase?: TranscribePhase;
 }
 
 export type ModelVariantSelectorProps = Partial<ModelVariantSelectorInjectedProps> &
@@ -65,9 +67,13 @@ function ModelVariantSelectorConnected(props: ModelVariantSelectorRuntimeProps) 
   const transcribeSettings = useTranscribeSettings(
     props.invokeFn === undefined ? {} : { invokeFn: props.invokeFn },
   );
-  const transcribeStatus = useTranscribeStatus(
-    props.listenFn === undefined ? {} : { listenFn: props.listenFn },
-  );
+  const contextStatus = useOptionalTranscribeStatusContext();
+  const subscribedStatus = useTranscribeStatus({
+    ...(props.listenFn === undefined ? {} : { listenFn: props.listenFn }),
+    ...(props.invokeFn === undefined ? {} : { invokeFn: props.invokeFn }),
+    enabled: contextStatus === null && props.transcribePhase === undefined,
+  });
+  const transcribePhase = props.transcribePhase ?? contextStatus?.phase ?? subscribedStatus.phase;
 
   return (
     <ModelVariantSelectorView
@@ -75,7 +81,7 @@ function ModelVariantSelectorConnected(props: ModelVariantSelectorRuntimeProps) 
       onVariantChange={(variant) => {
         void transcribeSettings.setModelVariant(variant);
       }}
-      transcribePhase={transcribeStatus.phase}
+      transcribePhase={transcribePhase}
       isLoading={transcribeSettings.isLoading}
     />
   );

@@ -386,11 +386,9 @@ describe("App", () => {
     const { unmount } = render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
 
     await waitFor(() => {
-      // App root + ModelVariantSelector each subscribe via useTranscribeStatus
-      expect(listeners.get(TRANSCRIBE_PHASE_CHANGED_EVENT)?.length).toBe(2);
-      expect(listeners.get(MODEL_PROGRESS_EVENT)?.length).toBe(2);
-      // useTranscribeStatus (x2) + TranscriptEditorView (retain-on-error)
-      expect(listeners.get(TRANSCRIBE_ERROR_EVENT)?.length).toBe(3);
+      expect(listeners.get(TRANSCRIBE_PHASE_CHANGED_EVENT)?.length).toBe(1);
+      expect(listeners.get(MODEL_PROGRESS_EVENT)?.length).toBe(1);
+      expect(listeners.get(TRANSCRIBE_ERROR_EVENT)?.length).toBe(1);
       expect(listeners.has(BLOCK_APPENDED_EVENT)).toBe(true);
     });
 

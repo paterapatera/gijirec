@@ -7,6 +7,7 @@ import type {
   AudioDeviceList,
   DeviceSelection,
 } from "../hooks/audio-device-types";
+import { useOptionalCaptureStatusContext } from "../hooks/CaptureStatusContext";
 import type { CaptureAudioControlsEventListenFn } from "../hooks/capture-audio-controls-types";
 import type {
   CaptureEventListenFn,
@@ -42,6 +43,7 @@ interface DeviceSelectorPanelRuntimeProps {
     handler: (event: { payload: unknown }) => void,
   ) => Promise<() => void>;
   readonly captureListenFn?: CaptureEventListenFn;
+  readonly capturePhase?: CapturePhase;
 }
 
 export type DeviceSelectorPanelProps = Partial<DeviceSelectorPanelInjectedProps> &
@@ -198,24 +200,29 @@ function resolveIsMacos(isMacos: boolean | undefined, detectMacosFn: () => boole
   return isMacos ?? detectMacosFn();
 }
 
-function DeviceSelectorPanelConnected(props: DeviceSelectorPanelProps) {
-  const detectMacosFn = props.detectMacos ?? defaultDetectMacos;
-  const audioDevices = useAudioDevices({
-    ...(props.invokeFn !== undefined ? { invokeFn: props.invokeFn } : {}),
-    ...(props.listenFn !== undefined
-      ? { listenFn: props.listenFn as AudioDeviceEventListenFn }
-      : {}),
-  });
-  const captureStatus = useCaptureStatus({
+function useResolvedCaptureStatus(
+  props: Pick<DeviceSelectorPanelProps, "invokeFn" | "captureListenFn" | "capturePhase">,
+) {
+  const contextStatus = useOptionalCaptureStatusContext();
+  const subscribedStatus = useCaptureStatus({
     ...(props.invokeFn !== undefined ? { invokeFn: props.invokeFn } : {}),
     ...(props.captureListenFn !== undefined ? { listenFn: props.captureListenFn } : {}),
+    enabled: contextStatus === null && props.capturePhase === undefined,
   });
+  return contextStatus ?? subscribedStatus;
+}
 
-  const viewProps: DeviceSelectorPanelViewProps = {
+function buildConnectedViewProps(
+  props: DeviceSelectorPanelProps,
+  audioDevices: ReturnType<typeof useAudioDevices>,
+  captureStatus: ReturnType<typeof useResolvedCaptureStatus>,
+  detectMacosFn: () => boolean,
+): DeviceSelectorPanelViewProps {
+  return {
     devices: props.devices ?? audioDevices.devices,
     selection: props.selection ?? audioDevices.selection,
     captureError: props.captureError !== undefined ? props.captureError : captureStatus.error,
-    capturePhase: captureStatus.phase,
+    capturePhase: props.capturePhase ?? captureStatus.phase,
     isMacos: resolveIsMacos(props.isMacos, detectMacosFn),
     ...(props.onSelectionChange !== undefined
       ? { onSelectionChange: props.onSelectionChange }
@@ -227,8 +234,23 @@ function DeviceSelectorPanelConnected(props: DeviceSelectorPanelProps) {
         }
       : {}),
   };
+}
 
-  return <DeviceSelectorPanelView {...viewProps} />;
+function DeviceSelectorPanelConnected(props: DeviceSelectorPanelProps) {
+  const detectMacosFn = props.detectMacos ?? defaultDetectMacos;
+  const audioDevices = useAudioDevices({
+    ...(props.invokeFn !== undefined ? { invokeFn: props.invokeFn } : {}),
+    ...(props.listenFn !== undefined
+      ? { listenFn: props.listenFn as AudioDeviceEventListenFn }
+      : {}),
+  });
+  const captureStatus = useResolvedCaptureStatus(props);
+
+  return (
+    <DeviceSelectorPanelView
+      {...buildConnectedViewProps(props, audioDevices, captureStatus, detectMacosFn)}
+    />
+  );
 }
 
 export function DeviceSelectorPanel(props: DeviceSelectorPanelProps = {}) {

@@ -1,6 +1,7 @@
 //! Whisper transcribe infrastructure adapters.
 mod model_downloader;
 mod model_store;
+mod test_macros;
 mod transcribe_worker;
 mod whisper_adapter;
 

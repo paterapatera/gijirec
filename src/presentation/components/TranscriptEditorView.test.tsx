@@ -154,7 +154,6 @@ describe("TranscriptEditorView", () => {
 
     await waitFor(() => {
       expect(listeners.has(BLOCK_APPENDED_EVENT)).toBe(true);
-      expect(listeners.has(TRANSCRIBE_ERROR_EVENT)).toBe(true);
     });
 
     typeIntoHandwriting(handwritingRef.current, "議事録本文");

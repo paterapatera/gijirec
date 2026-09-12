@@ -1,6 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
 import type { Dispatch, SetStateAction } from "react";
-import { useEffect, useState } from "react";
 import {
   defaultInvoke,
   type InjectableInvokeFn,
@@ -18,10 +17,13 @@ import {
   PHASE_CHANGED_EVENT,
   TRANSCRIBE_ERROR_EVENT,
 } from "./transcribe-status";
+import { useTauriEventMirror } from "./useTauriEventMirror";
 
 export interface UseTranscribeStatusOptions {
   listenFn?: TranscribeEventListenFn;
   invokeFn?: InjectableInvokeFn;
+  /** When false, skips invoke sync and event subscriptions (default true). */
+  enabled?: boolean;
 }
 
 function applyPhaseChanged(
@@ -124,44 +126,28 @@ async function subscribeTranscribeEvents(
   return { unlistenPhase, unlistenProgress, unlistenError };
 }
 
+function cleanupTranscribeHandles(handles: {
+  unlistenPhase: () => void;
+  unlistenProgress: () => void;
+  unlistenError: () => void;
+}): void {
+  handles.unlistenPhase();
+  handles.unlistenProgress();
+  handles.unlistenError();
+}
+
 export function useTranscribeStatus(
   options: UseTranscribeStatusOptions = {},
 ): TranscribeStatusState {
-  const { listenFn = listen, invokeFn = defaultInvoke } = options;
-  const [status, setStatus] = useState<TranscribeStatusState>(INITIAL_TRANSCRIBE_STATUS);
+  const { listenFn = listen, invokeFn = defaultInvoke, enabled = true } = options;
 
-  useEffect(() => {
-    let cancelled = false;
-    let cleanupFns:
-      | {
-          unlistenPhase: () => void;
-          unlistenProgress: () => void;
-          unlistenError: () => void;
-        }
-      | undefined;
-
-    void syncInitialPhase(invokeFn, setStatus);
-    void subscribeTranscribeEvents(listenFn, setStatus, () => cancelled).then((handles) => {
-      if (handles === undefined) {
-        return;
-      }
-      cleanupFns = handles;
-      if (cancelled) {
-        cleanupFns.unlistenPhase();
-        cleanupFns.unlistenProgress();
-        cleanupFns.unlistenError();
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      if (cleanupFns) {
-        cleanupFns.unlistenPhase();
-        cleanupFns.unlistenProgress();
-        cleanupFns.unlistenError();
-      }
-    };
-  }, [invokeFn, listenFn]);
-
-  return status;
+  return useTauriEventMirror({
+    enabled,
+    initialState: INITIAL_TRANSCRIBE_STATUS,
+    invokeFn,
+    listenFn,
+    syncInitial: syncInitialPhase,
+    subscribeEvents: subscribeTranscribeEvents,
+    cleanupHandles: cleanupTranscribeHandles,
+  });
 }

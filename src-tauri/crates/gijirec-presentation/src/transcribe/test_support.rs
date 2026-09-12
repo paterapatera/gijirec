@@ -33,18 +33,7 @@ pub const BATCH_WINDOW_SAMPLES: usize = 480_000;
 
 pub const CHUNKS_PER_BATCH: usize = BATCH_WINDOW_SAMPLES / CHUNK_FRAME_COUNT as usize;
 
-macro_rules! noop_model_path_loadable {
-    ($ty:ty) => {
-        impl ModelPathLoadable for $ty {
-            fn load_from_path_if_needed(
-                &mut self,
-                _path: &std::path::Path,
-            ) -> Result<(), TranscribeError> {
-                Ok(())
-            }
-        }
-    };
-}
+use gijirec_infrastructure::noop_model_path_loadable;
 
 fn record_transcribe_phase(
     phases: &Arc<Mutex<Vec<TranscribePhase>>>,

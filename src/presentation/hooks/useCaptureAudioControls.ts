@@ -6,6 +6,7 @@ import {
   defaultInvoke,
   type InjectableInvokeFn,
 } from "../../infrastructure/tauri/injectableInvoke";
+import { useOptionalCaptureStatusContext } from "./CaptureStatusContext";
 import type {
   CaptureAudioControlsChanged,
   CaptureAudioControlsEventListenFn,
@@ -27,8 +28,8 @@ export interface UseCaptureAudioControlsOptions {
   listenFn?: CaptureAudioControlsEventListenFn;
   invokeFn?: InjectableInvokeFn;
   /**
-   * When set, overrides `useCaptureStatus` for the disabled gate (req 1.6 / 3.5).
-   * When omitted, phase comes from `useCaptureStatus`.
+   * When set, overrides capture phase for the disabled gate (req 1.6 / 3.5).
+   * When omitted, phase comes from CaptureStatusProvider or `useCaptureStatus`.
    */
   capturePhase?: CapturePhase;
 }
@@ -140,11 +141,14 @@ export function useCaptureAudioControls(
     invokeFn = defaultInvoke,
     capturePhase: capturePhaseOverride,
   } = options;
-  const captureStatus = useCaptureStatus({
+  const contextStatus = useOptionalCaptureStatusContext();
+  const needsCaptureSubscription = capturePhaseOverride === undefined && contextStatus === null;
+  const subscribedStatus = useCaptureStatus({
     invokeFn,
     listenFn: listenFn as CaptureEventListenFn,
+    enabled: needsCaptureSubscription,
   });
-  const phase = capturePhaseOverride ?? captureStatus.phase;
+  const phase = capturePhaseOverride ?? contextStatus?.phase ?? subscribedStatus.phase;
   const [state, setState] = useState<CaptureAudioControlsHookState>(
     INITIAL_CAPTURE_AUDIO_CONTROLS_HOOK_STATE,
   );

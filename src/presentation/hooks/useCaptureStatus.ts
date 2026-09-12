@@ -1,6 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
 import type { Dispatch, SetStateAction } from "react";
-import { useEffect, useState } from "react";
 import {
   defaultInvoke,
   type InjectableInvokeFn,
@@ -12,10 +11,13 @@ import type {
   CaptureUserError,
 } from "./capture-status";
 import { ERROR_EVENT, INITIAL_CAPTURE_STATUS, PHASE_CHANGED_EVENT } from "./capture-status";
+import { useTauriEventMirror } from "./useTauriEventMirror";
 
 export interface UseCaptureStatusOptions {
   listenFn?: CaptureEventListenFn;
   invokeFn?: InjectableInvokeFn;
+  /** When false, skips invoke sync and event subscriptions (default true). */
+  enabled?: boolean;
 }
 
 function applyPhaseChanged(
@@ -75,37 +77,28 @@ async function subscribeCaptureEvents(
   return { unlistenPhase, unlistenError };
 }
 
+function cleanupCaptureHandles(handles: {
+  unlistenPhase: () => void;
+  unlistenError: () => void;
+}): void {
+  handles.unlistenPhase();
+  handles.unlistenError();
+}
+
 /**
  * Subscribes to capture lifecycle Tauri events and mirrors phase/error into React state.
  * Unlistens on unmount (req 5.4 — surfaces action_ja for UI in task 6.2).
  */
 export function useCaptureStatus(options: UseCaptureStatusOptions = {}): CaptureStatusState {
-  const { listenFn = listen, invokeFn = defaultInvoke } = options;
-  const [status, setStatus] = useState<CaptureStatusState>(INITIAL_CAPTURE_STATUS);
+  const { listenFn = listen, invokeFn = defaultInvoke, enabled = true } = options;
 
-  useEffect(() => {
-    let cancelled = false;
-    let cleanupListeners: (() => void) | undefined;
-
-    void syncInitialPhase(invokeFn, setStatus);
-    void subscribeCaptureEvents(listenFn, setStatus, () => cancelled).then((handles) => {
-      if (handles === undefined) {
-        return;
-      }
-      cleanupListeners = () => {
-        handles.unlistenPhase();
-        handles.unlistenError();
-      };
-      if (cancelled) {
-        cleanupListeners();
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      cleanupListeners?.();
-    };
-  }, [invokeFn, listenFn]);
-
-  return status;
+  return useTauriEventMirror({
+    enabled,
+    initialState: INITIAL_CAPTURE_STATUS,
+    invokeFn,
+    listenFn,
+    syncInitial: syncInitialPhase,
+    subscribeEvents: subscribeCaptureEvents,
+    cleanupHandles: cleanupCaptureHandles,
+  });
 }
