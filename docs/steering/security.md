@@ -50,6 +50,7 @@ gijirec のセキュリティ姿勢。ローカルファーストのデスクト
 ### 診断ログ（release `--log`）
 
 - 保存先: `{app_data_dir}/logs/sessions/{run_session_id}/gijirec.log`（契約: `release-logging-persistence.md`）
+- 最新セッション参照: `{app_data_dir}/logs/latest-session.txt`（1 行、`run_session_id` のみ。`--log` 起動時のみ更新）
 - 会議音声・転写全文・PCM は記録しない（observability と同一マスキング）
 - 永続化失敗時は非ブロッキング degrade（アプリ起動は継続）
 
@@ -103,5 +104,5 @@ gijirec のセキュリティ姿勢。ローカルファーストのデスクト
 - 契約（PCM 非送信）: `docs/contracts/audio-capture-pcm.md`
 
 ---
-_updated_at: 2026-09-07（Sync: release 診断ログ永続化を反映）_
+_updated_at: 2026-09-12（Sync: latest-session.txt 参照を追記）_
 _Focus on local-first desktop posture, not enterprise IAM patterns._

@@ -34,6 +34,8 @@
 
 **Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_phase` / `get_transcribe_status` / `get_transcribe_settings` / `get_editor_settings` / `get_device_selection` / `get_capture_audio_controls` で同期。テスト時は `listenFn` / `invokeFn` を注入。command ミラーは hooks ではなく `infrastructure/tauri/{editorCommands,audioDeviceCommands,transcribeSettingsCommands,captureAudioControlsCommands}.ts`。音声制御は `useCaptureAudioControls` が `controls-changed` / `ingest-level` を購読し、`capturePhase !== 'capturing'` 時は disabled。
 
+**フェーズ状態の Context 共有**: `App` は `AppStatusProviders` で `CaptureStatusProvider` / `TranscribeStatusProvider` を束ね、子コンポーネント（`DeviceSelectorPanel`、`ModelVariantSelector`、`useCaptureAudioControls` 等）は `useCaptureStatusContext` / `useTranscribeStatusContext`（または optional 版）でフェーズを参照する。Provider 外の単体テストでは `listenFn` / `invokeFn` 注入または props オーバーライドで従来どおり検証する。
+
 ### Rust Backend
 **Location**: `src-tauri/crates/`  
 **Purpose**: 音声キャプチャ・Whisper 推論・Tauri コマンド／イベント  
@@ -147,5 +149,5 @@ feature 完了後、spec ディレクトリを削除する前に次を行う（�
 | Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-11（verify:agent / AGENTS.md を反映）_
+_updated_at: 2026-09-12（Sync: AppStatusProviders / フェーズ Context パターンを追記）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_
