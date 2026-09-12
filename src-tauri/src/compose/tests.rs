@@ -100,20 +100,6 @@ fn compose_does_not_reference_dirs_data_local_dir() {
         !production_source.contains("dirs::data_local_dir"),
         "compose production code must not use dirs::data_local_dir; app_data_dir is injected after Tauri setup"
     );
-    assert!(
-        production_source.contains("inject_model_stack_shared_with_config")
-            && production_source.contains("maybe_migrate_from_legacy_local"),
-        "compose must migrate legacy local models only during inject"
-    );
-    assert!(
-        !production_source
-            .split("fn build_model_orchestrator")
-            .nth(1)
-            .and_then(|body| body.split("fn wrap_model_orchestrator").next())
-            .unwrap_or("")
-            .contains("maybe_migrate_from_legacy_local"),
-        "deferred build_model_orchestrator must not migrate legacy models"
-    );
 }
 
 #[test]

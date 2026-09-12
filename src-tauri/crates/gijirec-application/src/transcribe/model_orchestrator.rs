@@ -8,24 +8,6 @@ use super::ports::{
     ModelDownloadProgress, ModelDownloadStatus, ModelDownloaderPort, ModelStorePort,
 };
 
-/// Configuration for whisper model acquisition (legacy FP16 single-model path).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelOrchestratorConfig {
-    pub model_url: String,
-    pub expected_sha256: String,
-}
-
-impl ModelOrchestratorConfig {
-    /// Builds FP16 config from the canonical catalog.
-    pub fn fp16_from_catalog() -> Self {
-        let descriptor = ModelVariantCatalog::fp16();
-        Self {
-            model_url: descriptor.url.to_string(),
-            expected_sha256: descriptor.expected_sha256.to_string(),
-        }
-    }
-}
-
 /// Orchestrates local model verification and download when required.
 pub struct ModelOrchestrator<S, D> {
     store: S,
@@ -509,15 +491,5 @@ mod tests {
             Some(WhisperModelVariant::Q8_0)
         );
         assert_eq!(orchestrator.pending_variant(), None);
-    }
-
-    #[test]
-    fn fp16_catalog_config_matches_contract_sha() {
-        let config = ModelOrchestratorConfig::fp16_from_catalog();
-        assert_eq!(
-            config.expected_sha256,
-            ModelVariantCatalog::fp16().expected_sha256
-        );
-        assert_eq!(config.model_url, ModelVariantCatalog::fp16().url);
     }
 }

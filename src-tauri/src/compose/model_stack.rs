@@ -34,15 +34,6 @@ pub(crate) fn inject_model_stack_shared(
     model_orchestrator: &SharedModelOrchestrator,
     app_data_dir: std::path::PathBuf,
 ) {
-    inject_model_stack_shared_with_config(model_orchestrator, app_data_dir);
-}
-
-/// Injects the model stack into a shared handle (tests may pass legacy config for API stability).
-pub(crate) fn inject_model_stack_shared_with_config(
-    model_orchestrator: &SharedModelOrchestrator,
-    app_data_dir: std::path::PathBuf,
-) {
-    let _ = ModelStore::new(app_data_dir.clone()).maybe_migrate_from_legacy_local();
     *model_orchestrator.lock().expect("lock model orchestrator") =
         build_model_orchestrator(app_data_dir);
 }

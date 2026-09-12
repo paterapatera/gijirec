@@ -132,29 +132,11 @@ impl CaptureStreamHandles {
         *self.system.sample_rate_hz.lock().expect("lock")
     }
 
-    /// Installs synthetic rtrb consumers for integration tests (no hardware).
-    #[cfg(debug_assertions)]
-    #[allow(dead_code)]
-    pub(crate) fn install_synthetic_mic(&self, sample_rate_hz: u32) {
-        let (_prod, cons) = rtrb::RingBuffer::<f32>::new(DEFAULT_RING_CAPACITY);
-        *self.mic.consumer.lock().expect("lock") =
-            Some(MicSampleConsumer::from_ring_consumer(cons));
-        *self.mic.sample_rate_hz.lock().expect("lock") = Some(sample_rate_hz);
-    }
-
     #[cfg(debug_assertions)]
     #[allow(dead_code)]
     pub(crate) fn clear_mic(&self) {
         *self.mic.consumer.lock().expect("lock") = None;
         *self.mic.sample_rate_hz.lock().expect("lock") = None;
-    }
-
-    #[cfg(debug_assertions)]
-    #[allow(dead_code)]
-    pub(crate) fn install_synthetic_system(&self, sample_rate_hz: u32) {
-        let (_prod, cons) = rtrb::RingBuffer::<f32>::new(DEFAULT_RING_CAPACITY);
-        install_system_consumer(&self.system, cons);
-        *self.system.sample_rate_hz.lock().expect("lock") = Some(sample_rate_hz);
     }
 
     #[cfg(debug_assertions)]

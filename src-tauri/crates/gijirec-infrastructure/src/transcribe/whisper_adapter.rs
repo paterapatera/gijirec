@@ -1,4 +1,4 @@
-//! whisper.cpp wrapper for local STT inference (ADR-0003).
+//! whisper.cpp wrapper for local batch STT inference (ADR-0012).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -182,7 +182,7 @@ fn inference_thread_count() -> i32 {
 const MIN_AUDIO_CTX_FRAMES: i32 = 512;
 
 /// Encoder frames for the given PCM length. whisper.cpp defaults to 1500 frames (30 s)
-/// even for a short streaming window, so streaming must shrink `audio_ctx`.
+/// for full windows; shorter batches shrink `audio_ctx` to match sample count.
 fn audio_ctx_for_pcm(sample_count: usize) -> i32 {
     let frames = (sample_count as u64).saturating_mul(50) / 16_000;
     i32::try_from(frames)
@@ -190,7 +190,7 @@ fn audio_ctx_for_pcm(sample_count: usize) -> i32 {
         .clamp(MIN_AUDIO_CTX_FRAMES, 1500)
 }
 
-/// Generates synthetic PCM with an energy burst to exercise VAD-driven streaming.
+/// Generates synthetic PCM with an energy burst for adapter smoke tests.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn synthetic_pcm_with_activity(duration_secs: f32) -> Vec<f32> {
     let sample_rate = 16_000_i32;

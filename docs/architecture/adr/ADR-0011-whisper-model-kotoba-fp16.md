@@ -41,6 +41,6 @@ FP16 は kenrouse 配布で「最高品質（best quality）」と位置づけ�
 
 ## Notes
 
-- ライブラリ（whisper-cpp-plus）・VAD・ストリーミング方式は ADR-0003 のまま
+- ライブラリ（whisper-rs バッチ transcribe）・推論スケジュールは ADR-0012（30 秒固定バッチ）
 - 実機性能（3 s 発話 → 5 s 以内ブロック、CPU / メモリ）は `docs/manual/whisper-transcribe/performance-results.md` に記録する
 - 判断を覆す場合は新 ADR を作成し、本 ADR の Status を `Superseded by ADR-XXXX` に変更する

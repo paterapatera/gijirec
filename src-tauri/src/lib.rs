@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", allow(linker_messages))]
+
 #[cfg(debug_assertions)]
 pub mod capture_audio_controls_integration_support;
 pub mod capture_observability;

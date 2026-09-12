@@ -2,7 +2,7 @@
 //!
 //! Fires `INFERENCE_FAILED` only when the whisper engine fails to load within
 //! [`ENGINE_LOAD_TIMEOUT`] or an in-flight inference exceeds [`INFERENCE_TIMEOUT`].
-//! Ambient PCM above the VAD threshold does not affect stall detection.
+//! Ambient PCM above the near-silence RMS threshold does not affect stall detection.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,9 +14,6 @@ use gijirec_domain::transcribe::{TranscribeError, TranscribePhase};
 
 use super::event_emitter::TranscribeEventEmitter;
 use super::observability;
-
-/// VAD near-silence RMS threshold (matches `transcribe_worker::SILENCE_RMS_THRESHOLD`).
-pub const SILENCE_RMS_THRESHOLD: f32 = 0.008;
 
 /// Fixed batch inference interval (matches `transcribe_worker::BATCH_INTERVAL` in production).
 pub const BATCH_INTERVAL: Duration = Duration::from_secs(30);
@@ -603,6 +600,7 @@ mod tests {
 
     #[test]
     fn chunk_rms_matches_worker_formula() {
+        const SILENCE_RMS_THRESHOLD: f32 = 0.008;
         let audible = vec![0.1, -0.1, 0.2, -0.2];
         let silence = vec![0.0, 0.0, 0.0];
         assert!(chunk_rms(&audible) > SILENCE_RMS_THRESHOLD);

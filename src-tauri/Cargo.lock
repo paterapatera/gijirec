@@ -1585,7 +1585,6 @@ name = "gijirec-infrastructure"
 version = "0.1.0"
 dependencies = [
  "cpal",
- "dirs",
  "gijirec-domain",
  "reqwest 0.12.28",
  "rtrb",

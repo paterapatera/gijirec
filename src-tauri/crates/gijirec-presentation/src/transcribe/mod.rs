@@ -23,8 +23,8 @@ pub use event_emitter::{
 };
 pub use gijirec_application::transcribe::{
     ApplyVariantOutcome, ModelDownloadProgress, ModelDownloadStatus, ModelDownloaderPort,
-    ModelOrchestrator, ModelOrchestratorConfig, ModelStorePort, TranscribeSettingsService,
-    TranscribeWorkerPort, WhisperContextPort,
+    ModelOrchestrator, ModelStorePort, TranscribeSettingsService, TranscribeWorkerPort,
+    WhisperContextPort,
 };
 pub use gijirec_domain::transcribe::{TranscribeError, TranscriptSegmentSink, WhisperModelVariant};
 pub use gijirec_infrastructure::transcribe::{
@@ -49,9 +49,9 @@ pub use settings_commands::{
     persist_transcribe_model_variant,
 };
 pub use stall_watchdog::{
-    BATCH_INTERVAL, OrchestratorStallAdapter, SILENCE_RMS_THRESHOLD, STALL_POLL_INTERVAL,
-    STALL_THRESHOLD, SharedTranscribeEmitter, StallClock, StallWatchdogRuntime,
-    TranscribeStallOrchestrator, TranscribeStallWatchdog, chunk_rms,
+    BATCH_INTERVAL, OrchestratorStallAdapter, STALL_POLL_INTERVAL, STALL_THRESHOLD,
+    SharedTranscribeEmitter, StallClock, StallWatchdogRuntime, TranscribeStallOrchestrator,
+    TranscribeStallWatchdog, chunk_rms,
 };
 pub use status_cache::{TranscribeStatusCache, TranscribeStatusSnapshot};
 pub use transcript_block_bus::{

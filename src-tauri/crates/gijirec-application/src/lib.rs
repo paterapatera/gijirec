@@ -11,5 +11,5 @@ pub(crate) mod user_facing_error;
 
 pub use transcribe::{
     ApplyVariantOutcome, BlockEmitter, DefaultTranscribeOrchestrator, ModelOrchestrator,
-    ModelOrchestratorConfig, TranscribeOrchestrator, TranscribeSettingsService,
+    TranscribeOrchestrator, TranscribeSettingsService,
 };

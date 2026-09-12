@@ -45,7 +45,7 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 - 選択バリアント: `q5_0` / `q8_0` / `fp16`（契約: `whisper-transcribe-settings.md`）。論理既定は FP16（既存 `kotoba-whisper-v2.2-ggml.bin` を追加 DL なしで互換）
 - 転写中切替: `pending_variant` を次バッチサイクル（`on_batch_cycle_started`）で適用。同一バリアント再選択は no-op（永続化のみ）
 - 可観測性: `batch_cycle_started` / `batch_cycle_completed`、`transcribe_pcm_backlog_seconds`、`transcribe_rtrb_overflow_count`（ingest 共有 `AtomicU64` を worker がサイクル開始時に読む。PCM 全文・転写全文はログに出さない）
-- スレッド数: CPU コア数に応じた動的設定、**上限 4**
+- スレッド数: CPU コア数に応じた動的設定、**上限 8**
 - 無音窓: `window_rms` が `SILENCE_RMS_THRESHOLD`（0.008）未満のバッチは whisper 推論をスキップ（VAD 窓切りは ADR-0012 以前のレガシーで削除済み）
 
 ## Development Standards
@@ -158,5 +158,5 @@ bun run rust:typecheck
 永続的な技術判断は `docs/architecture/adr/` に ADR として記録する。
 
 ---
-_updated_at: 2026-09-11（jscpd threshold 0%・tests scan 含む・typecheck:test・品質例外一覧・compose/transcribe_worker 分割）_
+_updated_at: 2026-09-12（レガシー移行削除・スレッド上限 8・jscpd 0%）_
 _Document standards and patterns, not every dependency_

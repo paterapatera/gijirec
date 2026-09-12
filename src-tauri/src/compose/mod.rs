@@ -10,8 +10,6 @@ pub(crate) use audio_controls::{
     CachingIngestLevelEventEmitter, CaptureAudioControlsProcessingHook,
 };
 pub(crate) use late_bound::{LateBoundCaptureAudioControlsEvents, LateBoundDeviceSelectionEvents};
-#[allow(unused_imports)]
-pub(crate) use model_stack::inject_model_stack_shared_with_config;
 pub(crate) use model_stack::{SharedModelOrchestrator, inject_model_stack_shared};
 #[allow(unused_imports)]
 pub(crate) use wiring::PCM_RTRB_CAPACITY_SAMPLES;
