@@ -32,3 +32,16 @@ fn before_build_command_uses_bun_run_build() {
         json_string_field(&raw, "beforeBuildCommand").expect("beforeBuildCommand must be present");
     assert_eq!(value, "bun run build");
 }
+
+#[test]
+fn identifier_avoids_macos_app_bundle_suffix() {
+    let path = tauri_conf_path();
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("missing {}: {err}", path.display()));
+    let identifier = json_string_field(&raw, "identifier").expect("identifier must be present");
+    assert_eq!(identifier, "com.gijirec.desktop");
+    assert!(
+        !identifier.ends_with(".app"),
+        "bundle identifier must not end with .app on macOS: {identifier}"
+    );
+}

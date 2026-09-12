@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn session_log_path_stays_under_app_data_dir() {
-        let app_data = Path::new("C:\\Users\\me\\AppData\\Roaming\\com.gijirec");
+        let app_data = Path::new("C:\\Users\\me\\AppData\\Roaming\\com.gijirec.desktop");
         let run_id = run_session_id("capture-0");
         let path = persistence::session_log_path(app_data, &run_id);
         assert!(path.starts_with(app_data));

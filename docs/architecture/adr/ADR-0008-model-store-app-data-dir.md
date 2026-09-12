@@ -7,7 +7,7 @@
 
 ## Context
 
-Whisper モデルファイル（`kotoba-whisper-v2.2-ggml.bin`）のローカル保存先は `ModelStore` が解決する。実装では composition root が `dirs::data_local_dir()/gijirec` を渡していたが、Tauri setup では `app.path().app_data_dir()`（identifier `com.gijirec.app`）を editor 設定・release 診断ログと共有している。Windows では `Local` と `Roaming` が分かれ、リリースビルドでモデル取得・検証・他機能のデータ所在が一致しない。
+Whisper モデルファイル（`kotoba-whisper-v2.2-ggml.bin`）のローカル保存先は `ModelStore` が解決する。実装では composition root が `dirs::data_local_dir()/gijirec` を渡していたが、Tauri setup では `app.path().app_data_dir()`（identifier `com.gijirec.desktop`）を editor 設定・release 診断ログと共有している。Windows では `Local` と `Roaming` が分かれ、リリースビルドでモデル取得・検証・他機能のデータ所在が一致しない。
 
 ## Decision
 

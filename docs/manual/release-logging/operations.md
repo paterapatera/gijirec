@@ -22,8 +22,8 @@ gijirec.exe --log
 
 | OS | `{app_data_dir}` の例 | ログディレクトリ |
 |----|----------------------|------------------|
-| Windows | `%APPDATA%\com.gijirec.app\`（Tauri identifier に依存） | `{app_data_dir}\logs\sessions\{run_session_id}\` |
-| macOS | `~/Library/Application Support/com.gijirec.app/` | `{app_data_dir}/logs/sessions/{run_session_id}/` |
+| Windows | `%APPDATA%\com.gijirec.desktop\`（Tauri identifier に依存） | `{app_data_dir}\logs\sessions\{run_session_id}\` |
+| macOS | `~/Library/Application Support/com.gijirec.desktop/` | `{app_data_dir}/logs/sessions/{run_session_id}/` |
 
 **ログファイル名**: `gijirec.log`（セッションディレクトリ内）
 
