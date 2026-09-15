@@ -64,13 +64,18 @@ impl WhisperCppAdapter {
     }
 
     fn cpu_context_params() -> WhisperContextParameters<'static> {
-        let mut params = WhisperContextParameters::default();
+        #[cfg(target_os = "macos")]
+        {
+            WhisperContextParameters::default()
+        }
         #[cfg(not(target_os = "macos"))]
         {
-            params.use_gpu = false;
-            params.flash_attn = false;
+            WhisperContextParameters {
+                use_gpu: false,
+                flash_attn: false,
+                ..Default::default()
+            }
         }
-        params
     }
 
     /// Loads a whisper model from `path`. Failures map to [`TranscribeError::ModelCorrupt`].

@@ -10,8 +10,10 @@ use gijirec_presentation::application::capture_audio_controls::{
 use gijirec_presentation::application::device_selection::DeviceSelectionStore;
 #[cfg(target_os = "macos")]
 use gijirec_presentation::application::device_selection::MacosSpeakerPreflight;
+#[cfg(not(target_os = "macos"))]
+use gijirec_presentation::application::device_selection::NoopSpeakerPreflight;
 use gijirec_presentation::application::device_selection::{
-    DefaultDeviceSelectionService, DeviceSelectionService, NoopSpeakerPreflight, SystemClock,
+    DefaultDeviceSelectionService, DeviceSelectionService, SystemClock,
 };
 use gijirec_presentation::application::transcribe::block_emitter::BlockEmitter;
 use gijirec_presentation::application::transcribe::model_orchestrator::ApplyVariantOutcome;
