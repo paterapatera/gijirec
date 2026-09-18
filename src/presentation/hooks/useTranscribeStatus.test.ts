@@ -5,12 +5,14 @@ import { setupTestDom } from "../../test-setup";
 import type {
   ModelDownloadProgress,
   TranscribeEventListenFn,
+  TranscribePcmBacklog,
   TranscribePhaseChanged,
   TranscribeUserError,
 } from "./transcribe-status";
 import {
   INITIAL_TRANSCRIBE_STATUS,
   MODEL_PROGRESS_EVENT,
+  PCM_BACKLOG_EVENT,
   PHASE_CHANGED_EVENT,
   TRANSCRIBE_ERROR_EVENT,
 } from "./transcribe-status";
@@ -181,6 +183,59 @@ describe("useTranscribeStatus", () => {
     expect(result.current.error).toEqual(mockError);
   });
 
+  test("updates pcm backlog on pcm-backlog event", async () => {
+    const { listenFn, emit, listeners } = createMockListen();
+    const { result } = renderHook(() => useTranscribeStatus({ listenFn }));
+
+    await waitFor(() => {
+      expect(listeners.has(PCM_BACKLOG_EVENT)).toBe(true);
+    });
+
+    act(() => {
+      emit(PCM_BACKLOG_EVENT, {
+        backlog_seconds: 120.5,
+      } satisfies TranscribePcmBacklog);
+    });
+
+    await waitFor(() => {
+      expect(result.current.pcmBacklogSeconds).toBe(120.5);
+    });
+  });
+
+  test("clears pcm backlog when phase leaves transcribing", async () => {
+    const { listenFn, emit, listeners } = createMockListen();
+    const { result } = renderHook(() => useTranscribeStatus({ listenFn }));
+
+    await waitFor(() => {
+      expect(listeners.has(PHASE_CHANGED_EVENT)).toBe(true);
+    });
+
+    act(() => {
+      emit(PHASE_CHANGED_EVENT, {
+        phase: "transcribing",
+        timestamp_ms: 1,
+      } satisfies TranscribePhaseChanged);
+      emit(PCM_BACKLOG_EVENT, {
+        backlog_seconds: 60,
+      } satisfies TranscribePcmBacklog);
+    });
+
+    await waitFor(() => {
+      expect(result.current.pcmBacklogSeconds).toBe(60);
+    });
+
+    act(() => {
+      emit(PHASE_CHANGED_EVENT, {
+        phase: "ready",
+        timestamp_ms: 2,
+      } satisfies TranscribePhaseChanged);
+    });
+
+    await waitFor(() => {
+      expect(result.current.pcmBacklogSeconds).toBe(0);
+    });
+  });
+
   test("cleans up event listeners on unmount", async () => {
     const { listenFn, unlistenEvents } = createMockListen();
     const { unmount } = renderHook(() => useTranscribeStatus({ listenFn }));
@@ -194,5 +249,6 @@ describe("useTranscribeStatus", () => {
     expect(unlistenEvents).toContain(PHASE_CHANGED_EVENT);
     expect(unlistenEvents).toContain(MODEL_PROGRESS_EVENT);
     expect(unlistenEvents).toContain(TRANSCRIBE_ERROR_EVENT);
+    expect(unlistenEvents).toContain(PCM_BACKLOG_EVENT);
   });
 });

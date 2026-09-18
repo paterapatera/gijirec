@@ -48,6 +48,7 @@ pub trait TranscribeObservability: Send + Sync {
     }
     fn log_model_variant_selected(&self, _variant: WhisperModelVariant) {}
     fn log_model_variant_applied(&self, _variant: WhisperModelVariant) {}
+    fn log_pcm_retention_limit_reached(&self) {}
 }
 
 struct NoopTranscribeObservability;
@@ -118,6 +119,14 @@ pub fn log_transcribe_error(error: &TranscribeError) {
         .read()
         .expect("lock")
         .log_transcribe_error(error);
+}
+
+/// Logs when the PCM retention design limit is reached (no raw PCM or transcript text).
+pub fn log_pcm_retention_limit_reached() {
+    transcribe_observability()
+        .read()
+        .expect("lock")
+        .log_pcm_retention_limit_reached();
 }
 
 /// Logs a one-shot stall detection diagnostic (`transcribe_stall_detected=true`).

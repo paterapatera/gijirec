@@ -34,6 +34,7 @@ function createMockInvoke(
     q5_0: false,
     q8_0: true,
     fp16: true,
+    large_v3: false,
   };
   const calls: InvokeCall[] = [];
 

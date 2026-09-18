@@ -7,6 +7,7 @@ import {
 import type {
   ModelDownloadProgress,
   TranscribeEventListenFn,
+  TranscribePcmBacklog,
   TranscribePhaseChanged,
   TranscribeStatusState,
   TranscribeUserError,
@@ -14,6 +15,7 @@ import type {
 import {
   INITIAL_TRANSCRIBE_STATUS,
   MODEL_PROGRESS_EVENT,
+  PCM_BACKLOG_EVENT,
   PHASE_CHANGED_EVENT,
   TRANSCRIBE_ERROR_EVENT,
 } from "./transcribe-status";
@@ -36,6 +38,7 @@ function applyPhaseChanged(
     phase,
     timestampMs,
     error: phase === "error" ? prev.error : null,
+    pcmBacklogSeconds: phase === "transcribing" ? prev.pcmBacklogSeconds : 0,
   }));
 }
 
@@ -61,6 +64,17 @@ function applyError(
     ...prev,
     phase: "error",
     error: payload,
+    pcmBacklogSeconds: 0,
+  }));
+}
+
+function applyPcmBacklog(
+  payload: TranscribePcmBacklog,
+  setStatus: Dispatch<SetStateAction<TranscribeStatusState>>,
+): void {
+  setStatus((prev) => ({
+    ...prev,
+    pcmBacklogSeconds: payload.backlog_seconds,
   }));
 }
 
@@ -93,6 +107,7 @@ async function subscribeTranscribeEvents(
       unlistenPhase: () => void;
       unlistenProgress: () => void;
       unlistenError: () => void;
+      unlistenBacklog: () => void;
     }
   | undefined
 > {
@@ -123,17 +138,30 @@ async function subscribeTranscribeEvents(
     return undefined;
   }
 
-  return { unlistenPhase, unlistenProgress, unlistenError };
+  const unlistenBacklog = await listenFn(PCM_BACKLOG_EVENT, (event) => {
+    applyPcmBacklog(event.payload as TranscribePcmBacklog, setStatus);
+  });
+  if (isCancelled()) {
+    unlistenPhase();
+    unlistenProgress();
+    unlistenError();
+    unlistenBacklog();
+    return undefined;
+  }
+
+  return { unlistenPhase, unlistenProgress, unlistenError, unlistenBacklog };
 }
 
 function cleanupTranscribeHandles(handles: {
   unlistenPhase: () => void;
   unlistenProgress: () => void;
   unlistenError: () => void;
+  unlistenBacklog: () => void;
 }): void {
   handles.unlistenPhase();
   handles.unlistenProgress();
   handles.unlistenError();
+  handles.unlistenBacklog();
 }
 
 export function useTranscribeStatus(

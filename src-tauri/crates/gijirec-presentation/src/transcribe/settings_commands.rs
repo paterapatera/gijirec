@@ -125,18 +125,19 @@ mod tests {
     }
 
     #[test]
-    fn get_returns_settings_and_local_availability_for_three_variants() {
+    fn get_returns_settings_and_local_availability_for_all_variants() {
         let data_dir = temp_data_dir();
         let service = TranscribeSettingsService::new(data_dir.clone());
         let availability = HashMap::from([
             (WhisperModelVariant::Fp16, true),
             (WhisperModelVariant::Q8_0, false),
             (WhisperModelVariant::Q5_0, false),
+            (WhisperModelVariant::LargeV3, false),
         ]);
 
         let response = get_transcribe_settings_impl(&service, availability);
         assert_eq!(response.settings.model_variant, WhisperModelVariant::Fp16);
-        assert_eq!(response.local_availability.len(), 3);
+        assert_eq!(response.local_availability.len(), 4);
         assert_eq!(
             response.local_availability.get(&WhisperModelVariant::Fp16),
             Some(&true)

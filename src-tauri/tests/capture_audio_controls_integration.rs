@@ -13,7 +13,7 @@ use std::time::Duration;
 
 const PCM_SAMPLE_RATE_HZ: u32 = 16_000;
 const PCM_INFERENCE_WINDOW_SAMPLES: usize = 30 * PCM_SAMPLE_RATE_HZ as usize;
-const PCM_RTRB_CAPACITY_SAMPLES: usize = PCM_INFERENCE_WINDOW_SAMPLES * 10;
+const PCM_RTRB_CAPACITY_SAMPLES: usize = PCM_INFERENCE_WINDOW_SAMPLES * 20;
 
 fn make_chunk(seq: u64, amplitude: i16) -> PcmChunk {
     PcmChunk::new(seq, vec![amplitude; CHUNK_FRAME_COUNT as usize], seq * 100).expect("chunk")

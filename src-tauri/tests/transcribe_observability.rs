@@ -5,8 +5,9 @@ use tracing_subscriber::EnvFilter;
 use gijirec_lib::transcribe_observability::TracingTranscribeObservability;
 use gijirec_presentation::domain::transcribe::{TranscribeError, TranscribePhase};
 use gijirec_presentation::transcribe::observability::{
-    TRANSCRIBE_LOG_TARGET, log_block_buffer_drop, log_inference_latency, log_pcm_sequence_gaps,
-    log_phase_transition, log_stall_detected, log_transcribe_error, set_transcribe_observability,
+    TRANSCRIBE_LOG_TARGET, log_block_buffer_drop, log_inference_latency,
+    log_pcm_retention_limit_reached, log_pcm_sequence_gaps, log_phase_transition,
+    log_stall_detected, log_transcribe_error, set_transcribe_observability,
 };
 
 struct TranscribeWriter(Arc<Mutex<Vec<u8>>>);
@@ -175,4 +176,22 @@ fn error_records_error_code_and_masks_transcription_text() {
     );
     // Detail string or text shouldn't be printed verbatim if it contains transcription
     assert!(logs.contains("INFERENCE_FAILED"));
+}
+
+#[test]
+fn pcm_retention_limit_records_reason_without_pcm_or_text() {
+    let logs = with_transcribe_tracing_logs(log_pcm_retention_limit_reached);
+
+    assert!(
+        logs.contains("transcribe_pcm_retention_limit_reached"),
+        "log must record retention limit event: {logs}"
+    );
+    assert!(
+        logs.contains("reason=retention_limit") || logs.contains("retention_limit"),
+        "log must include retention_limit reason: {logs}"
+    );
+    assert!(
+        !logs.to_lowercase().contains("confidential"),
+        "log must not include transcript payloads: {logs}"
+    );
 }

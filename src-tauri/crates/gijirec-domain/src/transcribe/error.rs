@@ -11,6 +11,7 @@ pub enum TranscribeErrorCode {
     ModelNotFound,
     InferenceFailed,
     UpstreamCaptureError,
+    PcmRetentionLimitExceeded,
     Internal,
 }
 
@@ -22,6 +23,7 @@ impl TranscribeErrorCode {
             Self::ModelNotFound => "MODEL_NOT_FOUND",
             Self::InferenceFailed => "INFERENCE_FAILED",
             Self::UpstreamCaptureError => "UPSTREAM_CAPTURE_ERROR",
+            Self::PcmRetentionLimitExceeded => "PCM_RETENTION_LIMIT_EXCEEDED",
             Self::Internal => "INTERNAL",
         }
     }
@@ -50,6 +52,7 @@ pub enum TranscribeError {
     ModelNotFound { detail: String },
     InferenceFailed { detail: String },
     UpstreamCaptureError,
+    PcmRetentionLimitExceeded,
     Internal { detail: String },
 }
 
@@ -90,6 +93,14 @@ impl TranscribeError {
                 action_ja: "キャプチャエラーを解消後、文字起こしは自動再開します".to_string(),
                 recoverable: true,
             },
+            Self::PcmRetentionLimitExceeded => UserFacingTranscribeError {
+                code: TranscribeErrorCode::PcmRetentionLimitExceeded,
+                message_ja: "連続録音の保持上限（1時間）に達したため、キャプチャを停止しました。"
+                    .to_string(),
+                action_ja: "キャプチャを停止しました。新しいセッションを開始してください"
+                    .to_string(),
+                recoverable: true,
+            },
             Self::Internal { detail: _ } => UserFacingTranscribeError {
                 code: TranscribeErrorCode::Internal,
                 message_ja: "予期しないエラーが発生しました。".to_string(),
@@ -111,6 +122,7 @@ impl fmt::Display for TranscribeError {
             Self::ModelNotFound { detail } => write!(f, "model not found: {detail}"),
             Self::InferenceFailed { detail } => write!(f, "inference failed: {detail}"),
             Self::UpstreamCaptureError => write!(f, "upstream capture error"),
+            Self::PcmRetentionLimitExceeded => write!(f, "pcm retention limit exceeded"),
             Self::Internal { detail } => write!(f, "internal transcribe error: {detail}"),
         }
     }
@@ -141,6 +153,7 @@ mod tests {
                 detail: "whisper context error".to_string(),
             },
             TranscribeError::UpstreamCaptureError,
+            TranscribeError::PcmRetentionLimitExceeded,
             TranscribeError::Internal {
                 detail: "worker join timeout".to_string(),
             },
@@ -155,6 +168,7 @@ mod tests {
             "MODEL_NOT_FOUND",
             "INFERENCE_FAILED",
             "UPSTREAM_CAPTURE_ERROR",
+            "PCM_RETENTION_LIMIT_EXCEEDED",
             "INTERNAL",
         ];
 
@@ -224,9 +238,18 @@ mod tests {
                 detail: "x".to_string(),
             },
             TranscribeError::UpstreamCaptureError,
+            TranscribeError::PcmRetentionLimitExceeded,
         ] {
             assert!(error.to_user_facing().recoverable);
         }
+    }
+
+    #[test]
+    fn pcm_retention_limit_exceeded_matches_status_contract() {
+        let facing = TranscribeError::PcmRetentionLimitExceeded.to_user_facing();
+        assert_eq!(facing.code, TranscribeErrorCode::PcmRetentionLimitExceeded);
+        assert!(facing.action_ja_is_present());
+        assert_serde_produces_contract_json_shape(&facing, "PCM_RETENTION_LIMIT_EXCEEDED");
     }
 
     #[test]

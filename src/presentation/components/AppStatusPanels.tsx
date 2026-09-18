@@ -1,5 +1,6 @@
 import type { CaptureUserError } from "../hooks/capture-status";
 import type { ModelDownloadProgress, TranscribeUserError } from "../hooks/transcribe-status";
+import { formatInferenceBacklogLabel } from "../hooks/transcribe-status";
 
 interface PhaseStatusPanelProps {
   readonly label: string;
@@ -63,6 +64,7 @@ export interface AppStatusPanelsProps {
   readonly transcribePhase: string;
   readonly transcribeError: TranscribeUserError | null;
   readonly modelProgress: ModelDownloadProgress | null;
+  readonly pcmBacklogSeconds: number;
 }
 
 export function AppStatusPanels({
@@ -71,7 +73,11 @@ export function AppStatusPanels({
   transcribePhase,
   transcribeError,
   modelProgress,
+  pcmBacklogSeconds,
 }: AppStatusPanelsProps) {
+  const backlogLabel =
+    transcribePhase === "transcribing" ? formatInferenceBacklogLabel(pcmBacklogSeconds) : null;
+
   return (
     <>
       <div className="phase-panels-row">
@@ -82,6 +88,13 @@ export function AppStatusPanels({
           testId="transcribe-phase"
         />
       </div>
+      {backlogLabel !== null ? (
+        <section className="backlog-panel" aria-live="polite">
+          <p className="backlog-label" data-testid="transcribe-pcm-backlog">
+            {backlogLabel}
+          </p>
+        </section>
+      ) : null}
       {transcribePhase === "loading_model" && modelProgress !== null ? (
         <ModelProgressPanel progress={modelProgress} />
       ) : null}

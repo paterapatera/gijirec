@@ -25,6 +25,7 @@ use gijirec_presentation::domain::transcribe::{
 };
 use gijirec_presentation::infrastructure::audio::device_enumerator::AudioDeviceEnumerator;
 use gijirec_presentation::infrastructure::transcribe::TranscribeWorker;
+use gijirec_presentation::tauri::pcm_bus::PcmChunkBus;
 use gijirec_presentation::transcribe::lifecycle_hook::DEFAULT_TRANSCRIBE_STOP_TIMEOUT;
 use gijirec_presentation::transcribe::{
     IngestLevelEmitter, PcmIngestConsumer, StallClock, TranscribeEventEmitter,
@@ -65,9 +66,9 @@ const PCM_INGEST_RMS_LOG_INTERVAL_CHUNKS: u64 = 50;
 /// Worst-case headroom: slow 30 s window inference while capture continues at 16 kHz,
 /// plus brief drain-thread stalls on the downstream `VecDeque` mutex during window
 /// extraction. Must materially exceed [`PCM_INFERENCE_WINDOW_SAMPLES`] so ingest never
-/// fails with `Internal("rtrb buffer full")` (Req 2.1/2.2). Long-term backlog retreat
-/// lives in task 2.1; compose only sizes this burst buffer (10 windows ≈ 5 min @ 16 kHz).
-pub(crate) const PCM_RTRB_CAPACITY_SAMPLES: usize = PCM_INFERENCE_WINDOW_SAMPLES * 10;
+/// extraction. Sized above two 30 s windows so ingest backpressure does not cascade while
+/// the deque holds sub-hour backlog (primary retention lives in [`PcmBufferState`]).
+pub(crate) const PCM_RTRB_CAPACITY_SAMPLES: usize = PCM_INFERENCE_WINDOW_SAMPLES * 20;
 
 #[derive(Debug)]
 pub(crate) struct PcmIngestRmsAccumulator {
@@ -113,6 +114,8 @@ impl PcmIngestRmsAccumulator {
 type StallProgressSlot = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
 type InferencePercentSlot = Arc<Mutex<Option<Arc<dyn Fn(i32) + Send + Sync>>>>;
 type WorkerFatalSlot = Arc<Mutex<Option<Arc<dyn Fn(TranscribeError) + Send + Sync>>>>;
+type RetentionLimitSlot = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
+type PcmBacklogSlot = Arc<Mutex<Option<Arc<dyn Fn(f64) + Send + Sync>>>>;
 
 /// Late-bound callback slots bridging transcribe worker events and the stall watchdog.
 struct StallWatchdogWiring {
@@ -122,6 +125,8 @@ struct StallWatchdogWiring {
     inference_attempted: StallProgressSlot,
     inference_pct: InferencePercentSlot,
     worker_fatal: WorkerFatalSlot,
+    retention_limit: RetentionLimitSlot,
+    pcm_backlog: PcmBacklogSlot,
 }
 
 impl StallWatchdogWiring {
@@ -133,6 +138,8 @@ impl StallWatchdogWiring {
             inference_attempted: Arc::new(Mutex::new(None)),
             inference_pct: Arc::new(Mutex::new(None)),
             worker_fatal: Arc::new(Mutex::new(None)),
+            retention_limit: Arc::new(Mutex::new(None)),
+            pcm_backlog: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -141,7 +148,12 @@ impl StallWatchdogWiring {
     }
 
     /// Populates stall-watchdog and lifecycle fatal-error handlers into the slots.
-    fn bind_lifecycle(&self, lifecycle: &Arc<TranscribeLifecycleHook>) {
+    fn bind_lifecycle(
+        &self,
+        lifecycle: &Arc<TranscribeLifecycleHook>,
+        capture_orchestrator: &Arc<Mutex<dyn CaptureOrchestrator>>,
+        pcm_bus: &Arc<PcmChunkBus>,
+    ) {
         if let Some(watchdog) = lifecycle.stall_watchdog() {
             let block_watchdog = Arc::clone(&watchdog);
             *self.block.lock().expect("lock block progress") =
@@ -176,6 +188,25 @@ impl StallWatchdogWiring {
         *self.worker_fatal.lock().expect("lock worker fatal slot") = Some(Arc::new(move |err| {
             lifecycle_for_fatal.on_worker_engine_failed(err)
         }));
+
+        let lifecycle_for_retention = Arc::clone(lifecycle);
+        let capture_for_retention = Arc::clone(capture_orchestrator);
+        let pcm_bus_for_retention = Arc::clone(pcm_bus);
+        *self
+            .retention_limit
+            .lock()
+            .expect("lock retention limit slot") = Some(Arc::new(move || {
+            lifecycle_for_retention.on_pcm_retention_limit_exceeded(
+                Arc::clone(&capture_for_retention),
+                Arc::clone(&pcm_bus_for_retention),
+            );
+        }));
+
+        let lifecycle_for_backlog = Arc::clone(lifecycle);
+        *self.pcm_backlog.lock().expect("lock pcm backlog slot") =
+            Some(Arc::new(move |backlog_seconds| {
+                lifecycle_for_backlog.report_pcm_backlog_seconds(backlog_seconds);
+            }));
     }
 
     /// Wires observability logging and stall-watchdog notification callbacks on the worker.
@@ -230,6 +261,26 @@ impl StallWatchdogWiring {
             let slot = Arc::clone(&self.worker_fatal);
             Arc::new(move |err| notify_worker_fatal(&slot, err))
         });
+        worker.set_retention_limit_callback({
+            let slot = Arc::clone(&self.retention_limit);
+            Arc::new(move || notify_retention_limit(&slot))
+        });
+        worker.set_pcm_backlog_callback({
+            let slot = Arc::clone(&self.pcm_backlog);
+            Arc::new(move |seconds| notify_pcm_backlog(&slot, seconds))
+        });
+    }
+}
+
+fn notify_pcm_backlog(slot: &PcmBacklogSlot, seconds: f64) {
+    if let Some(notify) = slot.lock().expect("lock pcm backlog").as_ref() {
+        notify(seconds);
+    }
+}
+
+fn notify_retention_limit(slot: &RetentionLimitSlot) {
+    if let Some(notify) = slot.lock().expect("lock retention limit").as_ref() {
+        notify();
     }
 }
 
@@ -513,6 +564,8 @@ impl TranscribeEventEmitter for MockEmitter {
 fn init_transcribe_lifecycle(
     transcribe_orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
     stall_wiring: &StallWatchdogWiring,
+    capture_orchestrator: &Arc<Mutex<dyn CaptureOrchestrator>>,
+    pcm_bus: &Arc<PcmChunkBus>,
 ) -> Arc<TranscribeLifecycleHook> {
     let dummy_emitter = Arc::new(MockEmitter);
     let transcribe_lifecycle = Arc::new(TranscribeLifecycleHook::with_stall_watchdog(
@@ -520,7 +573,7 @@ fn init_transcribe_lifecycle(
         dummy_emitter,
         stall_watchdog_clock(),
     ));
-    stall_wiring.bind_lifecycle(&transcribe_lifecycle);
+    stall_wiring.bind_lifecycle(&transcribe_lifecycle, capture_orchestrator, pcm_bus);
     transcribe_lifecycle
 }
 
@@ -561,6 +614,8 @@ where
     let transcribe_lifecycle = init_transcribe_lifecycle(
         Arc::clone(&transcribe_orchestrator) as Arc<Mutex<dyn TranscribeOrchestrator>>,
         &stall_wiring,
+        &foundation.orchestrator,
+        &foundation.pipeline.pcm_bus,
     );
 
     ComposedCapture {

@@ -38,6 +38,7 @@ const FRONTEND_LISTEN_EVENTS: &[&str] = &[
     "whisper-transcribe://model-progress",
     "whisper-transcribe://error",
     "whisper-transcribe://block-appended",
+    "whisper-transcribe://pcm-backlog",
     "audio-device-selection://devices-changed",
     "audio-device-selection://selection-changed",
     "capture-audio-controls://controls-changed",

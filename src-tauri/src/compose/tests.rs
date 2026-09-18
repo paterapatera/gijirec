@@ -244,7 +244,7 @@ fn compose_batch_pipeline_end_to_end_synthetic_pcm_to_blocks() {
         PCM_RTRB_CAPACITY_SAMPLES >= PCM_INFERENCE_WINDOW_SAMPLES * 2,
         "compose rtrb must exceed batch window for ingest headroom"
     );
-    assert_eq!(MAX_QUEUED_CHUNKS, 3000);
+    assert_eq!(MAX_QUEUED_CHUNKS, 36_000);
 
     let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(PCM_RTRB_CAPACITY_SAMPLES);
     let pcm_ingest = PcmIngestConsumer::new(pcm_prod);

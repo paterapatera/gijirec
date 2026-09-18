@@ -1,7 +1,7 @@
 import { defaultInvoke, type InjectableInvokeFn } from "./injectableInvoke";
 
 /** whisper-transcribe-settings.md contract mirror. */
-export type WhisperModelVariant = "q5_0" | "q8_0" | "fp16";
+export type WhisperModelVariant = "q5_0" | "q8_0" | "fp16" | "large_v3";
 
 export interface TranscribeSettings {
   model_variant: WhisperModelVariant;
@@ -28,12 +28,13 @@ export interface TranscribeSettingsUserError {
   action_ja: string;
 }
 
-export const WHISPER_MODEL_VARIANTS: WhisperModelVariant[] = ["q5_0", "q8_0", "fp16"];
+export const WHISPER_MODEL_VARIANTS: WhisperModelVariant[] = ["q5_0", "q8_0", "fp16", "large_v3"];
 
 export const WHISPER_MODEL_VARIANT_LABELS: Record<WhisperModelVariant, string> = {
   q5_0: "Q5_0",
   q8_0: "Q8_0",
   fp16: "FP16",
+  large_v3: "Whisper large-v3",
 };
 
 export const DEFAULT_TRANSCRIBE_SETTINGS: TranscribeSettings = {

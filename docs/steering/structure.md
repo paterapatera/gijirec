@@ -60,7 +60,7 @@
 
 **セッション音声制御（composition）**: `CaptureAudioControlsService` が store 更新と live apply を仲介。`capturing` 時は `CaptureProcessingGate`（mic ingest）・`PcmIngestConsumer`（ゲイン乗数）・`IngestLevelEmitter`（dBFS）へ反映。非 `capturing` 時は store 更新と `controls-changed` emit のみ（デバイス選択の選択保持パターンと同型）。mic OFF 後に ingest 可能な音声源がない場合は `TRANSCRIBE_INGEST_NO_AUDIO_SOURCE` を `audio-capture://error` で発火。
 
-**転写ワーカー（バッチ）**: `TranscribeWorker` は `take_batch_window` で先頭 480k samples を非破棄切り出し、`BATCH_INTERVAL`（30 s）起点でサイクル実行。停止時 flush・推論失敗時は次サイクル継続。転写中のバリアント切替は `on_batch_cycle_started` で `try_apply_pending_variant`。可観測性は worker コールバック → presentation `observability` → host tracing。
+**転写ワーカー（バッチ）**: `TranscribeWorker` は `take_batch_window` で先頭 480k samples を非破棄切り出し、`BATCH_INTERVAL`（30 s）起点でサイクル実行。未処理 PCM は `PcmBufferState` で最大 1 時間分（`MAX_PCM_RETENTION_SAMPLES`）まで保持。上限到達時は ingest 停止・lifecycle 経由でキャプチャ停止と `PCM_RETENTION_LIMIT_EXCEEDED` 通知。停止時 flush・推論失敗時は次サイクル継続。転写中のバリアント切替は `on_batch_cycle_started` で `try_apply_pending_variant`。可観測性は worker コールバック → presentation `observability` → host tracing。
 
 **転写エディタ（上流同期）**: AI 転写ブロックの上流同期は `editor.applyUpstream(op)` 必須。直接 `Editor.apply` では locked 範囲保護されない（`withLockedRanges`）。末尾判定は `Editor.end` ベース（`withStableSelection`）。
 
@@ -149,5 +149,5 @@ feature 完了後、spec ディレクトリを削除する前に次を行う（�
 | Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-12（Sync: AppStatusProviders / フェーズ Context パターンを追記）_
+_updated_at: 2026-09-19（Sync: PCM 1 時間保持・上限到達 lifecycle を追記）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_

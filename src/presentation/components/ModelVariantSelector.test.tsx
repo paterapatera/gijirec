@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 describe("ModelVariantSelector", () => {
-  test("shows three variant options and current selection label", () => {
+  test("shows four variant options and current selection label", () => {
     const onVariantChange = () => {};
 
     const { getByTestId, getByText } = render(
@@ -25,7 +25,7 @@ describe("ModelVariantSelector", () => {
     );
 
     const select = getByTestId("model-variant-select") as HTMLSelectElement;
-    expect(select.options.length).toBe(3);
+    expect(select.options.length).toBe(4);
     expect(select.value).toBe("fp16");
     expect(getByText(/現在: FP16/)).toBeTruthy();
   });

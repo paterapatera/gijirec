@@ -82,6 +82,16 @@ impl TranscribeEventEmitter for SharedTranscribeEmitter {
     ) -> Result<(), super::event_emitter::TranscribeEmitError> {
         self.0.lock().expect("lock emitter").emit_error(error)
     }
+
+    fn emit_pcm_backlog(
+        &self,
+        backlog_seconds: f64,
+    ) -> Result<(), super::event_emitter::TranscribeEmitError> {
+        self.0
+            .lock()
+            .expect("lock emitter")
+            .emit_pcm_backlog(backlog_seconds)
+    }
 }
 
 /// [`TranscribeStallOrchestrator`] adapter over [`TranscribeOrchestrator`].

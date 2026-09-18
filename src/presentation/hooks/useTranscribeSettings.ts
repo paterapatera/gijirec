@@ -31,10 +31,11 @@ const DEFAULT_LOCAL_AVAILABILITY: LocalAvailability = {
   q5_0: false,
   q8_0: false,
   fp16: false,
+  large_v3: false,
 };
 
 function isWhisperModelVariant(value: unknown): value is WhisperModelVariant {
-  return value === "q5_0" || value === "q8_0" || value === "fp16";
+  return value === "q5_0" || value === "q8_0" || value === "fp16" || value === "large_v3";
 }
 
 function coerceTranscribeSettings(settings: TranscribeSettings | undefined): TranscribeSettings {

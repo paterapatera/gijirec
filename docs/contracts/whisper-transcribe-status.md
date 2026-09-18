@@ -45,6 +45,20 @@ interface ModelDownloadProgress {
 
 `loading_model` フェーズ中に発行。`complete` 後は `ready` へ遷移。
 
+#### `whisper-transcribe://pcm-backlog`
+
+推論遅延の目安として、転写ワーカー deque 上の未処理 PCM 量（16 kHz モノラル換算）を通知する。推論が追いついている間は `backlog_seconds` は 0 に近づく。
+
+```typescript
+interface TranscribePcmBacklog {
+  /** 未処理 PCM の秒換算（samples / 16_000）。推論遅延の目安。 */
+  backlog_seconds: number;
+}
+```
+
+- `transcribing` 中、ワーカーが deque の sample 数を監視して約 1 秒間隔で更新（バッチサイクル開始時も反映）
+- フェーズが `transcribing` 以外へ遷移したらフロントは表示をクリアしてよい（最終イベントは 0 を送る）
+
 #### `whisper-transcribe://error`
 
 ```typescript
@@ -55,6 +69,7 @@ interface TranscribeUserError {
     | "MODEL_NOT_FOUND"
     | "INFERENCE_FAILED"
     | "UPSTREAM_CAPTURE_ERROR"
+    | "PCM_RETENTION_LIMIT_EXCEEDED"
     | "INTERNAL";
   message_ja: string;
   action_ja: string;
@@ -69,6 +84,7 @@ interface TranscribeUserError {
 | `MODEL_NOT_FOUND` | モデルパス不在かつ取得不可 | アプリを再起動し、モデル取得を完了してください |
 | `INFERENCE_FAILED` | 回復不能な推論エラー（8.1） | アプリを再起動してください。改善しない場合はモデル再取得を試してください |
 | `UPSTREAM_CAPTURE_ERROR` | 上流 audio-capture が `error` へ遷移（8.3） | キャプチャエラーを解消後、文字起こしは自動再開します |
+| `PCM_RETENTION_LIMIT_EXCEEDED` | 単一連続セッションの未処理 PCM が 1 時間設計上限に到達（pcm-retention-one-hour 要件 3） | キャプチャを停止しました。新しいセッションを開始してください |
 | `INTERNAL` | 想定外 | アプリを再起動してください。改善しない場合はログを共有してください |
 
 ### 禁止事項
@@ -86,6 +102,8 @@ interface TranscribeUserError {
 
 | Date | Change | ADR / rationale |
 |------|--------|-----------------|
+| 2026-09-19 | `whisper-transcribe://pcm-backlog` 追加 — 推論遅延目安の未処理 PCM 秒数 | UI backlog indicator |
+| 2026-09-19 | `PCM_RETENTION_LIMIT_EXCEEDED` 追加 — 1 時間 PCM 保持上限到達時の利用者向け停止 | pcm-retention-one-hour |
 | 2026-09-05 | 初版 — フェーズ・モデル進捗・利用者向けエラー | 要件 5, 6, 8 |
 
 ## Notes

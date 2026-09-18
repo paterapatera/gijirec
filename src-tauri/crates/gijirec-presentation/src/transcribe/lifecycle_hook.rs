@@ -3,11 +3,13 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use gijirec_application::capture::orchestrator::CaptureOrchestrator;
 use gijirec_application::transcribe::TranscribeOrchestrator;
 use gijirec_domain::audio::CapturePhase;
 use gijirec_domain::transcribe::{TranscribeError, TranscribePhase};
 
 use crate::tauri::lifecycle::CaptureProcessingHook;
+use crate::tauri::pcm_bus::PcmChunkBus;
 use crate::transcribe::event_emitter::TranscribeEventEmitter;
 use crate::transcribe::observability;
 use crate::transcribe::stall_watchdog::{
@@ -163,6 +165,44 @@ impl TranscribeLifecycleHook {
         orch.fail_inference();
         self.emit_error(emitter.as_ref(), &error);
         self.emit_phase(emitter.as_ref(), orch.phase());
+        self.clear_pcm_backlog_ui();
+    }
+
+    /// Stops capture and notifies the user when unprocessed PCM hits the 1 h design limit.
+    pub fn on_pcm_retention_limit_exceeded(
+        &self,
+        capture_orchestrator: Arc<Mutex<dyn CaptureOrchestrator>>,
+        pcm_bus: Arc<PcmChunkBus>,
+    ) {
+        self.stop_stall_watchdog();
+        pcm_bus.set_retention_limit_active(true);
+        observability::log_pcm_retention_limit_reached();
+        let _ = capture_orchestrator
+            .lock()
+            .expect("lock capture orchestrator")
+            .stop();
+        let emitter = self.emitter();
+        let mut orch = self.orchestrator.lock().expect("lock orchestrator");
+        orch.set_upstream_capturing(false);
+        if orch.phase() == TranscribePhase::Transcribing {
+            orch.pause_capture();
+        }
+        self.emit_error(
+            emitter.as_ref(),
+            &TranscribeError::PcmRetentionLimitExceeded,
+        );
+        self.emit_phase(emitter.as_ref(), orch.phase());
+    }
+
+    /// Forwards deque backlog seconds to the UI (`whisper-transcribe://pcm-backlog`).
+    pub fn report_pcm_backlog_seconds(&self, backlog_seconds: f64) {
+        let emitter = self.emitter();
+        let _ = emitter.emit_pcm_backlog(backlog_seconds);
+    }
+
+    fn clear_pcm_backlog_ui(&self) {
+        let emitter = self.emitter();
+        let _ = emitter.emit_pcm_backlog(0.0);
     }
 
     /// Starts transcription after the model becomes ready if capture is already active.
@@ -187,6 +227,7 @@ impl TranscribeLifecycleHook {
             }
             self.emit_phase(emitter.as_ref(), orch.phase());
         }
+        self.clear_pcm_backlog_ui();
     }
 
     fn pause_transcribing_for_capture_stop(&self) {
@@ -208,6 +249,7 @@ impl TranscribeLifecycleHook {
                 orch.on_upstream_capture_error();
                 self.emit_error(emitter.as_ref(), &TranscribeError::UpstreamCaptureError);
                 self.emit_phase(emitter.as_ref(), orch.phase());
+                self.clear_pcm_backlog_ui();
             }
             CapturePhase::Stopping | CapturePhase::Idle => {
                 self.stop_transcribing_with_flush(false);
@@ -241,13 +283,64 @@ impl CaptureProcessingHook for TranscribeLifecycleHook {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tauri::pcm_bus::PcmChunkBus;
     use crate::transcribe::observability::{
         RecordingTranscribeObservability, with_isolated_transcribe_observability,
         with_test_transcribe_observability,
     };
     use crate::transcribe::test_support::{MockTranscribeEmitter, stall_clock_only};
+    use gijirec_application::capture::orchestrator::CaptureOrchestrator;
     use gijirec_application::transcribe::ModelDownloadProgress;
+    use gijirec_domain::audio::{CaptureError, CapturePhase, DeviceSelection};
     use gijirec_domain::transcribe::TranscribeErrorCode;
+
+    struct MockCaptureOrchestrator {
+        stop_count: u32,
+        phase: CapturePhase,
+    }
+
+    impl MockCaptureOrchestrator {
+        fn capturing() -> Self {
+            Self {
+                stop_count: 0,
+                phase: CapturePhase::Capturing,
+            }
+        }
+    }
+
+    impl CaptureOrchestrator for MockCaptureOrchestrator {
+        fn start(&mut self) -> Result<(), CaptureError> {
+            Ok(())
+        }
+
+        fn start_with_selection(
+            &mut self,
+            _selection: &DeviceSelection,
+        ) -> Result<(), CaptureError> {
+            Ok(())
+        }
+
+        fn restart_with_selection(
+            &mut self,
+            _selection: &DeviceSelection,
+        ) -> Result<(), CaptureError> {
+            Ok(())
+        }
+
+        fn stop(&mut self) -> Result<(), CaptureError> {
+            self.stop_count += 1;
+            self.phase = CapturePhase::Idle;
+            Ok(())
+        }
+
+        fn phase(&self) -> CapturePhase {
+            self.phase
+        }
+
+        fn on_device_disconnected(&mut self) -> Result<(), CaptureError> {
+            Ok(())
+        }
+    }
 
     struct MockOrchestrator {
         phase: TranscribePhase,
@@ -467,6 +560,29 @@ mod tests {
                 *emitter.phases.lock().unwrap(),
                 vec![TranscribePhase::Transcribing]
             );
+        });
+    }
+
+    #[test]
+    fn on_pcm_retention_limit_exceeded_emits_contract_error_and_stops_capture() {
+        with_isolated_transcribe_observability(|| {
+            let (orch, emitter, hook) = transcribing_hook();
+            let capture = Arc::new(Mutex::new(MockCaptureOrchestrator::capturing()));
+            let pcm_bus = Arc::new(PcmChunkBus::new());
+
+            hook.on_pcm_retention_limit_exceeded(capture.clone(), pcm_bus.clone());
+
+            assert_eq!(capture.lock().unwrap().stop_count, 1);
+            assert_eq!(orch.lock().unwrap().stop_count, 1);
+            assert!(pcm_bus.retention_limit_active());
+            let errors = emitter.user_errors.lock().unwrap().clone();
+            assert_eq!(errors.len(), 1);
+            assert_eq!(
+                errors[0].code,
+                TranscribeErrorCode::PcmRetentionLimitExceeded
+            );
+            assert!(errors[0].recoverable);
+            assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
         });
     }
 

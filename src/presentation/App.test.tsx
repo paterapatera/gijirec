@@ -20,6 +20,7 @@ import type {
 } from "./hooks/transcribe-status";
 import {
   MODEL_PROGRESS_EVENT,
+  PCM_BACKLOG_EVENT,
   TRANSCRIBE_ERROR_EVENT,
   PHASE_CHANGED_EVENT as TRANSCRIBE_PHASE_CHANGED_EVENT,
 } from "./hooks/transcribe-status";
@@ -62,7 +63,7 @@ function createMockListen() {
 
 const defaultTranscribeSettingsResponse = {
   settings: { model_variant: "fp16" as const },
-  local_availability: { q5_0: false, q8_0: false, fp16: true },
+  local_availability: { q5_0: false, q8_0: false, fp16: true, large_v3: false },
 };
 
 const defaultTranscribeStatusResponse = {
@@ -389,6 +390,7 @@ describe("App", () => {
       expect(listeners.get(TRANSCRIBE_PHASE_CHANGED_EVENT)?.length).toBe(1);
       expect(listeners.get(MODEL_PROGRESS_EVENT)?.length).toBe(1);
       expect(listeners.get(TRANSCRIBE_ERROR_EVENT)?.length).toBe(1);
+      expect(listeners.get(PCM_BACKLOG_EVENT)?.length).toBe(1);
       expect(listeners.has(BLOCK_APPENDED_EVENT)).toBe(true);
     });
 
@@ -397,6 +399,7 @@ describe("App", () => {
     expect(listeners.get(TRANSCRIBE_PHASE_CHANGED_EVENT)?.length).toBe(0);
     expect(listeners.get(MODEL_PROGRESS_EVENT)?.length).toBe(0);
     expect(listeners.get(TRANSCRIBE_ERROR_EVENT)?.length).toBe(0);
+    expect(listeners.get(PCM_BACKLOG_EVENT)?.length).toBe(0);
     expect(listeners.get(BLOCK_APPENDED_EVENT)?.length).toBe(0);
   });
 
@@ -428,13 +431,13 @@ describe("App", () => {
     expect(container.textContent).not.toContain("MODEL_CORRUPT");
   });
 
-  test("renders model variant selector with three choices (req 1.1, 1.2)", async () => {
+  test("renders model variant selector with four choices (req 1.1, 1.2)", async () => {
     const { listenFn } = createMockListen();
     const { getByTestId, getByText } = render(<App listenFn={listenFn} invokeFn={mockInvokeFn} />);
 
     await waitFor(() => {
       const select = getByTestId("model-variant-select") as HTMLSelectElement;
-      expect(select.options.length).toBe(3);
+      expect(select.options.length).toBe(4);
       expect(select.value).toBe("fp16");
       expect(getByText(/現在: FP16/)).toBeTruthy();
     });

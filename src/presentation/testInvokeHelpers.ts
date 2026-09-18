@@ -7,7 +7,7 @@ import type { TranscribePhaseChanged } from "./hooks/transcribe-status";
 
 const DEFAULT_MOCK_TRANSCRIBE_SETTINGS_RESPONSE: GetTranscribeSettingsResponse = {
   settings: DEFAULT_TRANSCRIBE_SETTINGS,
-  local_availability: { q5_0: false, q8_0: false, fp16: true },
+  local_availability: { q5_0: false, q8_0: false, fp16: true, large_v3: false },
 };
 
 const DEFAULT_MOCK_TRANSCRIBE_STATUS_RESPONSE = {
@@ -36,7 +36,8 @@ export function coerceLocalAvailability(
     availability !== undefined &&
     typeof availability.q5_0 === "boolean" &&
     typeof availability.q8_0 === "boolean" &&
-    typeof availability.fp16 === "boolean"
+    typeof availability.fp16 === "boolean" &&
+    typeof availability.large_v3 === "boolean"
   ) {
     return availability;
   }

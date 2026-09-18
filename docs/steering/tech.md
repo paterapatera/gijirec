@@ -38,6 +38,8 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 
 - スケジュール: 前サイクル完了から **30 秒**（`BATCH_INTERVAL`）。未処理 PCM ≥ 480k samples でも起動。バックログ残存時は連続サイクル（ADR-0012）
 - 窓長: `MAX_INFERENCE_WINDOW_SAMPLES = 480_000`（30 s @ 16 kHz）。停止時は残 PCM を最終バッチ flush
+- **PCM 保持上限（1 時間）**: 正本 `MAX_PCM_RETENTION_SAMPLES = 57_600_000`（16 kHz モノラル・約 230 MiB deque）。`MAX_PCM_BUFFER_SAMPLES` は同一値。`PcmChunkBus` の `MAX_QUEUED_CHUNKS` は 100 ms チャンクで 1 時間相当（36_000）。compose の `PCM_RTRB_CAPACITY_SAMPLES` は推論窓×20 で ingest バースト＋ drain 遅延のヘッドルーム（上限未到達で恒常 overflow しない）。テストは `PcmBufferState.retention_limit_samples` で上限縮小可
+- **保持上限到達**: deque 未処理 samples ≥ 上限 → 新規 PCM 受け入れ停止・キャプチャ停止シーケンス（compose lifecycle）。`PCM_RETENTION_LIMIT_EXCEEDED` を `whisper-transcribe://error`（`recoverable: true`）。保持済み PCM のバッチ推論は ADR-0012 に従い可能範囲で継続（単一サイクル失敗で全破棄しない）。可観測性ログに `reason=retention_limit`（PCM・転写全文なし）
 - **転写 ingest ゲイン**: `PcmIngestConsumer` の atomic 乗数（`set_ingest_gain_multiplier`、0.25–4.0、既定 1.25）+ `TRANSCRIBE_SOFT_LIMIT = 0.95`（ミキサー非変更。推論窓 −18〜−17 dBFS 目標）。`CaptureAudioControlsService` がセッション状態を保持し、未調整時は `transcribe-volume-normalize` 等価の 1.25
 - **マイク ingest ゲート**: `mic_ingest_enabled == false` のとき `CaptureProcessingGate` が `push_mic` をスキップ（OS ミュートではなく ingest ミックス除外のみ）
 - **dBFS メーター**: `IngestLevelEmitter` が ingest 後 RMS を 1 秒窓で集約し `capture-audio-controls://ingest-level` を配信。リソース圧迫時は最大 2 秒間隔。生 PCM はイベント・ログに含めない
@@ -158,5 +160,5 @@ bun run rust:typecheck
 永続的な技術判断は `docs/architecture/adr/` に ADR として記録する。
 
 ---
-_updated_at: 2026-09-12（レガシー移行削除・スレッド上限 8・jscpd 0%）_
+_updated_at: 2026-09-19（PCM 1 時間保持上限・溢れ停止を追記）_
 _Document standards and patterns, not every dependency_

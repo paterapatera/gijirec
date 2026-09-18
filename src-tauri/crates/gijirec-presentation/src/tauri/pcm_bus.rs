@@ -3,30 +3,21 @@
 use crate::tauri::bounded_bus::{ConsumerDeliverOutcome, flush_registered_consumer_queue};
 use crate::tauri::observability;
 use gijirec_domain::audio::pcm_chunk::{
-    CHUNK_FRAME_COUNT, PcmChunk, PcmChunkConsumer, PcmConsumerError, SAMPLE_RATE_HZ,
+    CHUNK_FRAME_COUNT, PcmChunk, PcmChunkConsumer, PcmConsumerError,
 };
+use gijirec_infrastructure::transcribe::MAX_PCM_RETENTION_SAMPLES;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Duration of one [`PcmChunk`] at [`SAMPLE_RATE_HZ`] (100 ms).
-const CHUNK_DURATION_MS: u64 = CHUNK_FRAME_COUNT as u64 * 1_000 / SAMPLE_RATE_HZ as u64;
-
-/// Backlog headroom while inference runs, aligned with compose rtrb sizing (10×30 s ≈ 5 min).
-const BACKLOG_HEADROOM_SECONDS: u64 = 300;
-
-/// Maximum queued chunks before dropping oldest.
-///
-/// Sized for slow 30 s window inference with continued 100 ms chunk capture (Req 2.1/2.2).
-/// Worst case: 5 min / 100 ms = 3000 chunks — must avoid oldest-drop during slow inference.
-/// Overflow beyond this still drops oldest (v1 backpressure); [`flush_queue`] Internal errors
-/// increment drops separately.
-pub const MAX_QUEUED_CHUNKS: usize =
-    (BACKLOG_HEADROOM_SECONDS * 1_000 / CHUNK_DURATION_MS) as usize;
+/// Maximum queued chunks for up to 1 h of 100 ms chunks at 16 kHz mono.
+pub const MAX_QUEUED_CHUNKS: usize = MAX_PCM_RETENTION_SAMPLES / CHUNK_FRAME_COUNT as usize;
 
 /// Delivers [`PcmChunk`] to a single registered downstream consumer.
 pub struct PcmChunkBus {
     consumer: Mutex<Option<Arc<dyn PcmChunkConsumer>>>,
     queue: Mutex<Vec<PcmChunk>>,
     drops_total: Mutex<u64>,
+    retention_limit_active: AtomicBool,
 }
 
 impl PcmChunkBus {
@@ -35,7 +26,17 @@ impl PcmChunkBus {
             consumer: Mutex::new(None),
             queue: Mutex::new(Vec::with_capacity(MAX_QUEUED_CHUNKS)),
             drops_total: Mutex::new(0),
+            retention_limit_active: AtomicBool::new(false),
         }
+    }
+
+    /// When the transcribe retention limit is reached, reject new publishes (no silent drop).
+    pub fn set_retention_limit_active(&self, active: bool) {
+        self.retention_limit_active.store(active, Ordering::SeqCst);
+    }
+
+    pub fn retention_limit_active(&self) -> bool {
+        self.retention_limit_active.load(Ordering::SeqCst)
     }
 
     /// Registers the single v1 downstream consumer.
@@ -44,15 +45,15 @@ impl PcmChunkBus {
         self.flush_queue();
     }
 
-    /// Enqueues a chunk for delivery; drops oldest when over capacity.
+    /// Enqueues a chunk for delivery; does not drop oldest before the 1 h design capacity.
     pub fn publish(&self, chunk: PcmChunk) {
+        if self.retention_limit_active.load(Ordering::SeqCst) {
+            return;
+        }
         {
             let mut queue = self.queue.lock().expect("lock");
             if queue.len() >= MAX_QUEUED_CHUNKS {
-                queue.remove(0);
-                let mut drops = self.drops_total.lock().expect("lock");
-                *drops += 1;
-                observability::log_buffer_drop(*drops);
+                return;
             }
             queue.push(chunk);
         }
@@ -145,12 +146,10 @@ mod tests {
     // Integration Tests 5: キュー上限超過時にドロップが記録される (req 2.3, 7.2)
     #[test]
     #[allow(clippy::assertions_on_constants)]
-    fn max_queued_chunks_covers_worst_case_inference_backlog() {
-        const EXPECTED_WORST_CASE_QUEUED_CHUNKS: usize = 3000;
-        assert!(
-            MAX_QUEUED_CHUNKS >= EXPECTED_WORST_CASE_QUEUED_CHUNKS,
-            "queue must hold ~5 min of 100 ms chunks during slow inference (Req 2.1/2.2)"
-        );
+    fn max_queued_chunks_covers_one_hour_of_100ms_chunks() {
+        const ONE_HOUR_CHUNKS: usize = 57_600_000 / CHUNK_FRAME_COUNT as usize;
+        assert_eq!(MAX_QUEUED_CHUNKS, ONE_HOUR_CHUNKS);
+        assert_eq!(MAX_QUEUED_CHUNKS, 36_000);
     }
 
     #[test]
@@ -172,16 +171,16 @@ mod tests {
     }
 
     #[test]
-    fn records_drops_when_queue_exceeds_capacity() {
+    fn rejects_publish_when_queue_at_capacity_without_dropping() {
         let bus = PcmChunkBus::new();
-        let overflow = 2usize;
-        for seq in 0..(MAX_QUEUED_CHUNKS as u64 + overflow as u64) {
+        for seq in 0..MAX_QUEUED_CHUNKS as u64 {
             bus.publish(sample_pcm_chunk(seq));
         }
+        bus.publish(sample_pcm_chunk(MAX_QUEUED_CHUNKS as u64));
         assert_eq!(
             bus.buffer_drops_total(),
-            overflow as u64,
-            "beyond worst-case capacity should drop oldest chunks"
+            0,
+            "at design capacity must not drop oldest chunks"
         );
     }
 

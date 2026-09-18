@@ -427,6 +427,7 @@ mod tests {
                     WhisperModelVariant::Fp16 => self.fp16.clone(),
                     WhisperModelVariant::Q8_0 => self.q8.clone(),
                     WhisperModelVariant::Q5_0 => self.q8.clone(),
+                    WhisperModelVariant::LargeV3 => self.q8.clone(),
                 }
             }
 

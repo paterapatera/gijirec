@@ -13,6 +13,6 @@ pub use model_downloader::ModelDownloader;
 pub use model_store::{MODEL_FILENAME, ModelStore};
 pub use transcribe_worker::{
     BatchCycleCompleted, BatchCycleStarted, InferenceWindowLevel, MAX_PCM_BUFFER_SAMPLES,
-    ModelPathLoadable, SegmentEngine, TranscribeWorker,
+    MAX_PCM_RETENTION_SAMPLES, ModelPathLoadable, SegmentEngine, TranscribeWorker,
 };
 pub use whisper_adapter::{WhisperCppAdapter, WhisperSegment};

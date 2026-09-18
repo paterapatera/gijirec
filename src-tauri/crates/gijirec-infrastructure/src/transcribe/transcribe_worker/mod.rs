@@ -19,7 +19,7 @@ use deps::{
 use crate::transcribe::whisper_adapter::WhisperCppAdapter;
 
 pub use engine::{ModelPathLoadable, SegmentEngine};
-pub use pcm_buffer::MAX_PCM_BUFFER_SAMPLES;
+pub use pcm_buffer::{MAX_PCM_BUFFER_SAMPLES, MAX_PCM_RETENTION_SAMPLES};
 pub use types::{BatchCycleCompleted, BatchCycleStarted, InferenceWindowLevel};
 
 use types::{BatchCycleCompletedCallback, BatchCycleStartedCallback, InferenceWindowLevelCallback};
@@ -122,6 +122,21 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
     /// Optional shared counter incremented when rtrb ingest hits backpressure.
     pub fn set_rtrb_overflow_counter(&mut self, counter: Arc<AtomicU64>) {
         self.hooks.rtrb_overflow_count = Some(counter);
+    }
+
+    /// Invoked once when deque unprocessed samples reach the retention design limit.
+    pub fn set_retention_limit_callback(&mut self, callback: Arc<dyn Fn() + Send + Sync>) {
+        self.hooks.on_retention_limit = Some(callback);
+    }
+
+    /// Overrides [`MAX_PCM_RETENTION_SAMPLES`] for tests (must be set before [`Self::spawn`]).
+    pub fn set_pcm_retention_limit_samples(&mut self, limit: usize) {
+        self.hooks.pcm_retention_limit_samples = Some(limit);
+    }
+
+    /// Reports deque backlog seconds (~1 s throttle in drain thread; also on batch cycles).
+    pub fn set_pcm_backlog_callback(&mut self, callback: Arc<dyn Fn(f64) + Send + Sync>) {
+        self.hooks.on_pcm_backlog_seconds = Some(callback);
     }
 
     pub fn is_active(&self) -> bool {

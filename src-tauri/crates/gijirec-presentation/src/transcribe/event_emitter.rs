@@ -14,6 +14,9 @@ pub const TRANSCRIBE_MODEL_PROGRESS_EVENT: &str = "whisper-transcribe://model-pr
 /// Tauri event name for user-facing transcribe errors.
 pub const TRANSCRIBE_ERROR_EVENT: &str = "whisper-transcribe://error";
 
+/// Tauri event name for inference-delay PCM backlog estimate (deque samples @ 16 kHz).
+pub const TRANSCRIBE_PCM_BACKLOG_EVENT: &str = "whisper-transcribe://pcm-backlog";
+
 /// Clock source for capture/session-relative timestamp.
 pub type TimestampClock = std::sync::Arc<dyn Fn() -> u64 + Send + Sync>;
 
@@ -31,6 +34,12 @@ pub struct TranscribeModelProgressPayload {
     pub bytes_total: Option<u64>,
     pub percent: Option<f64>,
     pub status: String,
+}
+
+/// Payload for `whisper-transcribe://pcm-backlog` per contract.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct TranscribePcmBacklogPayload {
+    pub backlog_seconds: f64,
 }
 
 impl From<&ModelDownloadProgress> for TranscribeModelProgressPayload {
@@ -74,6 +83,12 @@ pub trait TranscribeEventEmitter: Send + Sync {
         progress: &ModelDownloadProgress,
     ) -> Result<(), TranscribeEmitError>;
     fn emit_error(&self, error: &TranscribeError) -> Result<(), TranscribeEmitError>;
+
+    /// Emits deque backlog for UI inference-delay estimate (default: no-op).
+    fn emit_pcm_backlog(&self, backlog_seconds: f64) -> Result<(), TranscribeEmitError> {
+        let _ = backlog_seconds;
+        Ok(())
+    }
 }
 
 /// Production implementation backed by [`AppHandle`].
@@ -128,6 +143,13 @@ impl<R: Runtime> TranscribeEventEmitter for TauriTranscribeEventEmitter<R> {
         let user_facing: UserFacingTranscribeError = error.to_user_facing();
         self.app
             .emit(TRANSCRIBE_ERROR_EVENT, user_facing)
+            .map_err(|e| TranscribeEmitError::EmitFailed(e.to_string()))
+    }
+
+    fn emit_pcm_backlog(&self, backlog_seconds: f64) -> Result<(), TranscribeEmitError> {
+        let payload = TranscribePcmBacklogPayload { backlog_seconds };
+        self.app
+            .emit(TRANSCRIBE_PCM_BACKLOG_EVENT, payload)
             .map_err(|e| TranscribeEmitError::EmitFailed(e.to_string()))
     }
 }

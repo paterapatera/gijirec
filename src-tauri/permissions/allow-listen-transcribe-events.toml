@@ -9,3 +9,5 @@ event = "whisper-transcribe://model-progress"
 event = "whisper-transcribe://error"
 [[permission.event.allow]]
 event = "whisper-transcribe://block-appended"
+[[permission.event.allow]]
+event = "whisper-transcribe://pcm-backlog"

@@ -16,6 +16,7 @@ fn variant_tracing_label(variant: WhisperModelVariant) -> &'static str {
         WhisperModelVariant::Q5_0 => "q5_0",
         WhisperModelVariant::Q8_0 => "q8_0",
         WhisperModelVariant::Fp16 => "fp16",
+        WhisperModelVariant::LargeV3 => "large_v3",
     }
 }
 
@@ -200,6 +201,16 @@ impl TranscribeObservability for TracingTranscribeObservability {
             transcribe_active_model_variant = label,
             session_id = session_id(),
             "transcribe model variant applied"
+        );
+    }
+
+    fn log_pcm_retention_limit_reached(&self) {
+        tracing::warn!(
+            target: TRANSCRIBE_LOG_TARGET,
+            transcribe_pcm_retention_limit_reached = true,
+            reason = "retention_limit",
+            session_id = session_id(),
+            "pcm retention design limit reached"
         );
     }
 }

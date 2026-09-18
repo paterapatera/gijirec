@@ -20,6 +20,7 @@ function renderPanels(
     transcribePhase: string;
     transcribeError: TranscribeUserError | null;
     modelProgress: ModelDownloadProgress | null;
+    pcmBacklogSeconds: number;
   }> = {},
 ) {
   return render(
@@ -29,6 +30,7 @@ function renderPanels(
       transcribePhase={overrides.transcribePhase ?? "idle"}
       transcribeError={overrides.transcribeError ?? null}
       modelProgress={overrides.modelProgress ?? null}
+      pcmBacklogSeconds={overrides.pcmBacklogSeconds ?? 0}
     />,
   );
 }
@@ -58,6 +60,24 @@ describe("AppStatusPanels horizontal layout", () => {
     expect(container.textContent).toContain("文字起こし状態");
     expect(getByTestId("capture-phase").textContent).toBe("capturing");
     expect(getByTestId("transcribe-phase").textContent).toBe("transcribing");
+  });
+
+  test("shows inference backlog hint when transcribing and backlog is at least 30s", () => {
+    const { getByTestId } = renderPanels({
+      transcribePhase: "transcribing",
+      pcmBacklogSeconds: 90,
+    });
+
+    expect(getByTestId("transcribe-pcm-backlog").textContent).toBe("推論待ち 約 2 分");
+  });
+
+  test("hides inference backlog hint below display threshold", () => {
+    const { queryByTestId } = renderPanels({
+      transcribePhase: "transcribing",
+      pcmBacklogSeconds: 29,
+    });
+
+    expect(queryByTestId("transcribe-pcm-backlog")).toBeNull();
   });
 
   test("renders progress and error panels outside phase-panels-row", () => {

@@ -6,15 +6,14 @@
 
 ## Purpose
 
-kotoba-whisper-v2.2 の量子化バリアント（Q5_0 / Q8_0 / FP16）選択の永続化形状と Tauri コマンド。モデル取得・フェーズイベントは `whisper-transcribe-status.md` を変更せず再利用する。
+kotoba-whisper-v2.2 の量子化バリアント（Q5_0 / Q8_0 / FP16）および Whisper large-v3 の選択永続化形状と Tauri コマンド。モデル取得・フェーズイベントは `whisper-transcribe-status.md` を変更せず再利用する。
 
 ## Contract
 
 ### WhisperModelVariant
 
 ```typescript
-/** kotoba-whisper-v2.2 の 3 バリアントのみ（要件 1.3–1.4） */
-type WhisperModelVariant = "q5_0" | "q8_0" | "fp16";
+type WhisperModelVariant = "q5_0" | "q8_0" | "fp16" | "large_v3";
 ```
 
 | 値 | 表示ラベル（UI） | ローカルファイル名（`{app_data_dir}/models/`） |
@@ -22,6 +21,7 @@ type WhisperModelVariant = "q5_0" | "q8_0" | "fp16";
 | `q5_0` | Q5_0 | `kotoba-whisper-v2.2-ggml-q5_0.bin` |
 | `q8_0` | Q8_0 | `kotoba-whisper-v2.2-ggml-q8_0.bin` |
 | `fp16` | FP16 | `kotoba-whisper-v2.2-ggml.bin` |
+| `large_v3` | Whisper large-v3 | `ggml-large-v3.bin` |
 
 配布元 URL（resolve/main）:
 
@@ -30,6 +30,7 @@ type WhisperModelVariant = "q5_0" | "q8_0" | "fp16";
 | `q5_0` | `https://huggingface.co/kenrouse/kotoba-whisper-v2.2-ggml/resolve/main/kotoba-whisper-v2.2-ggml-q5_0.bin` |
 | `q8_0` | `https://huggingface.co/kenrouse/kotoba-whisper-v2.2-ggml/resolve/main/kotoba-whisper-v2.2-ggml-q8_0.bin` |
 | `fp16` | `https://huggingface.co/kenrouse/kotoba-whisper-v2.2-ggml/resolve/main/kotoba-whisper-v2.2-ggml.bin` |
+| `large_v3` | `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin` |
 
 SHA-256（検証用、実装定数の正本は Rust `ModelVariantCatalog`）:
 
@@ -38,6 +39,7 @@ SHA-256（検証用、実装定数の正本は Rust `ModelVariantCatalog`）:
 | `q5_0` | `4a3b92192b5d3578ff854a5876213e2e27af0c2d357492c2d14271e82c303658` |
 | `q8_0` | `c4071b2f8f0129d463c6c7fd2e72c82f7276f9882a8f9cd9474e0c2b699100c4` |
 | `fp16` | `eff70a8a236e731abba774ba71e1f6d0fce53302137208c32207e694e0bf4546` |
+| `large_v3` | `64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2` |
 
 ### TranscribeSettings（永続化形状）
 
@@ -50,7 +52,7 @@ interface TranscribeSettings {
 
 | フィールド | 制約 |
 |-----------|------|
-| `model_variant` | `q5_0` \| `q8_0` \| `fp16` のみ |
+| `model_variant` | `q5_0` \| `q8_0` \| `fp16` \| `large_v3` のみ |
 
 ### 永続化
 
@@ -108,7 +110,7 @@ interface SetTranscribeModelVariantResponse {
 ### 禁止事項
 
 - 設定ファイルへの転写テキスト・PCM・認証情報の混入（要件 4.5）
-- kotoba-whisper 以外のファミリ・量子化の受け付け
+- 上表以外のファミリ・量子化の受け付け
 - 設定の外部ネットワーク同期
 
 ## Non-goals
@@ -122,9 +124,10 @@ interface SetTranscribeModelVariantResponse {
 | Date | Change | ADR / rationale |
 |------|--------|-----------------|
 | 2026-09-09 | 初版 — バリアント選択永続化・set/get command | ADR-0013 |
+| 2026-09-18 | `large_v3`（Whisper large-v3 / ggml-large-v3.bin）を追加 | 利用者要望 |
 
 ## Notes
 
 - TypeScript ミラー: `src/infrastructure/tauri/transcribeSettingsCommands.ts`、`src/presentation/hooks/useTranscribeSettings.ts`
-- バリアント表示ラベルは UI 層（Q5_0 / Q8_0 / FP16）。永続化値は snake_case 列挙
-- 既存 `compose.rs` の `DEFAULT_WHISPER_MODEL_*` は `ModelVariantCatalog::fp16()` へ移行し、3 バリアント定義に統合
+- バリアント表示ラベルは UI 層（Q5_0 / Q8_0 / FP16 / Whisper large-v3）。永続化値は snake_case 列挙
+- 既存 `compose.rs` の `DEFAULT_WHISPER_MODEL_*` は `ModelVariantCatalog::fp16()` へ移行し、カタログ定義に統合

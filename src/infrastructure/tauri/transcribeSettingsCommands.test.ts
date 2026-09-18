@@ -13,7 +13,7 @@ describe("transcribeSettingsCommands", () => {
       expect(cmd).toBe("get_transcribe_settings");
       return {
         settings: { model_variant: "q8_0" },
-        local_availability: { q5_0: false, q8_0: true, fp16: true },
+        local_availability: { q5_0: false, q8_0: true, fp16: true, large_v3: false },
       };
     });
 
@@ -38,6 +38,7 @@ describe("transcribeSettingsCommands", () => {
       q5_0: "Q5_0",
       q8_0: "Q8_0",
       fp16: "FP16",
+      large_v3: "Whisper large-v3",
     });
     expect(DEFAULT_TRANSCRIBE_SETTINGS.model_variant).toBe("fp16");
   });

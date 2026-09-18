@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use super::deps::{
@@ -10,7 +9,8 @@ use super::batch_cycle::{run_batch_cycle, samples_to_seconds};
 use super::batch_window::{first_cycle_ready, next_cycle_ready, take_batch_window};
 use super::engine::{ModelPathLoadable, SegmentEngine};
 use super::pcm_buffer::{
-    PcmBufferState, drain_pcm_loop, pcm_buffer_has_remaining, pcm_buffer_sample_count,
+    PcmBufferState, PcmDrainCallbacks, drain_pcm_loop, pcm_buffer_has_remaining,
+    pcm_buffer_sample_count, samples_to_backlog_seconds,
 };
 use super::types::{
     BatchCycleCompletedCallback, BatchCycleStartedCallback, InferenceWindowLevelCallback,
@@ -26,6 +26,9 @@ pub(crate) struct WorkerHooks {
     pub(crate) on_batch_cycle_completed: Option<BatchCycleCompletedCallback>,
     pub(crate) on_inference_window_level: Option<InferenceWindowLevelCallback>,
     pub(crate) rtrb_overflow_count: Option<Arc<AtomicU64>>,
+    pub(crate) on_retention_limit: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub(crate) pcm_retention_limit_samples: Option<usize>,
+    pub(crate) on_pcm_backlog_seconds: Option<Arc<dyn Fn(f64) + Send + Sync>>,
 }
 
 impl WorkerHooks {
@@ -39,6 +42,9 @@ impl WorkerHooks {
             on_batch_cycle_completed: None,
             on_inference_window_level: None,
             rtrb_overflow_count: None,
+            on_retention_limit: None,
+            pcm_retention_limit_samples: None,
+            on_pcm_backlog_seconds: None,
         }
     }
 }
@@ -74,14 +80,27 @@ fn read_rtrb_overflow_count(counter: &Option<Arc<AtomicU64>>) -> u64 {
         .unwrap_or(0)
 }
 
+fn report_pcm_backlog_if_changed(
+    pcm_buffer: &Arc<Mutex<PcmBufferState>>,
+    callback: &Option<Arc<dyn Fn(f64) + Send + Sync>>,
+) {
+    let Some(report) = callback else {
+        return;
+    };
+    let seconds = samples_to_backlog_seconds(pcm_buffer_sample_count(pcm_buffer));
+    let rounded = (seconds * 10.0).round() / 10.0;
+    report(rounded);
+}
+
 fn spawn_pcm_drain_thread(
     consumer: rtrb::Consumer<f32>,
     pcm_buffer: Arc<Mutex<PcmBufferState>>,
     running: Arc<AtomicBool>,
+    callbacks: PcmDrainCallbacks,
 ) -> Option<JoinHandle<()>> {
     thread::Builder::new()
         .name("transcribe-pcm-drain".into())
-        .spawn(move || drain_pcm_loop(consumer, pcm_buffer, running))
+        .spawn(move || drain_pcm_loop(consumer, pcm_buffer, running, callbacks))
         .map_err(|err| eprintln!("failed to spawn pcm drain thread: {err}"))
         .ok()
 }
@@ -126,6 +145,7 @@ fn process_batch_cycle_if_ready<E: ModelPathLoadable + SegmentEngine>(
     runtime: &mut WorkerRuntime<'_, E>,
 ) {
     let unprocessed = pcm_buffer_sample_count(runtime.pcm_buffer);
+    report_pcm_backlog_if_changed(runtime.pcm_buffer, &runtime.hooks.on_pcm_backlog_seconds);
     let ready = match loop_state.last_cycle_complete {
         None => first_cycle_ready(loop_state.transcribing_start, unprocessed),
         Some(completed_at) => next_cycle_ready(
@@ -216,12 +236,18 @@ pub(crate) fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
         hooks,
     } = params;
 
-    let pcm_buffer = Arc::new(Mutex::new(PcmBufferState {
-        samples: VecDeque::new(),
-        samples_before_buffer: 0,
-    }));
-    let drain_handle =
-        spawn_pcm_drain_thread(consumer, Arc::clone(&pcm_buffer), Arc::clone(&running));
+    let mut pcm_buffer_state = PcmBufferState::new();
+    pcm_buffer_state.retention_limit_samples = hooks.pcm_retention_limit_samples;
+    let pcm_buffer = Arc::new(Mutex::new(pcm_buffer_state));
+    let drain_handle = spawn_pcm_drain_thread(
+        consumer,
+        Arc::clone(&pcm_buffer),
+        Arc::clone(&running),
+        PcmDrainCallbacks {
+            on_retention_limit: hooks.on_retention_limit.clone(),
+            on_pcm_backlog_seconds: hooks.on_pcm_backlog_seconds.clone(),
+        },
+    );
 
     if let Err(err) = load_worker_engine(&mut engine, &model_path) {
         stop_worker_after_load_failure(&running, drain_handle, hooks.on_fatal, err);

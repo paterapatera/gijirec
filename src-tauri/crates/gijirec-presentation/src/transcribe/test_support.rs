@@ -85,6 +85,7 @@ pub struct RecordingTranscribeEventEmitter {
     pub errors: Arc<Mutex<Vec<TranscribeError>>>,
     pub user_errors: Arc<Mutex<Vec<UserFacingTranscribeError>>>,
     pub progress: Arc<Mutex<Vec<ModelDownloadProgress>>>,
+    pub pcm_backlog: Arc<Mutex<Vec<f64>>>,
 }
 
 impl TranscribeEventEmitter for RecordingTranscribeEventEmitter {
@@ -109,6 +110,14 @@ impl TranscribeEventEmitter for RecordingTranscribeEventEmitter {
             .lock()
             .expect("lock user errors")
             .push(error.to_user_facing());
+        Ok(())
+    }
+
+    fn emit_pcm_backlog(&self, backlog_seconds: f64) -> Result<(), TranscribeEmitError> {
+        self.pcm_backlog
+            .lock()
+            .expect("lock pcm backlog")
+            .push(backlog_seconds);
         Ok(())
     }
 }

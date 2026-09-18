@@ -102,6 +102,7 @@ function AppContent({
         transcribePhase={transcribeStatus.phase}
         transcribeError={transcribeStatus.error}
         modelProgress={transcribeStatus.modelProgress}
+        pcmBacklogSeconds={transcribeStatus.pcmBacklogSeconds}
       />
       <DeviceSelectorPanel
         invokeFn={invokeFn}

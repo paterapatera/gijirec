@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use gijirec_domain::transcribe::TranscribeErrorCode;
 use rtrb::RingBuffer;
 use std::sync::Arc;
@@ -202,10 +200,9 @@ fn push_full_batch_window(prod: &mut rtrb::Producer<f32>, value: f32) {
 }
 
 fn state_with(samples: &[f32]) -> PcmBufferState {
-    PcmBufferState {
-        samples: samples.iter().copied().collect(),
-        samples_before_buffer: 0,
-    }
+    let mut state = PcmBufferState::new();
+    state.samples = samples.iter().copied().collect();
+    state
 }
 
 fn tone(value: f32, count: usize) -> Vec<f32> {
@@ -457,10 +454,9 @@ fn take_batch_window_cuts_first_480k_samples() {
 
 #[test]
 fn take_batch_window_respects_base_offset() {
-    let mut state = PcmBufferState {
-        samples: tone(0.3, 100_000).into_iter().collect(),
-        samples_before_buffer: 1_000_000,
-    };
+    let mut state = PcmBufferState::new();
+    state.samples = tone(0.3, 100_000).into_iter().collect();
+    state.samples_before_buffer = 1_000_000;
 
     let (pcm, base) = take_batch_window_from_state(&mut state).expect("window");
 
@@ -490,10 +486,7 @@ fn take_batch_window_returns_none_when_empty() {
 #[test]
 fn drain_consumer_retains_all_samples_past_old_buffer_cap() {
     let (mut prod, mut cons) = ring_pair(600_000);
-    let mut state = PcmBufferState {
-        samples: VecDeque::new(),
-        samples_before_buffer: 0,
-    };
+    let mut state = PcmBufferState::new();
     let push_count = 500_000usize;
     for i in 0..push_count {
         prod.push(i as f32 * 0.000_1).expect("push pcm");
@@ -501,7 +494,7 @@ fn drain_consumer_retains_all_samples_past_old_buffer_cap() {
 
     let mut drained = 0usize;
     while drained < push_count {
-        drained += drain_consumer(&mut cons, &mut state);
+        drained += drain_consumer(&mut cons, &mut state, false);
     }
 
     let retained = state.samples.len() + state.samples_before_buffer as usize;
@@ -1199,4 +1192,117 @@ fn deferred_variant_reload_applies_on_next_batch_cycle() {
     );
 
     worker.stop_and_join(Duration::from_secs(2)).expect("stop");
+}
+
+#[test]
+fn retention_limit_callback_fires_without_exceeding_deque_cap() {
+    let signaled = Arc::new(AtomicBool::new(false));
+    let signaled_clone = Arc::clone(&signaled);
+    let (sink, _segments) = recording_sink();
+    let mut worker = TranscribeWorker::with_engine(sink, MockEngine::default());
+    worker.set_pcm_retention_limit_samples(40_000);
+    worker.set_retention_limit_callback(Arc::new(move || {
+        signaled_clone.store(true, Ordering::SeqCst);
+    }));
+    let (mut prod, cons) = ring_pair(80_000);
+    worker.attach_pcm_consumer(cons);
+    worker.spawn().expect("spawn");
+
+    push_samples(&mut prod, 0.2, 50_000);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !signaled.load(Ordering::SeqCst) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(
+        signaled.load(Ordering::SeqCst),
+        "retention limit callback must fire when deque reaches cap"
+    );
+    worker.stop_and_join(Duration::from_secs(2)).expect("stop");
+}
+
+struct FailFirstThenSucceedEngine {
+    attempts: AtomicUsize,
+    segment_text: String,
+}
+
+impl SegmentEngine for FailFirstThenSucceedEngine {
+    fn transcribe_pcm(&mut self, pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
+        if pcm.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Err(TranscribeError::InferenceFailed {
+                detail: "single cycle failure".to_string(),
+            });
+        }
+        Ok(vec![WhisperSegment {
+            text: self.segment_text.clone(),
+            start_ms: 0,
+            end_ms: 1_000,
+        }])
+    }
+
+    fn is_loaded(&self) -> bool {
+        true
+    }
+}
+
+noop_model_path_loadable!(FailFirstThenSucceedEngine);
+
+#[test]
+fn single_batch_failure_does_not_discard_remaining_pcm() {
+    let (sink, segments) = recording_sink();
+    let mut worker = TranscribeWorker::with_engine(
+        sink,
+        FailFirstThenSucceedEngine {
+            attempts: AtomicUsize::new(0),
+            segment_text: "after failure".to_string(),
+        },
+    );
+    let (mut prod, cons) = ring_pair(MAX_INFERENCE_WINDOW_SAMPLES * 3);
+    worker.attach_pcm_consumer(cons);
+    worker.spawn().expect("spawn");
+
+    push_full_batch_window(&mut prod, 0.5);
+    push_full_batch_window(&mut prod, 0.5);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while segments.lock().expect("lock").is_empty() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let recorded = segments.lock().expect("lock").clone();
+    assert!(
+        recorded.iter().any(|(text, _, _)| text == "after failure"),
+        "second batch window must still be processed after one inference failure"
+    );
+
+    worker.stop_and_join(Duration::from_secs(2)).expect("stop");
+}
+
+#[test]
+fn synthetic_backlog_retains_sample_count_below_retention_cap() {
+    const LIMIT: usize = 120_000;
+    const EXTRA: usize = 5_000;
+    let (mut prod, mut cons) = ring_pair(LIMIT + EXTRA);
+    let mut state = PcmBufferState::new();
+    state.retention_limit_samples = Some(LIMIT);
+
+    for i in 0..(LIMIT + EXTRA) {
+        prod.push(i as f32).expect("push");
+    }
+
+    let drained = drain_consumer(&mut cons, &mut state, true);
+    assert_eq!(drained, LIMIT);
+    assert_eq!(state.samples.len(), LIMIT);
+    assert_eq!(
+        cons.slots(),
+        EXTRA,
+        "samples beyond cap remain in rtrb until shutdown flush"
+    );
+
+    let flushed = drain_consumer(&mut cons, &mut state, false);
+    assert_eq!(state.samples.len(), LIMIT + flushed);
 }
