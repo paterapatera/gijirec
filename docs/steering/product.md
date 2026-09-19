@@ -21,11 +21,11 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 - **仮想デバイス不要** — OS ネイティブのループバック（Mac: ScreenCaptureKit 等 / Windows: WASAPI）でシステム音声を取得
 - **その場編集** — 録音後起こしではなく、会議中にテキストが追記され、すぐ手直しできる（表示は約 30 秒バッチ＋推論時間。完全性・安定性を優先）
 - **軽量・オフライン** — Python ランタイムやクラウド API に依存せず、会議の裏で OS を極端に重くしない
-- **シンプルな起動・終了** — ダブルクリック起動、ウィンドウ閉じでキャプチャ・推論も完全停止
+- **シンプルな起動・終了** — ダブルクリック起動後は待機（ingest なし）。再生で会議開始。途中の利用者向け停止はなく、ウィンドウ閉じでキャプチャ・推論も完全停止（ADR-0015）
 
 ## Out of Scope
 
-仮想オーディオデバイス前提の設計、クラウド音声認識、Python ランタイム、話者分離、Linux 対応。
+仮想オーディオデバイス前提の設計、クラウド音声認識、Python ランタイム、話者分離、Linux 対応。キャプチャセッション途中の停止・停止時転写フラッシュ・`set_capture_session_active` トグル（ADR-0015）。
 
 ## Related Docs
 
@@ -58,9 +58,10 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 | status-panels-horizontal | 完了 | `AppStatusPanels` — キャプチャ／文字起こしフェーズを `.phase-panels-row` で横並び。進捗・エラーは下段維持 |
 | capture-gain-value-display | 完了 | `CaptureAudioControlsRow` — ゲインスライダー横に `ingest-gain-value`（`toFixed(2)`、`tabular-nums`）。非 capturing 時は `—` |
 | pcm-retention-one-hour | 完了 | 連続セッション未処理 PCM を最大 1 時間保持。上限到達時はキャプチャ停止＋`PCM_RETENTION_LIMIT_EXCEEDED`（spec アーカイブ済み） |
+| capture-session-toggle | 完了 | 起動後 idle・再生で開始専用セッション（`CaptureSessionStartControl`）。途中停止 UI なし。音声制御は session active かつ capturing のみ（ADR-0015）。spec アーカイブ済み |
 
-**現 UI の範囲**: キャプチャ／文字起こしフェーズ（`AppStatusPanels` — 横並び `.phase-panels-row`）、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、マイク／スピーカー選択パネル（`CaptureAudioControlsRow` — マイク ON/OFF・dBFS メーター・ゲインスライダー・数値表示 `ingest-gain-value`）、Whisper バリアント選択（`ModelVariantSelector` — Q5_0 / Q8_0 / FP16）、手書き＋AI 転写の二重エディタ（`AiTranscriptPanel` で block 購読を局所化）、保存ツールバー・結果トースト。起動時ウィンドウは 1000×800。非 `capturing` 時は音声制御を disabled。
+**現 UI の範囲**: 会議開始（`AppCaptureSessionBar` / `AppCaptureStatusHeader` 内 `CaptureSessionStartControl` — 待機時は再生のみ、進行中は停止ボタンなし）、キャプチャ／文字起こしフェーズ（`AppStatusPanels` — 横並び `.phase-panels-row`、flush 進行表示なし）、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、マイク／スピーカー選択パネル（`CaptureAudioControlsRow` — マイク ON/OFF・dBFS メーター・ゲインスライダー・数値表示 `ingest-gain-value`）、Whisper バリアント選択（`ModelVariantSelector` — Q5_0 / Q8_0 / FP16）、手書き＋AI 転写の二重エディタ（`AiTranscriptPanel` で block 購読を局所化）、保存ツールバー・結果トースト。起動時ウィンドウは 1000×800。session idle または capture 非 `capturing` 時は音声制御を disabled。
 
 ---
-_updated_at: 2026-09-19（pcm-retention-one-hour 完了・spec 削除）_
+_updated_at: 2026-09-19（capture-session-toggle 完了・steering 同期）_
 _Focus on patterns and purpose, not exhaustive feature lists_

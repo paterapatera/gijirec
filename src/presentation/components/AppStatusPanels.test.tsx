@@ -35,7 +35,7 @@ function renderPanels(
   );
 }
 
-describe("AppStatusPanels horizontal layout", () => {
+describe("AppStatusPanels (task 13.2 / req 5.1–5.2)", () => {
   test("wraps capture and transcribe phase panels in phase-panels-row", () => {
     const { container, getByTestId } = renderPanels();
 
@@ -78,6 +78,31 @@ describe("AppStatusPanels horizontal layout", () => {
     });
 
     expect(queryByTestId("transcribe-pcm-backlog")).toBeNull();
+  });
+
+  test("does not render stop-flush or session flush progress UI (req 5.1)", () => {
+    const { container } = renderPanels({
+      capturePhase: "capturing",
+      transcribePhase: "transcribing",
+      pcmBacklogSeconds: 120,
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("stop_flush");
+    expect(text).not.toContain("flush_in_progress");
+    expect(container.querySelector("[data-testid='stop-flush']")).toBeNull();
+  });
+
+  test("shows capture and transcribe phases together while session is active (req 5.2)", () => {
+    const { getByTestId, queryByTestId } = renderPanels({
+      capturePhase: "capturing",
+      transcribePhase: "transcribing",
+      pcmBacklogSeconds: 60,
+    });
+
+    expect(getByTestId("capture-phase").textContent).toBe("capturing");
+    expect(getByTestId("transcribe-phase").textContent).toBe("transcribing");
+    expect(queryByTestId("transcribe-pcm-backlog")?.textContent).toBe("推論待ち 約 1 分");
   });
 
   test("renders progress and error panels outside phase-panels-row", () => {

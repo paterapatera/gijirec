@@ -5,6 +5,7 @@ pub mod capture_audio_controls_integration_support;
 pub mod capture_observability;
 mod capture_ports;
 mod capture_processing;
+pub mod capture_session_observability;
 pub mod commands;
 mod compose;
 pub mod device_selection_observability;
@@ -57,6 +58,7 @@ pub mod test_support {
 
 use capture_observability::TracingCaptureObservability;
 use commands::capture_audio_controls::{get_capture_audio_controls, set_capture_audio_controls};
+use commands::capture_session::{get_capture_session_state, start_capture_session};
 use commands::device_selection::{
     get_device_selection, list_audio_devices, set_audio_device_ui_visible, set_device_selection,
 };
@@ -371,6 +373,8 @@ pub fn run() {
     let status_cache_for_model_load = Arc::clone(&transcribe_status_cache);
     let capture_audio_controls = Arc::clone(&composed.capture_audio_controls);
     let capture_audio_controls_events = Arc::clone(&composed.capture_audio_controls_events);
+    let capture_session = Arc::clone(&composed.capture_session);
+    let capture_session_events = Arc::clone(&composed.capture_session_events);
     let ingest_level_events = Arc::clone(&composed.ingest_level_events);
     let ingest_level_cache = Arc::clone(&composed.ingest_level_cache);
     let app = attach_capture_lifecycle(
@@ -438,6 +442,11 @@ pub fn run() {
         capture_audio_controls_events.set_emitter(Arc::new(
             TauriCaptureAudioControlsEventEmitter::new(handle.clone()),
         ));
+        capture_session_events.set_emitter(Arc::new(
+            gijirec_presentation::tauri::capture_session::emitter::TauriCaptureSessionEventEmitter::new(
+                handle.clone(),
+            ),
+        ));
         ingest_level_events
             .set_emitter(Arc::new(TauriIngestLevelEventEmitter::new(handle.clone()))
                 as Arc<dyn IngestLevelEventEmitter>);
@@ -450,6 +459,9 @@ pub fn run() {
         app.manage(commands::CaptureAudioControlsCommandState {
             service: capture_audio_controls,
             ingest_level_cache,
+        });
+        app.manage(commands::CaptureSessionCommandState {
+            service: capture_session,
         });
 
         run_capture_app_setup(&handle)?;
@@ -470,6 +482,8 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
         get_capture_phase,
+        get_capture_session_state,
+        start_capture_session,
         get_transcribe_phase,
         get_transcribe_status,
         save_transcript_session,

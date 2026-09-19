@@ -1,6 +1,7 @@
 //! Composition root: orchestrator, pipeline hold, transcribe wiring, and lifecycle helpers.
 
 mod audio_controls;
+mod capture_session;
 mod late_bound;
 mod model_stack;
 mod port_adapters;
@@ -9,7 +10,10 @@ pub(crate) mod wiring;
 pub(crate) use audio_controls::{
     CachingIngestLevelEventEmitter, CaptureAudioControlsProcessingHook,
 };
-pub(crate) use late_bound::{LateBoundCaptureAudioControlsEvents, LateBoundDeviceSelectionEvents};
+pub(crate) use late_bound::{
+    LateBoundCaptureAudioControlsEvents, LateBoundCaptureSessionEvents,
+    LateBoundDeviceSelectionEvents,
+};
 pub(crate) use model_stack::{SharedModelOrchestrator, inject_model_stack_shared};
 #[allow(unused_imports)]
 pub(crate) use wiring::PCM_RTRB_CAPACITY_SAMPLES;
@@ -17,6 +21,7 @@ pub(crate) use wiring::compose_with_ports_and_model_orchestrator;
 
 use gijirec_presentation::application::capture::orchestrator::CaptureOrchestrator;
 use gijirec_presentation::application::capture_audio_controls::CaptureAudioControlsService;
+use gijirec_presentation::application::capture_session::CaptureSessionServiceApi;
 use gijirec_presentation::application::device_selection::DeviceSelectionService;
 use gijirec_presentation::application::transcribe::orchestrator::TranscribeOrchestrator;
 use gijirec_presentation::tauri::capture_audio_controls::IngestLevelSnapshotCache;
@@ -43,6 +48,8 @@ pub(crate) struct ComposedCapture {
     pub transcribe_bus: Arc<TranscriptBlockBus>,
     pub transcribe_orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>>,
     pub model_orchestrator: SharedModelOrchestrator,
+    pub capture_session: Arc<dyn CaptureSessionServiceApi>,
+    pub capture_session_events: Arc<LateBoundCaptureSessionEvents>,
 }
 
 /// Builds the production capture and transcribe stack with platform and whisper adapters.

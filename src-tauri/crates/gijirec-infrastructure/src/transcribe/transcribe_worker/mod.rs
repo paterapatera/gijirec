@@ -18,7 +18,7 @@ use deps::{
 
 use crate::transcribe::whisper_adapter::WhisperCppAdapter;
 
-pub use engine::{ModelPathLoadable, SegmentEngine};
+pub use engine::{ModelPathLoadable, SegmentEngine, WorkerRespawnEngine};
 pub use pcm_buffer::{MAX_PCM_BUFFER_SAMPLES, MAX_PCM_RETENTION_SAMPLES};
 pub use types::{BatchCycleCompleted, BatchCycleStarted, InferenceWindowLevel};
 
@@ -28,8 +28,11 @@ use worker_loop::{WorkerHooks, WorkerParams, worker_loop};
 /// Fixed-interval batch inference worker reading PCM from an rtrb consumer.
 pub struct TranscribeWorker<E: SegmentEngine + 'static = WhisperCppAdapter> {
     running: Arc<AtomicBool>,
+    /// Stays true until the worker thread shuts down PCM drain (after transcribing loop exits).
+    pcm_draining: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     pcm_consumer: Option<rtrb::Consumer<f32>>,
+    pcm_consumer_return_rx: Option<std::sync::mpsc::Receiver<rtrb::Consumer<f32>>>,
     engine: Option<E>,
     pending_model_path: Option<std::path::PathBuf>,
     sink: Arc<dyn TranscriptSegmentSink>,
@@ -52,8 +55,10 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
     pub fn with_engine(sink: Arc<dyn TranscriptSegmentSink>, engine: E) -> Self {
         Self {
             running: Arc::new(AtomicBool::new(false)),
+            pcm_draining: Arc::new(AtomicBool::new(false)),
             handle: None,
             pcm_consumer: None,
+            pcm_consumer_return_rx: None,
             engine: Some(engine),
             pending_model_path: None,
             sink,
@@ -147,8 +152,11 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
 
     pub fn spawn(&mut self) -> Result<(), TranscribeError>
     where
-        E: ModelPathLoadable,
+        E: ModelPathLoadable + WorkerRespawnEngine,
     {
+        if self.engine.is_none() {
+            self.engine = Some(E::fresh_worker_engine());
+        }
         if self.handle.is_some() {
             return Err(TranscribeError::Internal {
                 detail: "transcribe worker already running".to_string(),
@@ -170,8 +178,12 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
         if let Some(hook) = self.on_inference_progress.clone() {
             engine.set_progress_hook(hook);
         }
+        let (return_pcm_consumer, pcm_consumer_return_rx) = std::sync::mpsc::sync_channel(1);
+        self.pcm_consumer_return_rx = Some(pcm_consumer_return_rx);
         self.running.store(true, Ordering::SeqCst);
+        self.pcm_draining.store(true, Ordering::SeqCst);
         let running = Arc::clone(&self.running);
+        let pcm_draining = Arc::clone(&self.pcm_draining);
         let model_path = self.pending_model_path.clone();
         let sink = Arc::clone(&self.sink);
         let hooks = self.hooks.clone();
@@ -182,7 +194,9 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
             model_path,
             sink,
             running,
+            pcm_draining,
             hooks,
+            return_pcm_consumer,
         };
         let handle = thread::Builder::new()
             .name("transcribe-worker".into())
@@ -197,30 +211,50 @@ impl<E: SegmentEngine + 'static> TranscribeWorker<E> {
         Ok(())
     }
 
-    pub fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError> {
+    pub fn signal_stop(&mut self) {
         self.running.store(false, Ordering::SeqCst);
+    }
+
+    pub fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError> {
+        self.signal_stop();
 
         let Some(handle) = self.handle.take() else {
             self.engine = None;
             return Ok(());
         };
 
-        let deadline = Instant::now() + timeout;
+        let deadline = if timeout == Duration::MAX {
+            None
+        } else {
+            Some(Instant::now() + timeout)
+        };
         loop {
             if handle.is_finished() {
                 let _ = handle.join();
                 break;
             }
-            if Instant::now() >= deadline {
+            if let Some(deadline) = deadline
+                && Instant::now() >= deadline
+            {
                 eprintln!(
                     "WARN: transcribe worker join timed out after {timeout:?}, detaching handle"
                 );
                 drop(handle);
-                break;
+                self.pcm_draining.store(false, Ordering::SeqCst);
+                self.engine = None;
+                return Err(TranscribeError::InferenceFailed {
+                    detail: format!("transcribe worker join timed out after {timeout:?}"),
+                });
             }
             thread::sleep(Duration::from_millis(5));
         }
 
+        self.pcm_draining.store(false, Ordering::SeqCst);
+        if let Some(rx) = self.pcm_consumer_return_rx.take()
+            && let Ok(consumer) = rx.recv()
+        {
+            self.pcm_consumer = Some(consumer);
+        }
         self.engine = None;
         Ok(())
     }

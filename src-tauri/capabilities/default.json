@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "allow-get-capture-phase",
+    "allow-capture-session-commands",
     "allow-get-transcribe-phase",
     "allow-listen-capture-events",
     "allow-listen-transcribe-events",

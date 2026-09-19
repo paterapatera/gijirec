@@ -36,6 +36,8 @@ pub trait TranscribeWorkerPort: Send {
     fn prepare_model_path(&mut self, path: &Path) -> Result<(), TranscribeError>;
     fn spawn(&mut self) -> Result<(), TranscribeError>;
     fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError>;
+    /// Stops ingest without joining the worker thread (app exit while flush holds the worker lock).
+    fn signal_stop(&mut self) {}
 }
 
 /// whisper コンテキストのロード。infrastructure の WhisperCppAdapter が実装。

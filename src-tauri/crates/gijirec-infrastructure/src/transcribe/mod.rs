@@ -14,5 +14,6 @@ pub use model_store::{MODEL_FILENAME, ModelStore};
 pub use transcribe_worker::{
     BatchCycleCompleted, BatchCycleStarted, InferenceWindowLevel, MAX_PCM_BUFFER_SAMPLES,
     MAX_PCM_RETENTION_SAMPLES, ModelPathLoadable, SegmentEngine, TranscribeWorker,
+    WorkerRespawnEngine,
 };
 pub use whisper_adapter::{WhisperCppAdapter, WhisperSegment};

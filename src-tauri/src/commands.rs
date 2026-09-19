@@ -1,6 +1,7 @@
 //! Tauri IPC commands for capture and transcribe status.
 
 use gijirec_presentation::application::capture_audio_controls::CaptureAudioControlsService;
+use gijirec_presentation::application::capture_session::CaptureSessionServiceApi;
 use gijirec_presentation::application::editor::SettingsService;
 use gijirec_presentation::application::transcribe::TranscribeSettingsService;
 use gijirec_presentation::application::transcribe::orchestrator::TranscribeOrchestrator;
@@ -52,6 +53,11 @@ pub struct TranscribeVariantApplyState {
 pub struct CaptureAudioControlsCommandState {
     pub service: Arc<dyn CaptureAudioControlsService>,
     pub ingest_level_cache: IngestLevelSnapshotCache,
+}
+
+/// Capture session toggle service for IPC commands.
+pub struct CaptureSessionCommandState {
+    pub service: Arc<dyn CaptureSessionServiceApi>,
 }
 
 /// Editor IPC commands (`docs/contracts/transcript-editor-save.md`, `transcript-editor-settings.md`).
@@ -260,5 +266,28 @@ pub mod capture_audio_controls {
                 gain_user_adjusted,
             },
         )
+    }
+}
+
+/// Capture session IPC commands (`docs/contracts/capture-session-toggle.md`).
+pub mod capture_session {
+    use super::*;
+    use gijirec_presentation::tauri::capture_session::{
+        CaptureSessionInvokeError, CaptureSessionState, get_capture_session_state_impl,
+        start_capture_session_impl,
+    };
+
+    #[tauri::command(rename_all = "snake_case")]
+    pub fn get_capture_session_state(
+        state: State<'_, CaptureSessionCommandState>,
+    ) -> CaptureSessionState {
+        get_capture_session_state_impl(state.service.as_ref())
+    }
+
+    #[tauri::command(rename_all = "snake_case")]
+    pub fn start_capture_session(
+        state: State<'_, CaptureSessionCommandState>,
+    ) -> Result<CaptureSessionState, CaptureSessionInvokeError> {
+        start_capture_session_impl(state.service.as_ref())
     }
 }

@@ -9,6 +9,7 @@ import type {
   IngestLevelSnapshot,
 } from "../hooks/capture-audio-controls-types";
 import { MAX_INGEST_GAIN, MIN_INGEST_GAIN } from "../hooks/capture-audio-controls-types";
+import type { CaptureSessionPhase } from "../hooks/capture-session-types";
 import type { CapturePhaseChanged } from "../hooks/capture-status";
 import {
   type UseCaptureAudioControlsOptions,
@@ -32,6 +33,7 @@ interface CaptureAudioControlsRowRuntimeProps {
   readonly invokeFn?: InjectableInvokeFn;
   readonly listenFn?: CaptureAudioControlsEventListenFn;
   readonly capturePhase?: CapturePhase;
+  readonly sessionPhase?: CaptureSessionPhase;
 }
 
 export type CaptureAudioControlsRowProps = Partial<CaptureAudioControlsRowInjectedProps> &
@@ -157,6 +159,7 @@ function CaptureAudioControlsRowConnected(props: CaptureAudioControlsRowRuntimeP
     ...(props.invokeFn !== undefined ? { invokeFn: props.invokeFn } : {}),
     ...(props.listenFn !== undefined ? { listenFn: props.listenFn } : {}),
     ...(props.capturePhase !== undefined ? { capturePhase: props.capturePhase } : {}),
+    ...(props.sessionPhase !== undefined ? { sessionPhase: props.sessionPhase } : {}),
   };
   const { controls, ingest_level, disabled } = useCaptureAudioControls(hookOptions);
 

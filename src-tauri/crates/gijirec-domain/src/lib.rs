@@ -3,9 +3,11 @@
 mod consumer_contract;
 
 pub mod audio;
+pub mod capture_session;
 pub mod editor;
 pub mod transcribe;
 
+pub use capture_session::{CaptureSessionErrorCode, CaptureSessionPhase};
 pub use transcribe::{
     ModelVariantCatalog, ModelVariantDescriptor, PhaseTransitionError, TranscribeError,
     TranscribeErrorCode, TranscribePhase, TranscribeSettings, TranscribeSettingsError,

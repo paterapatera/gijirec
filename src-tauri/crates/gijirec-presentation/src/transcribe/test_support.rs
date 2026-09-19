@@ -15,14 +15,16 @@ use gijirec_domain::transcribe::{
     TranscriptConsumerError, TranscriptSegmentSink, UserFacingTranscribeError, WhisperModelVariant,
 };
 use gijirec_infrastructure::transcribe::{
-    ModelPathLoadable, SegmentEngine, TranscribeWorker, WhisperSegment,
+    ModelPathLoadable, SegmentEngine, TranscribeWorker, WhisperSegment, WorkerRespawnEngine,
 };
 
 use super::event_emitter::{TranscribeEmitError, TranscribeEventEmitter};
 use super::pcm_ingest_consumer::PcmIngestConsumer;
 use super::stall_watchdog::StallClock;
 use super::transcript_block_bus::TranscriptBlockBus;
+use crate::tauri::pcm_bus::PcmChunkBus;
 use gijirec_application::transcribe::block_emitter::BlockEmitter;
+use gijirec_application::transcribe::model_orchestrator::ModelOrchestrator;
 
 pub use gijirec_application::transcribe::noop_ports::{
     NoopTranscribeWorkerPort, NoopWhisperContextPort,
@@ -130,6 +132,37 @@ pub fn recording_block_bus() -> (Arc<TranscriptBlockBus>, Arc<Mutex<Vec<Transcri
     (block_bus, recorded_blocks)
 }
 
+pub fn injected_model_orchestrator(
+    model_path: PathBuf,
+) -> Arc<Mutex<ModelOrchestrator<InjectableMockStore, MockSequenceDownloader>>> {
+    Arc::new(Mutex::new(ModelOrchestrator::new(
+        InjectableMockStore::injected(model_path),
+        MockSequenceDownloader {
+            progress_series: vec![],
+        },
+    )))
+}
+
+pub struct PcmIngestFixture {
+    pub block_bus: Arc<TranscriptBlockBus>,
+    pub pcm_bus: PcmChunkBus,
+    pub recorded_blocks: Arc<Mutex<Vec<TranscriptBlock>>>,
+    pub pcm_consumer: rtrb::Consumer<f32>,
+}
+
+pub fn pcm_ingest_fixture() -> PcmIngestFixture {
+    let (block_bus, recorded_blocks) = recording_block_bus();
+    let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(BATCH_WINDOW_SAMPLES * 3);
+    let pcm_bus = PcmChunkBus::new();
+    pcm_bus.register(Arc::new(PcmIngestConsumer::new(pcm_prod)));
+    PcmIngestFixture {
+        block_bus,
+        pcm_bus,
+        recorded_blocks,
+        pcm_consumer: pcm_cons,
+    }
+}
+
 pub struct MockStore {
     pub path: PathBuf,
 }
@@ -183,6 +216,15 @@ pub struct MockSegmentEngine {
     pub inference_called: Arc<AtomicBool>,
 }
 
+impl Default for MockSegmentEngine {
+    fn default() -> Self {
+        Self {
+            segments: Vec::new(),
+            inference_called: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
 impl SegmentEngine for MockSegmentEngine {
     fn transcribe_pcm(&mut self, _pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
         self.inference_called.store(true, Ordering::SeqCst);
@@ -198,6 +240,14 @@ noop_model_path_loadable!(MockSegmentEngine);
 
 pub struct CountingBatchEngine {
     pub cycle: Arc<AtomicUsize>,
+}
+
+impl Default for CountingBatchEngine {
+    fn default() -> Self {
+        Self {
+            cycle: Arc::new(AtomicUsize::new(0)),
+        }
+    }
 }
 
 impl SegmentEngine for CountingBatchEngine {
@@ -219,6 +269,14 @@ noop_model_path_loadable!(CountingBatchEngine);
 
 pub struct FailOnceBatchEngine {
     pub attempts: Arc<AtomicU64>,
+}
+
+impl Default for FailOnceBatchEngine {
+    fn default() -> Self {
+        Self {
+            attempts: Arc::new(AtomicU64::new(0)),
+        }
+    }
 }
 
 impl SegmentEngine for FailOnceBatchEngine {
@@ -246,13 +304,17 @@ impl SegmentEngine for FailOnceBatchEngine {
 
 noop_model_path_loadable!(FailOnceBatchEngine);
 
-pub struct BatchPipelineFixture<E: SegmentEngine + ModelPathLoadable + 'static> {
+pub struct BatchPipelineFixture<
+    E: SegmentEngine + ModelPathLoadable + WorkerRespawnEngine + 'static,
+> {
     pub pcm_bus: super::super::tauri::pcm_bus::PcmChunkBus,
     pub recorded_blocks: Arc<Mutex<Vec<TranscriptBlock>>>,
     pub worker: TranscribeWorker<E>,
 }
 
-pub fn setup_batch_pipeline<E: SegmentEngine + ModelPathLoadable + 'static>(
+pub fn setup_batch_pipeline<
+    E: SegmentEngine + ModelPathLoadable + WorkerRespawnEngine + 'static,
+>(
     engine: E,
 ) -> BatchPipelineFixture<E> {
     let pcm_bus = super::super::tauri::pcm_bus::PcmChunkBus::new();
@@ -274,7 +336,9 @@ pub fn setup_batch_pipeline<E: SegmentEngine + ModelPathLoadable + 'static>(
     }
 }
 
-pub fn spawn_transcribe_worker<E: SegmentEngine + ModelPathLoadable + 'static>(
+pub fn spawn_transcribe_worker<
+    E: SegmentEngine + ModelPathLoadable + WorkerRespawnEngine + 'static,
+>(
     emitter: Arc<BlockEmitter<TranscriptBlockBus>>,
     engine: E,
     pcm_consumer: rtrb::Consumer<f32>,
@@ -326,7 +390,9 @@ pub fn assert_contiguous_sequences(blocks: &[TranscriptBlock]) {
     }
 }
 
-pub fn stop_batch_worker_and_take_blocks<E: SegmentEngine + ModelPathLoadable>(
+pub fn stop_batch_worker_and_take_blocks<
+    E: SegmentEngine + ModelPathLoadable + WorkerRespawnEngine,
+>(
     worker: &mut TranscribeWorker<E>,
     recorded_blocks: &Arc<Mutex<Vec<TranscriptBlock>>>,
     stop_label: &str,
@@ -502,7 +568,7 @@ pub struct MockEngineWorkerPort<E: SegmentEngine + ModelPathLoadable + 'static> 
     pub inner: TranscribeWorker<E>,
 }
 
-impl<E: SegmentEngine + ModelPathLoadable + 'static> TranscribeWorkerPort
+impl<E: SegmentEngine + ModelPathLoadable + WorkerRespawnEngine + 'static> TranscribeWorkerPort
     for MockEngineWorkerPort<E>
 {
     fn prepare_model_path(&mut self, path: &Path) -> Result<(), TranscribeError> {
@@ -516,4 +582,24 @@ impl<E: SegmentEngine + ModelPathLoadable + 'static> TranscribeWorkerPort
     fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError> {
         self.inner.stop_and_join(timeout)
     }
+}
+
+/// Shared batch regression: two 30s windows emit contiguous `batch-0` / `batch-1` blocks.
+pub fn assert_counting_batch_pipeline_emits_two_contiguous_blocks() {
+    let mut fixture = setup_batch_pipeline(CountingBatchEngine {
+        cycle: Arc::new(AtomicUsize::new(0)),
+    });
+
+    publish_speech_pcm(&fixture.pcm_bus, CHUNKS_PER_BATCH * 2, 0);
+    wait_for_block_count(&fixture.recorded_blocks, 2);
+
+    let blocks = stop_batch_worker_and_take_blocks(
+        &mut fixture.worker,
+        &fixture.recorded_blocks,
+        "stop batch worker",
+    );
+    assert_eq!(blocks.len(), 2);
+    assert_contiguous_sequences(&blocks);
+    assert_eq!(blocks[0].text, "batch-0");
+    assert_eq!(blocks[1].text, "batch-1");
 }

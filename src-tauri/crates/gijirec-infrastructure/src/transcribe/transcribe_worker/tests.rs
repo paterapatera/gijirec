@@ -18,7 +18,7 @@ use super::pcm_buffer::{PcmBufferState, drain_consumer};
 use super::types::InferenceWindowLevelCallback;
 use super::{
     BatchCycleCompleted, BatchCycleStarted, InferenceWindowLevel, ModelPathLoadable, SegmentEngine,
-    TranscribeWorker,
+    TranscribeWorker, WorkerRespawnEngine,
 };
 
 use crate::noop_model_path_loadable;
@@ -170,6 +170,15 @@ fn batch_text_engine(text: &str, inference_started: Arc<AtomicBool>) -> MockEngi
 struct CountingEngine {
     inner: MockEngine,
     count: Arc<AtomicU64>,
+}
+
+impl Default for CountingEngine {
+    fn default() -> Self {
+        Self {
+            inner: MockEngine::default(),
+            count: Arc::new(AtomicU64::new(0)),
+        }
+    }
 }
 
 impl SegmentEngine for CountingEngine {
@@ -382,6 +391,14 @@ struct FailOnceEngine {
     attempts: Arc<AtomicU64>,
 }
 
+impl Default for FailOnceEngine {
+    fn default() -> Self {
+        Self {
+            attempts: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
 impl SegmentEngine for FailOnceEngine {
     fn transcribe_pcm(&mut self, pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
         if pcm.is_empty() {
@@ -516,7 +533,7 @@ fn recording_sink() -> (Arc<RecordingSink>, RecordedSegments) {
     (sink, segments)
 }
 
-fn spawn_batch_worker<E: SegmentEngine + ModelPathLoadable + 'static>(
+fn spawn_batch_worker<E: SegmentEngine + ModelPathLoadable + WorkerRespawnEngine + 'static>(
     engine: E,
     ring_capacity: usize,
 ) -> (TranscribeWorker<E>, rtrb::Producer<f32>, RecordedSegments) {
@@ -577,6 +594,7 @@ fn spawn_requires_pcm_consumer() {
     assert!(matches!(err, TranscribeError::Internal { .. }));
 }
 
+#[derive(Default)]
 struct FailLoadEngine;
 
 impl SegmentEngine for FailLoadEngine {
@@ -705,7 +723,7 @@ fn skips_whitespace_only_segments() {
 }
 
 #[test]
-fn stop_timeout_detaches_without_internal_error() {
+fn stop_timeout_returns_inference_failed() {
     let inference_started = Arc::new(AtomicBool::new(false));
     let engine = MockEngine {
         segments: vec![],
@@ -720,15 +738,88 @@ fn stop_timeout_detaches_without_internal_error() {
     wait_for_bool(&inference_started);
     assert!(inference_started.load(Ordering::SeqCst));
 
-    let result = worker.stop_and_join(Duration::from_millis(50));
-    assert!(result.is_ok());
-    if let Err(err) = result {
-        assert_ne!(
-            err.to_user_facing().code,
-            TranscribeErrorCode::Internal,
-            "timeout stop must not surface INTERNAL"
-        );
+    let err = worker
+        .stop_and_join(Duration::from_millis(50))
+        .expect_err("join timeout must fail");
+    assert!(matches!(err, TranscribeError::InferenceFailed { .. }));
+    assert_eq!(
+        err.to_user_facing().code,
+        TranscribeErrorCode::InferenceFailed
+    );
+}
+
+struct BlockingSecondInferenceEngine {
+    calls: Arc<AtomicU64>,
+    unblock: Arc<AtomicBool>,
+}
+
+impl Default for BlockingSecondInferenceEngine {
+    fn default() -> Self {
+        Self {
+            calls: Arc::new(AtomicU64::new(0)),
+            unblock: Arc::new(AtomicBool::new(true)),
+        }
     }
+}
+
+impl SegmentEngine for BlockingSecondInferenceEngine {
+    fn transcribe_pcm(&mut self, pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
+        if pcm.is_empty() {
+            return Ok(Vec::new());
+        }
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call == 1 {
+            wait_for_unblock(&self.unblock);
+        }
+        let text = match call {
+            0 => "cycle1",
+            1 => "cycle2",
+            _ => "tail",
+        };
+        Ok(vec![whisper_segment(text, 0, 100)])
+    }
+
+    fn is_loaded(&self) -> bool {
+        true
+    }
+}
+
+noop_model_path_loadable!(BlockingSecondInferenceEngine);
+
+#[test]
+fn stop_flush_drains_rtrb_while_inference_blocked() {
+    let calls = Arc::new(AtomicU64::new(0));
+    let unblock = Arc::new(AtomicBool::new(false));
+    let engine = BlockingSecondInferenceEngine {
+        calls: Arc::clone(&calls),
+        unblock: Arc::clone(&unblock),
+    };
+    let tail_samples = 32_000;
+    let ring_capacity = MAX_INFERENCE_WINDOW_SAMPLES * 3 + tail_samples;
+    let (mut worker, mut prod, segments) = spawn_batch_worker(engine, ring_capacity);
+
+    push_samples(&mut prod, 0.25, MAX_INFERENCE_WINDOW_SAMPLES * 2 + 50_000);
+    wait_for_segments_at_least(&segments, 1);
+    wait_for_counter(&calls, 2);
+
+    let stop_handle = thread::spawn(move || {
+        worker
+            .stop_and_join(Duration::from_secs(5))
+            .expect("stop with flush");
+    });
+
+    push_samples(&mut prod, 0.25, tail_samples);
+    unblock.store(true, Ordering::SeqCst);
+
+    stop_handle.join().expect("join stop thread");
+    wait_for_segments_at_least(&segments, 3);
+
+    let recorded = segments.lock().expect("lock").clone();
+    let texts: Vec<&str> = recorded.iter().map(|s| s.0.as_str()).collect();
+    assert!(
+        texts.contains(&"tail"),
+        "PCM arriving during blocked stop must flush as a partial batch: {texts:?}"
+    );
 }
 
 #[test]
@@ -880,6 +971,15 @@ struct OrderedWindowEngine {
     window_first_samples: Arc<Mutex<Vec<f32>>>,
 }
 
+impl Default for OrderedWindowEngine {
+    fn default() -> Self {
+        Self {
+            inner: MockEngine::default(),
+            window_first_samples: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
 impl SegmentEngine for OrderedWindowEngine {
     fn transcribe_pcm(&mut self, pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
         if let Some(sample) = pcm.first() {
@@ -967,6 +1067,20 @@ fn double_spawn_is_rejected() {
     let err = worker.spawn().expect_err("second spawn");
     assert!(matches!(err, TranscribeError::Internal { .. }));
     worker.stop_and_join(Duration::from_secs(1)).expect("stop");
+}
+
+#[test]
+fn worker_respawns_after_stop_and_join() {
+    let (sink, _) = recording_sink();
+    let mut worker = TranscribeWorker::<MockEngine>::with_engine(sink, MockEngine::default());
+    let (_prod, cons) = ring_pair(1_024);
+    worker.attach_pcm_consumer(cons);
+    worker.spawn().expect("first spawn");
+    worker.stop_and_join(Duration::from_secs(2)).expect("stop");
+    worker.spawn().expect("second spawn after stop");
+    worker
+        .stop_and_join(Duration::from_secs(2))
+        .expect("stop again");
 }
 
 #[test]
@@ -1059,6 +1173,14 @@ fn start_timestamp_ms_is_monotonic_across_batch_cycles() {
         cycle: Arc<AtomicUsize>,
     }
 
+    impl Default for MultiCycleEngine {
+        fn default() -> Self {
+            Self {
+                cycle: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
     impl SegmentEngine for MultiCycleEngine {
         fn transcribe_pcm(&mut self, _pcm: &[f32]) -> Result<Vec<WhisperSegment>, TranscribeError> {
             let index = self.cycle.fetch_add(1, Ordering::SeqCst);
@@ -1125,6 +1247,14 @@ fn deferred_variant_reload_applies_on_next_batch_cycle() {
 
     struct PathTrackingEngine {
         paths: Arc<Mutex<Vec<std::path::PathBuf>>>,
+    }
+
+    impl Default for PathTrackingEngine {
+        fn default() -> Self {
+            Self {
+                paths: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
     }
 
     impl SegmentEngine for PathTrackingEngine {
@@ -1225,6 +1355,15 @@ fn retention_limit_callback_fires_without_exceeding_deque_cap() {
 struct FailFirstThenSucceedEngine {
     attempts: AtomicUsize,
     segment_text: String,
+}
+
+impl Default for FailFirstThenSucceedEngine {
+    fn default() -> Self {
+        Self {
+            attempts: AtomicUsize::new(0),
+            segment_text: String::new(),
+        }
+    }
 }
 
 impl SegmentEngine for FailFirstThenSucceedEngine {

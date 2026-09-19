@@ -14,6 +14,7 @@ import {
   MAX_INGEST_GAIN,
   MIN_INGEST_GAIN,
 } from "../hooks/capture-audio-controls-types";
+import type { CaptureSessionPhase } from "../hooks/capture-session-types";
 import { CaptureAudioControlsRow } from "./CaptureAudioControlsRow";
 
 beforeAll(() => {
@@ -40,6 +41,7 @@ type RenderOverrides = {
   ingest_level?: IngestLevelSnapshot | null;
   disabled?: boolean;
   capturePhase?: "idle" | "capturing";
+  sessionPhase?: CaptureSessionPhase;
   invokeFn?: InjectableInvokeFn;
   listenFn?: (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void>;
 };
@@ -52,6 +54,9 @@ function renderRow(overrides: RenderOverrides = {}) {
   };
   if (overrides.capturePhase !== undefined) {
     props.capturePhase = overrides.capturePhase;
+  }
+  if (overrides.sessionPhase !== undefined) {
+    props.sessionPhase = overrides.sessionPhase;
   }
   if (overrides.invokeFn !== undefined) {
     props.invokeFn = overrides.invokeFn;
@@ -82,6 +87,7 @@ function createMockListen() {
 function createConnectedInvoke(
   backendState: CaptureAudioControlsState,
   phase: "idle" | "capturing" = "capturing",
+  sessionPhase: CaptureSessionPhase = "active",
 ) {
   const calls: { command: string; args?: unknown }[] = [];
   let state = { ...backendState, controls: { ...backendState.controls } };
@@ -91,6 +97,13 @@ function createConnectedInvoke(
     switch (command) {
       case "get_capture_phase":
         return { phase, timestamp_ms: 0 };
+      case "get_capture_session_state":
+        return {
+          session_phase: sessionPhase,
+          transition_busy: false,
+          capture_phase: phase,
+          timestamp_ms: 0,
+        };
       case "get_capture_audio_controls":
         return state;
       case "set_capture_audio_controls":
@@ -300,10 +313,16 @@ describe("CaptureAudioControlsRow", () => {
     const { invokeFn } = createConnectedInvoke(
       { controls: defaultControls, ingest_level: null },
       "idle",
+      "active",
     );
 
     const { getByTestId } = render(
-      <CaptureAudioControlsRow invokeFn={invokeFn} listenFn={listenFn} capturePhase="idle" />,
+      <CaptureAudioControlsRow
+        invokeFn={invokeFn}
+        listenFn={listenFn}
+        capturePhase="idle"
+        sessionPhase="active"
+      />,
     );
 
     await waitFor(() => {
@@ -313,15 +332,48 @@ describe("CaptureAudioControlsRow", () => {
     expect(getByTestId("ingest-level-meter").textContent).toBe("—");
   });
 
-  test("connected mode shows dBFS when capturing with level from hook", async () => {
+  test("connected mode disables controls when session is idle even if capturing", async () => {
     const { listenFn } = createMockListen();
-    const { invokeFn } = createConnectedInvoke({
-      controls: defaultControls,
-      ingest_level: activeLevel,
-    });
+    const { invokeFn } = createConnectedInvoke(
+      { controls: defaultControls, ingest_level: activeLevel },
+      "capturing",
+      "idle",
+    );
 
     const { getByTestId } = render(
-      <CaptureAudioControlsRow invokeFn={invokeFn} listenFn={listenFn} capturePhase="capturing" />,
+      <CaptureAudioControlsRow
+        invokeFn={invokeFn}
+        listenFn={listenFn}
+        capturePhase="capturing"
+        sessionPhase="idle"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(getByTestId("mic-ingest-switch").hasAttribute("disabled")).toBe(true);
+    });
+    expect(getByTestId("ingest-level-meter").textContent).toBe("—");
+    expect((getByTestId("ingest-gain-slider") as HTMLInputElement).disabled).toBe(true);
+  });
+
+  test("connected mode shows dBFS when session active and capturing with level from hook", async () => {
+    const { listenFn } = createMockListen();
+    const { invokeFn } = createConnectedInvoke(
+      {
+        controls: defaultControls,
+        ingest_level: activeLevel,
+      },
+      "capturing",
+      "active",
+    );
+
+    const { getByTestId } = render(
+      <CaptureAudioControlsRow
+        invokeFn={invokeFn}
+        listenFn={listenFn}
+        capturePhase="capturing"
+        sessionPhase="active"
+      />,
     );
 
     await waitFor(() => {

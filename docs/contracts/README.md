@@ -23,6 +23,7 @@
 | `transcript-editor-status.md` | 保存・設定操作の利用者向けエラー形状 | transcript-editor |
 | `release-logging-persistence.md` | リリースビルド診断ログの保存場所・セッション ID・禁止フィールド | release-logging |
 | `capture-audio-controls.md` | マイク ingest トグル・手動ゲイン・ingest 直前 dBFS メーター Tauri command / イベント | capture-audio-controls |
+| `capture-session-toggle.md` | キャプチャセッション開始専用 Tauri command / イベント（待機・進行中） | capture-session-toggle |
 
 <!-- 例:
 | contracts/billing-api.md | Billing HTTP API shape | billing |

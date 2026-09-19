@@ -14,7 +14,7 @@
 
 新規 spec は `/sdd-discovery` 経由で起票し、依存順でここに `[ ]` として追記する。完了済み feature の履歴は `docs/steering/product.md` の Implementation Phasing 表を参照。
 
-（未着手の spec はなし）
+（現在、未着手の planned spec はなし）
 
 ## 完了状態のルール
 
@@ -25,4 +25,4 @@
 - **アーカイブ**: 完了 spec は Implementation Notes 昇格・`docs/manual/` 移設後、人間が週次で `docs/specs/<feature>/` を削除（手順は `docs/steering/structure.md` の Spec ライフサイクル）
 
 ---
-_updated_at: 2026-09-10（capture-audio-controls 完了・roadmap から除去）_
+_updated_at: 2026-09-19（capture-session-toggle 完了・roadmap から除去）_

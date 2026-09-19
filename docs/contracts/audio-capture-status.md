@@ -79,6 +79,7 @@ interface CaptureUserError {
 
 | Date | Change | ADR / rationale |
 |------|--------|-----------------|
+| 2026-09-19 | 起動時は自動で `capturing` にしない — 利用者セッション開始（`capture-session-toggle.md`）まで `idle` を維持 | capture-session-toggle 要件 1 |
 | 2026-09-10 | `TRANSCRIBE_INGEST_NO_AUDIO_SOURCE` 追加 | capture-audio-controls 要件 1.5 |
 | 2026-09-06 | 選択デバイス文脈のエラーコード追加 | audio-device-selection / ADR-0009 |
 | 2026-09-05 | 初版 — フェーズと利用者向けエラー | 要件 5, 7 |

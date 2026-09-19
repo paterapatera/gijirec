@@ -13,6 +13,17 @@ pub trait SegmentEngine: Send {
     fn set_running_flag(&mut self, _running: Arc<AtomicBool>) {}
 }
 
+/// Recreates an engine instance after a worker thread releases it on stop.
+pub trait WorkerRespawnEngine: SegmentEngine + Sized {
+    fn fresh_worker_engine() -> Self;
+}
+
+impl<T: SegmentEngine + Default> WorkerRespawnEngine for T {
+    fn fresh_worker_engine() -> Self {
+        Self::default()
+    }
+}
+
 /// Loads a whisper model path on the worker thread before inference begins.
 pub trait ModelPathLoadable: SegmentEngine {
     fn load_from_path_if_needed(&mut self, path: &std::path::Path) -> Result<(), TranscribeError>;

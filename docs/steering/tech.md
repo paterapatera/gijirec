@@ -31,6 +31,7 @@ Rust 側は **レイヤードアーキテクチャ**（domain → application / 
 | エディタ | Slate.js（編集面）+ shadcn/ui + Sonner | 部分ロック付き二重エディタ（ADR-0005 / ADR-0006） |
 | 保存ダイアログ | `@tauri-apps/plugin-dialog` | 保存先ディレクトリ選択（`pick_save_directory`） |
 | デバイス選択 | `DeviceSelectionService` + cpal 列挙 | セッション内マイク／スピーカー選択・キャプチャ再開（ADR-0009） |
+| 会議セッション開始 | `CaptureSessionService` + `useCaptureSession` | 起動後 idle。`start_capture_session` のみ。OS `CapturePhase` と分離（ADR-0015） |
 | 診断ログ | `src-tauri/src/logging/`（`--log`） | リリースビルドのファイル永続化（ADR-0007）。`app_data_dir/logs/` |
 | アーキテクチャ検証 | cargo bylaw、dependency-cruiser | レイヤ依存の自動チェック |
 
@@ -160,5 +161,5 @@ bun run rust:typecheck
 永続的な技術判断は `docs/architecture/adr/` に ADR として記録する。
 
 ---
-_updated_at: 2026-09-19（PCM 1 時間保持上限・溢れ停止を追記）_
+_updated_at: 2026-09-19（capture-session-toggle 開始専用セッションを追記）_
 _Document standards and patterns, not every dependency_

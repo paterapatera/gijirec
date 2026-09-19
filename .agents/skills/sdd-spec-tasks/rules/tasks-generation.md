@@ -82,10 +82,10 @@ Focus on capabilities and outcomes, not code structure.
 
 **Rules**:
 - `_Wave:_` is a **phase-order** annotation (Foundation → Core → Integration → Validation). It is **not** the `sdd-impl` dispatch unit.
-- **`sdd-impl` dispatches by major number** (`1`, `2`, …): all remaining executable work under major `N` goes to one implementer. Same Wave ≠ same implementer batch.
+- **`sdd-impl` dispatches packed batches**: start from the lowest ready major (all remaining `N.M` under that major stay together), then greedily append consecutive skinny serial majors into the same implementer (packing ceiling: 4 executable tasks; excerpt budget / change-set / Integration-Validation isolation / `(P)` parallel opportunity stop packing). Same Wave ≠ same implementer batch.
 - Waves still increase in dependency order (later phases must not start before earlier phases they need)
-- Integration and Validation phases get their own Waves **and their own majors** — do not mix them with Foundation/Core implementation under the same major
-- `(P)` work with different `_Boundary:_` must be **different majors** (do not park them as sibling `N.M` under one parent) — so `sdd-impl` can parallel-dispatch those majors when dependencies are ready
+- Integration and Validation phases get their own Waves **and their own majors** — do not mix them with Foundation/Core implementation under the same major (`sdd-impl` also will not pack I/V majors into a Foundation/Core batch)
+- `(P)` work with different `_Boundary:_` must be **different majors** (do not park them as sibling `N.M` under one parent) — so `sdd-impl` can leave them un-packed and parallel-dispatch those majors when dependencies are ready
 - Sub-tasks under the same major share (or omit) `_Boundary:_` consistently; mixed-boundary `(P)` siblings under one major will **not** be split into parallel implementers
 
 **How to assign Waves** (align with Task Ordering Principle):
@@ -94,7 +94,7 @@ Focus on capabilities and outcomes, not code structure.
 3. Separate Wave(s) **and majors** for Integration
 4. Separate Wave(s) **and majors** for Validation
 
-**Sizing vs dispatch**: Keep human-readable sub-tasks small (1–3 hours). Do **not** coarsen the hierarchy just to match dispatch — `sdd-impl` groups all `N.M` under major `N` into one implementer.
+**Sizing vs dispatch**: Keep human-readable sub-tasks small (1–3 hours). Do **not** coarsen the hierarchy just to match dispatch — `sdd-impl` keeps each major whole and packs consecutive skinny serial majors (e.g. `1`/`1.1`, `2`/`2.1`, `3`/`3.1`) into one implementer.
 
 ### 6. Flexible Task Sizing
 
@@ -102,7 +102,7 @@ Focus on capabilities and outcomes, not code structure.
 - **Major tasks**: As many sub-tasks as logically needed (group by cohesion)
 - **Sub-tasks**: 1-3 hours each, 3-10 details per sub-task
 - Balance between too granular and too broad
-- Fine-grained sub-tasks and **major-level** dispatch coexist: size sub-tasks for human clarity; `sdd-impl` runs one implementer per major
+- Fine-grained sub-tasks and **packed-batch** dispatch coexist: size sub-tasks for human clarity; `sdd-impl` runs one implementer per packed batch (a fat major, or consecutive skinny serial majors)
 
 **Don't force arbitrary numbers** - let logical grouping determine structure.
 
@@ -156,7 +156,7 @@ Before writing `tasks.md`, review the draft task plan and repair local issues un
 - If many tasks require broad `_Boundary:_` scopes or repeated cross-boundary coordination, stop and return to design or roadmap decomposition instead of forcing the spec through task generation.
 - Merge or collapse tasks that are too small, bookkeeping-only, or not meaningful execution units.
 - Make implicit prerequisites explicit as preceding tasks.
-- Re-check `_Depends:_`, `_Boundary:_`, `_Wave:_`, and `(P)` markers after edits so concurrency claims and **major** batches still match the design boundaries and dependency graph.
+- Re-check `_Depends:_`, `_Boundary:_`, `_Wave:_`, and `(P)` markers after edits so concurrency claims, major grouping, and packed-batch dispatch still match the design boundaries and dependency graph.
 - Reject plans where Integration/Validation tasks share a **major** with Foundation/Core implementation, or where `(P)` tasks with different `_Boundary:_` share the same **major**.
 - Reject `(P)` on any **major** that cannot safely parallel-dispatch at implementation time (shared incomplete Depends with a peer major, overlapping `_Boundary:_` / File Structure paths, or missing `_Boundary:_` when peer majors would run concurrently). Remove the marker or split into separate majors until the execution contract holds.
 
@@ -179,7 +179,7 @@ Before writing `tasks.md`, review the draft task plan and repair local issues un
 - **Level 1**: Major tasks (1, 2, 3, 4...)
 - **Level 2**: Sub-tasks (1.1, 1.2, 2.1, 2.2...)
 - **No deeper nesting** (no 1.1.1)
-- If a major task would contain only a single actionable item, collapse the structure and promote the sub-task to the major level (e.g., replace `1.1` with `1.`).
+- If a major task would contain only a single actionable item, collapse the structure and promote the sub-task to the major level (e.g., replace `1.1` with `1.`). Chains of such skinny majors are expected; `sdd-impl` packs consecutive serial skinny majors into one implementer.
 - When a major task exists purely as a container, keep the checkbox description concise and avoid duplicating detailed bullets—reserve specifics for its sub-tasks.
 
 ### Sequential Numbering

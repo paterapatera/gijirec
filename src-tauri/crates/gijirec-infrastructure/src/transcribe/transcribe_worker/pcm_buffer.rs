@@ -109,13 +109,13 @@ impl PcmBacklogReportState {
 pub(crate) fn drain_pcm_loop(
     mut consumer: rtrb::Consumer<f32>,
     pcm_buffer: Arc<Mutex<PcmBufferState>>,
-    running: Arc<AtomicBool>,
+    pcm_draining: Arc<AtomicBool>,
     callbacks: PcmDrainCallbacks,
-) {
+) -> rtrb::Consumer<f32> {
     let mut backlog_report = PcmBacklogReportState::new();
     const BACKLOG_REPORT_INTERVAL: Duration = Duration::from_secs(1);
 
-    while running.load(Ordering::SeqCst) {
+    while pcm_draining.load(Ordering::SeqCst) {
         let popped = {
             let mut state = pcm_buffer.lock().expect("pcm buffer lock");
             drain_consumer(&mut consumer, &mut state, true)
@@ -144,6 +144,7 @@ pub(crate) fn drain_pcm_loop(
             force: true,
         },
     );
+    consumer
 }
 
 pub(crate) fn drain_front_samples(state: &mut PcmBufferState, cut: usize) -> (Vec<f32>, u64) {

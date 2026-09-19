@@ -24,11 +24,12 @@ use gijirec_presentation::domain::transcribe::{
 use gijirec_presentation::infrastructure::transcribe::{TranscribeWorker, WhisperSegment};
 use gijirec_presentation::tauri::pcm_bus::PcmChunkBus;
 use gijirec_presentation::transcribe::test_support::{
-    BATCH_WINDOW_SAMPLES, CHUNKS_PER_BATCH, CountingBatchEngine, DeferredPlaceholderStore,
-    FailOnceBatchEngine, InjectableMockStore, MockEngineWorkerPort, MockFailingDownloader,
-    MockSegmentEngine, MockSequenceDownloader, MockStore, MockWorkerPort, NoopTranscribeWorkerPort,
-    NoopWhisperContextPort, RecordingTranscribeEventEmitter, assert_contiguous_sequences,
-    create_temp_model_file, publish_speech_pcm, recording_block_bus, setup_batch_pipeline,
+    CHUNKS_PER_BATCH, DeferredPlaceholderStore, FailOnceBatchEngine, InjectableMockStore,
+    MockEngineWorkerPort, MockFailingDownloader, MockSegmentEngine, MockSequenceDownloader,
+    MockStore, MockWorkerPort, NoopTranscribeWorkerPort, NoopWhisperContextPort,
+    RecordingTranscribeEventEmitter, assert_contiguous_sequences,
+    assert_counting_batch_pipeline_emits_two_contiguous_blocks, create_temp_model_file,
+    pcm_ingest_fixture, publish_speech_pcm, recording_block_bus, setup_batch_pipeline,
     spawn_transcribe_worker, stop_batch_worker_and_take_blocks, wait_for_block_count,
     wait_for_blocks,
 };
@@ -128,7 +129,10 @@ fn integration_2_pcm_chunk_bus_delivers_to_ingest_consumer_and_worker_consumes()
 fn integration_3_capture_error_stops_transcribe_and_resumes_on_capturing() {
     let worker_spawns = Arc::new(AtomicUsize::new(0));
     let worker_stops = Arc::new(AtomicUsize::new(0));
-    let worker = MockWorkerPort::new(Arc::clone(&worker_spawns), Arc::clone(&worker_stops));
+    let worker = Arc::new(Mutex::new(MockWorkerPort::new(
+        Arc::clone(&worker_spawns),
+        Arc::clone(&worker_stops),
+    )));
 
     let store = MockStore {
         path: PathBuf::from("/tmp/model.bin"),
@@ -270,7 +274,7 @@ fn integration_5_model_download_progress_event_series() {
     let emitter_for_cb = emitter.clone();
 
     let mut orch = DefaultTranscribeOrchestrator::new(
-        NoopTranscribeWorkerPort,
+        Arc::new(Mutex::new(NoopTranscribeWorkerPort)),
         NoopWhisperContextPort,
         model_orch,
         std::time::Duration::from_millis(500),
@@ -325,12 +329,11 @@ fn build_deferred_transcribe_pipeline(segments: Vec<WhisperSegment>) -> WiredTra
         },
     )));
 
-    let (block_bus, recorded_blocks) = recording_block_bus();
-
-    let (pcm_prod, pcm_cons) = rtrb::RingBuffer::<f32>::new(BATCH_WINDOW_SAMPLES * 3);
-    let pcm_ingest = Arc::new(PcmIngestConsumer::new(pcm_prod));
-    let pcm_bus = PcmChunkBus::new();
-    pcm_bus.register(pcm_ingest);
+    let ingest = pcm_ingest_fixture();
+    let block_bus = Arc::clone(&ingest.block_bus);
+    let recorded_blocks = Arc::clone(&ingest.recorded_blocks);
+    let pcm_bus = ingest.pcm_bus;
+    let pcm_cons = ingest.pcm_consumer;
 
     let block_emitter = Arc::new(BlockEmitter::new(Arc::clone(&block_bus)));
     let engine = MockSegmentEngine {
@@ -340,10 +343,10 @@ fn build_deferred_transcribe_pipeline(segments: Vec<WhisperSegment>) -> WiredTra
     let mut worker =
         TranscribeWorker::with_engine(block_emitter as Arc<dyn TranscriptSegmentSink>, engine);
     worker.attach_pcm_consumer(pcm_cons);
-    let worker_port = MockEngineWorkerPort { inner: worker };
+    let worker_port = Arc::new(Mutex::new(MockEngineWorkerPort { inner: worker }));
 
     let orchestrator = Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
-        worker_port,
+        Arc::clone(&worker_port),
         NoopWhisperContextPort,
         Arc::clone(&model_orchestrator),
         std::time::Duration::from_millis(500),
@@ -435,7 +438,7 @@ fn integration_7_model_fetch_failure_surfaces_user_facing_error() {
 
     let orchestrator: Arc<Mutex<dyn TranscribeOrchestrator>> =
         Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
-            NoopTranscribeWorkerPort,
+            Arc::new(Mutex::new(NoopTranscribeWorkerPort)),
             NoopWhisperContextPort,
             Arc::clone(&model_orchestrator),
             std::time::Duration::from_millis(500),
@@ -535,22 +538,7 @@ fn integration_8_capture_stop_returns_ready_and_preserves_blocks() {
 /// 合成 PCM → PcmChunkBus → バッチ worker → モック adapter で sequence 欠番なし (req 2.4, 3.2)
 #[test]
 fn integration_batch_pipeline_emits_contiguous_sequences() {
-    let mut fixture = setup_batch_pipeline(CountingBatchEngine {
-        cycle: Arc::new(AtomicUsize::new(0)),
-    });
-
-    publish_speech_pcm(&fixture.pcm_bus, CHUNKS_PER_BATCH * 2, 0);
-    wait_for_block_count(&fixture.recorded_blocks, 2);
-
-    let blocks = stop_batch_worker_and_take_blocks(
-        &mut fixture.worker,
-        &fixture.recorded_blocks,
-        "stop batch worker",
-    );
-    assert_eq!(blocks.len(), 2);
-    assert_contiguous_sequences(&blocks);
-    assert_eq!(blocks[0].text, "batch-0");
-    assert_eq!(blocks[1].text, "batch-1");
+    assert_counting_batch_pipeline_emits_two_contiguous_blocks();
 }
 
 /// 推論失敗注入後もバックログで次サイクルが実行される (req 2.4)

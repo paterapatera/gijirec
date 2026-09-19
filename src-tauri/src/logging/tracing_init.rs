@@ -13,8 +13,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 /// Default `EnvFilter` directive when `RUST_LOG` is unset.
-pub(super) const DEFAULT_ENV_FILTER: &str =
-    "gijirec_capture=info,gijirec_transcribe=info,gijirec_editor=info,info";
+pub(super) const DEFAULT_ENV_FILTER: &str = "gijirec_capture=info,gijirec_capture_session=info,gijirec_transcribe=info,gijirec_editor=info,info";
 
 /// Target used for release log persistence failure events.
 pub const RELEASE_LOG_TARGET: &str = "gijirec_release_log";
@@ -287,7 +286,7 @@ mod tests {
     fn default_env_filter_matches_contract() {
         assert_eq!(
             DEFAULT_ENV_FILTER,
-            "gijirec_capture=info,gijirec_transcribe=info,gijirec_editor=info,info"
+            "gijirec_capture=info,gijirec_capture_session=info,gijirec_transcribe=info,gijirec_editor=info,info"
         );
         if std::env::var("RUST_LOG").is_err() {
             let expected = EnvFilter::new(DEFAULT_ENV_FILTER);

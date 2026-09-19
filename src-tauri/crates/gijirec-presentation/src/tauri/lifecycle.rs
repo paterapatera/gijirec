@@ -60,8 +60,12 @@ pub trait CaptureProcessingHook: Send + Sync {
     fn on_capture_stopping(&self);
 }
 
-/// Starts capture on app setup when the platform is supported.
+/// Initializes capture lifecycle on app setup without starting ingest.
+///
+/// Supported platforms remain in [`CapturePhase::Idle`] until the user starts a session.
+/// Unsupported platforms show the existing Linux dialog and also stay idle.
 #[allow(clippy::too_many_arguments)]
+#[allow(unused_variables)]
 pub fn on_app_setup(
     platform: &dyn CapturePlatformSupport,
     orchestrator: &mut dyn CaptureOrchestrator,
@@ -71,22 +75,6 @@ pub fn on_app_setup(
 ) -> Result<(), LifecycleError> {
     if !platform.is_capture_supported() {
         notifier.notify_unsupported();
-        return Ok(());
-    }
-
-    let startup_selection = selection.get_selection();
-
-    if orchestrator.phase() == CapturePhase::Idle {
-        emit_phase(emitter, CapturePhase::Starting)?;
-    }
-
-    match orchestrator.start_with_selection(&startup_selection) {
-        Ok(()) => emit_phase(emitter, orchestrator.phase())?,
-        Err(err) => {
-            emit_error(emitter, err.clone())?;
-            emit_phase(emitter, CapturePhase::Error)?;
-            return Err(LifecycleError::Orchestrator(err));
-        }
     }
 
     Ok(())
@@ -326,13 +314,10 @@ pub(crate) fn handle_window_close_requested<R: Runtime>(app: &AppHandle<R>) {
     perform_app_exit_shutdown(transcribe_hook.as_ref().map(|h| &***h), state.as_ref());
 }
 
-/// Initializes capture emitter and starts capture on app setup.
+/// Initializes capture emitter and leaves capture idle until session start.
 ///
 /// Tauri allows only one `.setup()` callback; call this from the composition root's
 /// unified setup instead of registering a second handler.
-///
-/// Capture startup failures (e.g. missing screen-recording permission) are emitted to
-/// the frontend as `error` phase events; they must not abort Tauri setup.
 pub fn run_capture_app_setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), LifecycleError> {
     let managed = app.state::<Arc<CaptureLifecycleState>>();
     managed.init_emitter(Arc::new(
@@ -342,21 +327,13 @@ pub fn run_capture_app_setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Lifec
         .emitter()
         .expect("emitter must be initialized in setup");
     let mut orch = managed.orchestrator.lock().expect("lock");
-    if let Err(LifecycleError::Orchestrator(_)) = on_app_setup(
+    on_app_setup(
         managed.platform.as_ref(),
         &mut *orch,
         managed.device_selection.as_ref(),
         emitter.as_ref(),
         managed.notifier.as_ref(),
-    ) {
-        // User-facing error already emitted; keep the app window open for recovery.
-    }
-
-    if orch.phase() == CapturePhase::Capturing
-        && let Some(processing) = managed.processing.lock().expect("lock").as_ref()
-    {
-        processing.on_capture_started();
-    }
+    )?;
     Ok(())
 }
 

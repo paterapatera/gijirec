@@ -55,7 +55,9 @@ pub(crate) struct WorkerParams<E> {
     pub(crate) model_path: Option<std::path::PathBuf>,
     pub(crate) sink: Arc<dyn TranscriptSegmentSink>,
     pub(crate) running: Arc<AtomicBool>,
+    pub(crate) pcm_draining: Arc<AtomicBool>,
     pub(crate) hooks: WorkerHooks,
+    pub(crate) return_pcm_consumer: std::sync::mpsc::SyncSender<rtrb::Consumer<f32>>,
 }
 
 struct WorkerLoopState {
@@ -95,19 +97,28 @@ fn report_pcm_backlog_if_changed(
 fn spawn_pcm_drain_thread(
     consumer: rtrb::Consumer<f32>,
     pcm_buffer: Arc<Mutex<PcmBufferState>>,
-    running: Arc<AtomicBool>,
+    pcm_draining: Arc<AtomicBool>,
     callbacks: PcmDrainCallbacks,
-) -> Option<JoinHandle<()>> {
+) -> Option<JoinHandle<rtrb::Consumer<f32>>> {
     thread::Builder::new()
         .name("transcribe-pcm-drain".into())
-        .spawn(move || drain_pcm_loop(consumer, pcm_buffer, running, callbacks))
+        .spawn(move || drain_pcm_loop(consumer, pcm_buffer, pcm_draining, callbacks))
         .map_err(|err| eprintln!("failed to spawn pcm drain thread: {err}"))
         .ok()
 }
 
-fn join_drain_thread(drain_handle: Option<JoinHandle<()>>) {
-    if let Some(handle) = drain_handle {
-        let _ = handle.join();
+fn join_drain_thread(
+    drain_handle: Option<JoinHandle<rtrb::Consumer<f32>>>,
+) -> Option<rtrb::Consumer<f32>> {
+    drain_handle.and_then(|handle| handle.join().ok())
+}
+
+fn return_pcm_consumer_to_worker(
+    return_tx: &std::sync::mpsc::SyncSender<rtrb::Consumer<f32>>,
+    consumer: rtrb::Consumer<f32>,
+) {
+    if return_tx.send(consumer).is_err() {
+        eprintln!("WARN: failed to return pcm consumer after transcribe worker shutdown");
     }
 }
 
@@ -127,15 +138,21 @@ fn load_worker_engine<E: ModelPathLoadable>(
     }
 }
 
-fn stop_worker_after_load_failure(
-    running: &Arc<AtomicBool>,
-    drain_handle: Option<JoinHandle<()>>,
+struct LoadFailureShutdown {
+    running: Arc<AtomicBool>,
+    pcm_draining: Arc<AtomicBool>,
+    drain_handle: Option<JoinHandle<rtrb::Consumer<f32>>>,
+    return_pcm_consumer: std::sync::mpsc::SyncSender<rtrb::Consumer<f32>>,
     on_fatal: Option<Arc<dyn Fn(TranscribeError) + Send + Sync>>,
-    err: TranscribeError,
-) {
-    running.store(false, Ordering::SeqCst);
-    join_drain_thread(drain_handle);
-    if let Some(notify) = on_fatal {
+}
+
+fn stop_worker_after_load_failure(shutdown: LoadFailureShutdown, err: TranscribeError) {
+    shutdown.running.store(false, Ordering::SeqCst);
+    shutdown.pcm_draining.store(false, Ordering::SeqCst);
+    if let Some(consumer) = join_drain_thread(shutdown.drain_handle) {
+        return_pcm_consumer_to_worker(&shutdown.return_pcm_consumer, consumer);
+    }
+    if let Some(notify) = shutdown.on_fatal {
         thread::spawn(move || notify(err));
     }
 }
@@ -233,7 +250,9 @@ pub(crate) fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
         model_path,
         sink,
         running,
+        pcm_draining,
         hooks,
+        return_pcm_consumer,
     } = params;
 
     let mut pcm_buffer_state = PcmBufferState::new();
@@ -242,7 +261,7 @@ pub(crate) fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
     let drain_handle = spawn_pcm_drain_thread(
         consumer,
         Arc::clone(&pcm_buffer),
-        Arc::clone(&running),
+        Arc::clone(&pcm_draining),
         PcmDrainCallbacks {
             on_retention_limit: hooks.on_retention_limit.clone(),
             on_pcm_backlog_seconds: hooks.on_pcm_backlog_seconds.clone(),
@@ -250,12 +269,24 @@ pub(crate) fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
     );
 
     if let Err(err) = load_worker_engine(&mut engine, &model_path) {
-        stop_worker_after_load_failure(&running, drain_handle, hooks.on_fatal, err);
+        stop_worker_after_load_failure(
+            LoadFailureShutdown {
+                running,
+                pcm_draining,
+                drain_handle,
+                return_pcm_consumer,
+                on_fatal: hooks.on_fatal,
+            },
+            err,
+        );
         return;
     }
 
     if !running.load(Ordering::SeqCst) {
-        join_drain_thread(drain_handle);
+        pcm_draining.store(false, Ordering::SeqCst);
+        if let Some(consumer) = join_drain_thread(drain_handle) {
+            return_pcm_consumer_to_worker(&return_pcm_consumer, consumer);
+        }
         return;
     }
 
@@ -272,7 +303,10 @@ pub(crate) fn worker_loop<E: ModelPathLoadable>(params: WorkerParams<E>) {
     };
     let mut cycle_id = run_transcribing_loop(&mut runtime);
 
-    join_drain_thread(drain_handle);
+    pcm_draining.store(false, Ordering::SeqCst);
+    if let Some(consumer) = join_drain_thread(drain_handle) {
+        return_pcm_consumer_to_worker(&return_pcm_consumer, consumer);
+    }
 
     flush_remaining_batch_cycles(&mut cycle_id, &mut runtime);
 

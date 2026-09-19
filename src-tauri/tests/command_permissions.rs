@@ -72,6 +72,8 @@ fn read_allowed_commands() -> HashSet<String> {
 /// Commands the React layer invokes via `@tauri-apps/api/core` `invoke`.
 const FRONTEND_INVOKE_COMMANDS: &[&str] = &[
     "get_capture_phase",
+    "get_capture_session_state",
+    "start_capture_session",
     "get_transcribe_phase",
     "get_transcribe_status",
     "get_transcribe_settings",

@@ -90,6 +90,14 @@ const mockInvokeFn = asInjectableInvokeFn(async (cmd: string, _args?: Record<str
   if (cmd === "set_audio_device_ui_visible") {
     return;
   }
+  if (cmd === "get_capture_session_state") {
+    return {
+      session_phase: "idle",
+      transition_busy: false,
+      capture_phase: "idle",
+      timestamp_ms: 0,
+    };
+  }
   return {};
 });
 
@@ -122,6 +130,13 @@ function createStatefulMockInvoke(
         return { microphone_id: null, speaker_id: null };
       case "set_audio_device_ui_visible":
         return;
+      case "get_capture_session_state":
+        return {
+          session_phase: "idle",
+          transition_busy: false,
+          capture_phase: "idle",
+          timestamp_ms: 0,
+        };
       case "save_transcript_session":
         if (persisted.save_directory === null) {
           return {

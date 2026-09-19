@@ -17,6 +17,7 @@ import {
 } from "../components/HandwritingEditor";
 import { TranscriptEditorView } from "../components/TranscriptEditorView";
 import { createMockListen } from "../components/transcriptEditorTestHelpers";
+import type { CaptureSessionState } from "../hooks/capture-session-types";
 import { DEFAULT_EDITOR_SETTINGS, type EditorSettings } from "../hooks/editor-settings";
 import type { TranscriptBlockAppended } from "../hooks/transcript-blocks";
 import { BLOCK_APPENDED_EVENT } from "../hooks/transcript-blocks";
@@ -50,10 +51,19 @@ function makeBlockAppended(
   };
 }
 
+const DEFAULT_CAPTURE_SESSION_STATE: CaptureSessionState = {
+  session_phase: "idle",
+  transition_busy: false,
+  capture_phase: "idle",
+  timestamp_ms: 1,
+};
+
 function createStatefulMockInvoke(
   options: {
     initial?: EditorSettings;
     pickResult?: string | null;
+    captureSessionState?: CaptureSessionState;
+    transcribePhase?: string;
     saveHandler?: (
       args: Record<string, unknown> | undefined,
     ) => Promise<SaveTranscriptSessionResult>;
@@ -62,14 +72,26 @@ function createStatefulMockInvoke(
   let persisted: EditorSettings = { ...(options.initial ?? DEFAULT_EDITOR_SETTINGS) };
   const calls: InvokeCall[] = [];
   const pickResult = options.pickResult ?? null;
+  const transcribePhase = options.transcribePhase ?? "ready";
 
   const invokeFn = async (cmd: string, args?: Record<string, unknown>) => {
     calls.push({ cmd, args });
     const transcribe = handleCommonTranscribeInvokeCommands(cmd);
-    if (transcribe !== undefined) {
+    if (
+      transcribe !== undefined &&
+      cmd !== "get_transcribe_phase" &&
+      cmd !== "get_transcribe_status"
+    ) {
       return transcribe;
     }
     switch (cmd) {
+      case "get_transcribe_phase":
+        return { phase: transcribePhase, timestamp_ms: 1 };
+      case "get_transcribe_status":
+        return {
+          phase: { phase: transcribePhase, timestamp_ms: 1 },
+          model_progress: null,
+        };
       case "get_editor_settings":
         return { ...persisted };
       case "set_editor_settings":
@@ -86,6 +108,8 @@ function createStatefulMockInvoke(
         return { microphone_id: null, speaker_id: null };
       case "set_audio_device_ui_visible":
         return;
+      case "get_capture_session_state":
+        return options.captureSessionState ?? DEFAULT_CAPTURE_SESSION_STATE;
       case "save_transcript_session":
         if (options.saveHandler) {
           return options.saveHandler(args);
@@ -145,6 +169,7 @@ interface SaveIntegrationHarnessProps {
   invokeFn: ReturnType<typeof createStatefulMockInvoke>["invokeFn"];
   handwritingRef: RefObject<HandwritingEditorRef | null>;
   aiRef: RefObject<AiTranscriptEditorRef | null>;
+  showSaveResultFn?: (result: SaveTranscriptSessionResult) => void;
 }
 
 function SaveIntegrationHarness({
@@ -152,6 +177,7 @@ function SaveIntegrationHarness({
   invokeFn,
   handwritingRef,
   aiRef,
+  showSaveResultFn,
 }: SaveIntegrationHarnessProps) {
   const settingsHook = useEditorSettings({ invokeFn });
   const handwritingPort = useMemo(
@@ -172,7 +198,7 @@ function SaveIntegrationHarness({
     settings: settingsHook.settings,
     sessionId: "integration-session",
     invokeFn,
-    showSaveResultFn: () => {},
+    showSaveResultFn: showSaveResultFn ?? (() => {}),
   });
 
   return (
@@ -414,6 +440,127 @@ describe("Integration 5: blocks arriving during save excluded from export", () =
         files_written: [`${selectedPath}\\2026\\09\\06\\14_30_00\\ai-transcription.md`],
       });
       await deferred.promise;
+    });
+  });
+});
+
+describe("Task 11.1: save while transcribe is in progress (req 6.1–6.3)", () => {
+  test("save invoke succeeds with editor snapshot when transcribe phase is transcribing", async () => {
+    const selectedPath = "C:\\Users\\test\\transcripts";
+    const mock = createStatefulMockInvoke({
+      pickResult: selectedPath,
+      transcribePhase: "transcribing",
+      captureSessionState: {
+        session_phase: "active",
+        transition_busy: false,
+        capture_phase: "capturing",
+        timestamp_ms: 2,
+      },
+    });
+    const { listenFn, emit } = createMockListen();
+    const handwritingRef = createRef<HandwritingEditorRef>();
+    const aiRef = createRef<AiTranscriptEditorRef>();
+
+    const { getByTestId } = render(
+      <SaveIntegrationHarness
+        listenFn={listenFn}
+        invokeFn={mock.invokeFn}
+        handwritingRef={handwritingRef}
+        aiRef={aiRef}
+      />,
+    );
+
+    await waitForToolbarReady(getByTestId);
+
+    await act(async () => {
+      fireEvent.click(getByTestId("pick-directory-button"));
+    });
+
+    typeIntoHandwriting(handwritingRef.current, "進行中メモ");
+
+    act(() => {
+      emit(
+        BLOCK_APPENDED_EVENT,
+        makeBlockAppended({ block_id: "live-1", sequence: 1, text: "途中経過" }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(aiRef.current?.getBlocks()).toHaveLength(1);
+    });
+
+    await act(async () => {
+      fireEvent.click(getByTestId("save-button"));
+    });
+
+    await waitFor(() => {
+      const saveCall = mock.calls.find((call) => call.cmd === "save_transcript_session");
+      expect(saveCall).toBeDefined();
+      expect(saveCall?.args?.handwriting_markdown).toBe("進行中メモ");
+      expect(saveCall?.args?.ai_transcription_markdown).toBe("途中経過");
+    });
+  });
+
+  test("save failure keeps message_ja and action_ja notification pattern", async () => {
+    const selectedPath = "C:\\Users\\test\\transcripts";
+    const results: SaveTranscriptSessionResult[] = [];
+    const mock = createStatefulMockInvoke({
+      pickResult: selectedPath,
+      transcribePhase: "transcribing",
+      saveHandler: async () => ({
+        success: false,
+        error: {
+          code: "INTERNAL",
+          message_ja: "保存に失敗しました",
+          action_ja: "保存先フォルダを選び直して、もう一度保存してください",
+          recoverable: true,
+        },
+      }),
+    });
+    const { listenFn, emit } = createMockListen();
+    const handwritingRef = createRef<HandwritingEditorRef>();
+    const aiRef = createRef<AiTranscriptEditorRef>();
+
+    const { getByTestId } = render(
+      <SaveIntegrationHarness
+        listenFn={listenFn}
+        invokeFn={mock.invokeFn}
+        handwritingRef={handwritingRef}
+        aiRef={aiRef}
+        showSaveResultFn={(result) => {
+          results.push(result);
+        }}
+      />,
+    );
+
+    await waitForToolbarReady(getByTestId);
+
+    await act(async () => {
+      fireEvent.click(getByTestId("pick-directory-button"));
+    });
+
+    act(() => {
+      emit(
+        BLOCK_APPENDED_EVENT,
+        makeBlockAppended({ block_id: "fail-1", sequence: 1, text: "partial" }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(aiRef.current?.getBlocks()).toHaveLength(1);
+    });
+
+    await act(async () => {
+      fireEvent.click(getByTestId("save-button"));
+    });
+
+    await waitFor(() => {
+      expect(results).toHaveLength(1);
+      expect(results[0]?.success).toBe(false);
+      expect(results[0]?.error?.message_ja).toBe("保存に失敗しました");
+      expect(results[0]?.error?.action_ja).toBe(
+        "保存先フォルダを選び直して、もう一度保存してください",
+      );
     });
   });
 });

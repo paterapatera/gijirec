@@ -16,8 +16,9 @@
 | Event | `audio-capture://phase-changed` | audio-capture |
 | Data | `PcmChunk` 形状・供給規約 | audio-capture |
 | Data | `TranscriptBlock` 形状・追記供給規約（30 秒バッチ遅延目標。ADR-0012） | whisper-transcribe |
-| Command | `get_capture_phase`、`get_capture_audio_controls`、`set_capture_audio_controls`、`get_transcribe_phase`、`get_transcribe_status`、`get_transcribe_settings`、`set_transcribe_model_variant`、`list_audio_devices`、`get_device_selection`、`set_device_selection`、`set_audio_device_ui_visible`、`save_transcript_session`、`get_editor_settings`、`set_editor_settings`、`pick_save_directory` | audio-capture / capture-audio-controls / whisper-transcribe / whisper-model-selection / audio-device-selection / transcript-editor |
+| Command | `get_capture_phase`、`get_capture_audio_controls`、`set_capture_audio_controls`、`get_transcribe_phase`、`get_transcribe_status`、`get_transcribe_settings`、`set_transcribe_model_variant`、`list_audio_devices`、`get_device_selection`、`set_device_selection`、`set_audio_device_ui_visible`、`get_capture_session_state`、`start_capture_session`、`save_transcript_session`、`get_editor_settings`、`set_editor_settings`、`pick_save_directory` | audio-capture / capture-audio-controls / whisper-transcribe / whisper-model-selection / audio-device-selection / capture-session-toggle / transcript-editor |
 | Event | `capture-audio-controls://controls-changed`、`capture-audio-controls://ingest-level` | capture-audio-controls |
+| Event | `capture-session://state-changed` | capture-session-toggle |
 | Data | リリース診断ログの保存場所・セッション ID・禁止フィールド | release-logging |
 
 **入れないもの**: 実装手順、タスク分解、ADR 全文、UI モック、一時的な spike メモ。
@@ -30,6 +31,7 @@
   - `transcript-editor-save.md` / `transcript-editor-settings.md` / `transcript-editor-status.md` — 保存・設定 command とエラー形状
   - `audio-device-selection.md` — デバイス一覧・セッション選択 command / イベント
   - `capture-audio-controls.md` — マイク ingest トグル・手動ゲイン・ingest 直前 dBFS メーター（ADR-0014）
+  - `capture-session-toggle.md` — 利用者セッション開始専用 command / イベント（idle / starting / active。ADR-0015）
   - `whisper-transcribe-settings.md` — kotoba バリアント選択の永続化・Tauri command（ADR-0013）
   - `whisper-transcribe-status.md` — フェーズ・モデル進捗・利用者向けエラーイベント
   - `release-logging-persistence.md` — リリース診断ログの永続化規約（cross-cutting）
@@ -137,5 +139,5 @@ export const PHASE_CHANGED_EVENT = "audio-capture://phase-changed" as const;
 | `docs/manual/` | 手動検証チェックリスト・運用手順（spec 削除後も維持） |
 
 ---
-_updated_at: 2026-09-10（capture-audio-controls コマンド・イベント・ミラーを索引に反映）_
+_updated_at: 2026-09-19（capture-session-toggle command / event を索引に反映）_
 _Document contract lifecycle and mirroring, not every field of every contract._

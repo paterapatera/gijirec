@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use gijirec_presentation::application::capture_audio_controls::CaptureAudioControlsEvents;
+use gijirec_presentation::application::capture_session::CaptureSessionEvents;
+use gijirec_presentation::application::capture_session::CaptureSessionSnapshot;
 use gijirec_presentation::application::device_selection::DeviceSelectionEvents;
 use gijirec_presentation::domain::audio::{AudioDeviceList, CaptureError, DeviceSelection};
 
@@ -109,5 +111,15 @@ impl CaptureAudioControlsEvents for CaptureAudioControlsEventsProxy {
 
     fn emit_capture_error(&self, error: CaptureError) {
         self.0.emit_capture_error(error);
+    }
+}
+
+late_bound_events_shell!(LateBoundCaptureSessionEvents, CaptureSessionEvents);
+
+impl CaptureSessionEvents for LateBoundCaptureSessionEvents {
+    fn emit_state_changed(&self, state: &CaptureSessionSnapshot) {
+        if let Some(emitter) = self.inner.get() {
+            emitter.emit_state_changed(state);
+        }
     }
 }

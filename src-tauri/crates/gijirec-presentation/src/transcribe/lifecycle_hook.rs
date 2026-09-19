@@ -13,20 +13,15 @@ use crate::tauri::pcm_bus::PcmChunkBus;
 use crate::transcribe::event_emitter::TranscribeEventEmitter;
 use crate::transcribe::observability;
 use crate::transcribe::stall_watchdog::{
-    BATCH_INTERVAL, OrchestratorStallAdapter, SharedTranscribeEmitter, StallClock,
-    StallWatchdogRuntime, TranscribeStallWatchdog,
+    OrchestratorStallAdapter, SharedTranscribeEmitter, StallClock, StallWatchdogRuntime,
+    TranscribeStallWatchdog,
 };
 
-/// Headroom for one 30 s batch window encode during worker stop+flush join.
-pub const TRANSCRIBE_STOP_INFERENCE_MARGIN: Duration = Duration::from_secs(30);
+/// Bounded join when the app exits; abandons in-flight flush rather than blocking shutdown.
+pub const APP_EXIT_TRANSCRIBE_JOIN_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// Default join timeout when stopping transcribe worker on lifecycle events.
-///
-/// Must cover [`transcribe_worker::stop_and_join`] stop-flush (remaining PCM as final batch).
-/// Aligns with task 2.3 worker shutdown path used by both capture pause and app exit.
-/// Equals [`BATCH_INTERVAL`] + [`TRANSCRIBE_STOP_INFERENCE_MARGIN`] (60 s).
-pub const DEFAULT_TRANSCRIBE_STOP_TIMEOUT: Duration =
-    Duration::from_secs(BATCH_INTERVAL.as_secs() + TRANSCRIBE_STOP_INFERENCE_MARGIN.as_secs());
+/// Worker join budget when capture stops (app lifecycle / orchestrator `stop`).
+pub const DEFAULT_TRANSCRIBE_STOP_TIMEOUT: Duration = Duration::MAX;
 
 type StallWatchdogHandle =
     TranscribeStallWatchdog<OrchestratorStallAdapter, SharedTranscribeEmitter>;
@@ -214,14 +209,18 @@ impl TranscribeLifecycleHook {
     }
 
     /// Stops the worker with PCM flush via orchestrator (same path as batch worker `stop_and_join`).
-    fn stop_transcribing_with_flush(&self, flush_via_stop: bool) {
+    fn stop_transcribing_with_flush(&self, flush_via_stop: bool, join_timeout: Option<Duration>) {
         self.stop_stall_watchdog();
         let emitter = self.emitter();
         let mut orch = self.orchestrator.lock().expect("lock orchestrator");
         orch.set_upstream_capturing(false);
         if orch.phase() == TranscribePhase::Transcribing {
             if flush_via_stop {
-                let _ = orch.stop();
+                let stop_result = match join_timeout {
+                    Some(timeout) => orch.stop_with_join_timeout(timeout),
+                    None => orch.stop(),
+                };
+                let _ = stop_result;
             } else {
                 orch.pause_capture();
             }
@@ -231,11 +230,23 @@ impl TranscribeLifecycleHook {
     }
 
     fn pause_transcribing_for_capture_stop(&self) {
-        self.stop_transcribing_with_flush(false);
+        self.stop_transcribing_with_flush(false, None);
     }
 
     fn stop_transcribing_worker(&self) {
-        self.stop_transcribing_with_flush(true);
+        self.stop_stall_watchdog();
+        let emitter = self.emitter();
+        if let Ok(mut orch) = self.orchestrator.try_lock() {
+            orch.set_upstream_capturing(false);
+            match orch.phase() {
+                TranscribePhase::Transcribing | TranscribePhase::Ready => {
+                    let _ = orch.stop_with_join_timeout(APP_EXIT_TRANSCRIBE_JOIN_TIMEOUT);
+                    self.emit_phase(emitter.as_ref(), orch.phase());
+                }
+                _ => {}
+            }
+        }
+        self.clear_pcm_backlog_ui();
     }
 
     /// Handles capture phase change notification (`audio-capture://phase-changed`).
@@ -252,7 +263,7 @@ impl TranscribeLifecycleHook {
                 self.clear_pcm_backlog_ui();
             }
             CapturePhase::Stopping | CapturePhase::Idle => {
-                self.stop_transcribing_with_flush(false);
+                self.stop_transcribing_with_flush(false, None);
             }
             _ => {}
         }
@@ -262,8 +273,9 @@ impl TranscribeLifecycleHook {
     pub fn on_app_exit(&self) {
         self.stop_transcribing_worker();
         let emitter = self.emitter();
-        let mut orch = self.orchestrator.lock().expect("lock orchestrator");
-        if orch.phase() == TranscribePhase::LoadingModel {
+        if let Ok(mut orch) = self.orchestrator.try_lock()
+            && orch.phase() == TranscribePhase::LoadingModel
+        {
             let _ = orch.stop();
             self.emit_phase(emitter.as_ref(), orch.phase());
         }
@@ -402,6 +414,13 @@ mod tests {
             }
         }
 
+        fn stop_with_join_timeout(
+            &mut self,
+            _join_timeout: Duration,
+        ) -> Result<(), TranscribeError> {
+            self.stop()
+        }
+
         fn stop(&mut self) -> Result<(), TranscribeError> {
             self.phase = TranscribePhase::Idle;
             self.stop_count += 1;
@@ -412,7 +431,6 @@ mod tests {
             self.upstream_capturing = false;
             if self.phase == TranscribePhase::Transcribing {
                 self.phase = TranscribePhase::Ready;
-                self.stop_count += 1;
             }
         }
 
@@ -478,20 +496,13 @@ mod tests {
     }
 
     #[test]
-    fn default_stop_timeout_accommodates_batch_flush() {
-        assert_eq!(DEFAULT_TRANSCRIBE_STOP_TIMEOUT, Duration::from_secs(60));
-        assert!(
-            DEFAULT_TRANSCRIBE_STOP_TIMEOUT >= BATCH_INTERVAL,
-            "lifecycle stop join must cover at least one 30 s batch flush window"
-        );
-        assert_eq!(
-            DEFAULT_TRANSCRIBE_STOP_TIMEOUT.as_secs(),
-            TRANSCRIBE_STOP_INFERENCE_MARGIN.as_secs() + BATCH_INTERVAL.as_secs()
-        );
+    fn session_stop_uses_unbounded_join_app_exit_is_bounded() {
+        assert_eq!(DEFAULT_TRANSCRIBE_STOP_TIMEOUT, Duration::MAX);
+        assert_eq!(APP_EXIT_TRANSCRIBE_JOIN_TIMEOUT, Duration::from_millis(500));
     }
 
     #[test]
-    fn capture_stop_triggers_worker_stop_for_pcm_flush() {
+    fn capture_stop_pauses_without_synchronous_worker_join() {
         with_isolated_transcribe_observability(|| {
             let (orch, _emitter, hook) = transcribing_hook();
 
@@ -499,8 +510,8 @@ mod tests {
 
             assert_eq!(
                 orch.lock().unwrap().stop_count,
-                1,
-                "capture stop must stop worker for PCM flush"
+                0,
+                "capture stop must not synchronously join worker; flush is async via session coordinator"
             );
             assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
             assert!(!orch.lock().unwrap().upstream_capturing);
@@ -531,7 +542,7 @@ mod tests {
             hook.on_capture_stopping();
 
             assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
-            assert_eq!(orch.lock().unwrap().stop_count, 1);
+            assert_eq!(orch.lock().unwrap().stop_count, 0);
             assert!(!orch.lock().unwrap().upstream_capturing);
             assert_eq!(
                 *emitter.phases.lock().unwrap(),
@@ -573,7 +584,7 @@ mod tests {
             hook.on_pcm_retention_limit_exceeded(capture.clone(), pcm_bus.clone());
 
             assert_eq!(capture.lock().unwrap().stop_count, 1);
-            assert_eq!(orch.lock().unwrap().stop_count, 1);
+            assert_eq!(orch.lock().unwrap().stop_count, 0);
             assert!(pcm_bus.retention_limit_active());
             let errors = emitter.user_errors.lock().unwrap().clone();
             assert_eq!(errors.len(), 1);
@@ -641,7 +652,7 @@ mod tests {
             hook.on_capture_phase_changed(CapturePhase::Stopping);
 
             assert_eq!(orch.lock().unwrap().phase(), TranscribePhase::Ready);
-            assert_eq!(orch.lock().unwrap().stop_count, 1);
+            assert_eq!(orch.lock().unwrap().stop_count, 0);
             assert!(!orch.lock().unwrap().upstream_capturing);
 
             hook.on_capture_phase_changed(CapturePhase::Capturing);

@@ -66,9 +66,26 @@ const sampleError: CaptureUserError = {
 
 const defaultListenFn = async () => () => {};
 
+const activeSessionState = {
+  session_phase: "active" as const,
+  transition_busy: false,
+  capture_phase: "capturing" as const,
+  timestamp_ms: 0,
+};
+
+const idleSessionState = {
+  session_phase: "idle" as const,
+  transition_busy: false,
+  capture_phase: "idle" as const,
+  timestamp_ms: 0,
+};
+
 const defaultInvokeFn = asInjectableInvokeFn(async (command: string): Promise<unknown> => {
   if (command === "get_capture_phase") {
     return { phase: "idle", timestamp_ms: 0 };
+  }
+  if (command === "get_capture_session_state") {
+    return idleSessionState;
   }
   if (command === "get_capture_audio_controls") {
     return {
@@ -306,6 +323,9 @@ describe("DeviceSelectorPanel", () => {
       if (command === "get_capture_phase") {
         return { phase: "idle", timestamp_ms: 0 };
       }
+      if (command === "get_capture_session_state") {
+        return idleSessionState;
+      }
       if (command === "get_capture_audio_controls") {
         return {
           controls: {
@@ -337,6 +357,9 @@ describe("DeviceSelectorPanel", () => {
       calls.push({ command, args });
       if (command === "get_capture_phase") {
         return { phase: "capturing", timestamp_ms: 0 };
+      }
+      if (command === "get_capture_session_state") {
+        return activeSessionState;
       }
       if (command === "get_capture_audio_controls") {
         return {
@@ -395,6 +418,9 @@ describe("DeviceSelectorPanel", () => {
       }
       if (command === "get_capture_phase") {
         return { phase: "idle", timestamp_ms: 0 };
+      }
+      if (command === "get_capture_session_state") {
+        return idleSessionState;
       }
       return null;
     });

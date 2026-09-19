@@ -19,10 +19,18 @@ import {
   INGEST_LEVEL_EVENT,
   INITIAL_CAPTURE_AUDIO_CONTROLS_HOOK_STATE,
 } from "./capture-audio-controls-types";
-import type { CaptureEventListenFn, CapturePhaseChanged } from "./capture-status";
+import { type CapturePhase, resolveCapturePhaseForGate } from "./capture-phase-gate";
+import type { CaptureSessionEventListenFn, CaptureSessionPhase } from "./capture-session-types";
+import type { CaptureEventListenFn } from "./capture-status";
+import { useCaptureSession } from "./useCaptureSession";
 import { useCaptureStatus } from "./useCaptureStatus";
 
-type CapturePhase = CapturePhaseChanged["phase"];
+export function resolveCaptureAudioControlsDisabled(
+  sessionPhase: CaptureSessionPhase,
+  capturePhase: CapturePhase,
+): boolean {
+  return sessionPhase !== "active" || capturePhase !== "capturing";
+}
 
 export interface UseCaptureAudioControlsOptions {
   listenFn?: CaptureAudioControlsEventListenFn;
@@ -32,6 +40,11 @@ export interface UseCaptureAudioControlsOptions {
    * When omitted, phase comes from CaptureStatusProvider or `useCaptureStatus`.
    */
   capturePhase?: CapturePhase;
+  /**
+   * When set, overrides session phase for the disabled gate (req 3.1 / 3.2).
+   * When omitted, phase comes from `useCaptureSession`.
+   */
+  sessionPhase?: CaptureSessionPhase;
 }
 
 function isCaptureAudioControlsState(value: unknown): value is CaptureAudioControlsState {
@@ -74,12 +87,13 @@ function applyIngestLevelChanged(
 }
 
 function applyDisabled(
-  phase: CapturePhase,
+  sessionPhase: CaptureSessionPhase,
+  capturePhase: CapturePhase,
   setState: Dispatch<SetStateAction<CaptureAudioControlsHookState>>,
 ): void {
   setState((prev) => ({
     ...prev,
-    disabled: phase !== "capturing",
+    disabled: resolveCaptureAudioControlsDisabled(sessionPhase, capturePhase),
   }));
 }
 
@@ -129,18 +143,29 @@ async function subscribeCaptureAudioControlsEvents(
   return { unlistenControls, unlistenLevel };
 }
 
-/**
- * Mirrors capture audio controls from Tauri commands and control/meter events.
- * Controls are disabled when capture phase is not `capturing` (req 1.6 / 3.5).
- */
-export function useCaptureAudioControls(
-  options: UseCaptureAudioControlsOptions = {},
-): CaptureAudioControlsHookState {
+function isTauriRuntime(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function canSubscribeInRuntime(hasInjectableListen: boolean): boolean {
+  return hasInjectableListen || isTauriRuntime();
+}
+
+function useControlGatePhases(options: UseCaptureAudioControlsOptions): {
+  capturePhase: CapturePhase;
+  sessionPhase: CaptureSessionPhase;
+  listenFn: CaptureAudioControlsEventListenFn;
+  invokeFn: InjectableInvokeFn;
+  hasInjectableListen: boolean;
+  canSubscribeAudioEvents: boolean;
+} {
   const {
-    listenFn = listen,
+    listenFn: listenFnFromOptions,
     invokeFn = defaultInvoke,
     capturePhase: capturePhaseOverride,
+    sessionPhase: sessionPhaseOverride,
   } = options;
+  const listenFn = listenFnFromOptions ?? listen;
   const contextStatus = useOptionalCaptureStatusContext();
   const needsCaptureSubscription = capturePhaseOverride === undefined && contextStatus === null;
   const subscribedStatus = useCaptureStatus({
@@ -148,20 +173,65 @@ export function useCaptureAudioControls(
     listenFn: listenFn as CaptureEventListenFn,
     enabled: needsCaptureSubscription,
   });
-  const phase = capturePhaseOverride ?? contextStatus?.phase ?? subscribedStatus.phase;
+  const hasInjectableListen = listenFnFromOptions !== undefined;
+  const canSubscribeSession =
+    sessionPhaseOverride === undefined && canSubscribeInRuntime(hasInjectableListen);
+  const subscribedSession = useCaptureSession({
+    invokeFn,
+    ...(listenFnFromOptions !== undefined
+      ? {
+          listenFn: listenFnFromOptions as unknown as CaptureSessionEventListenFn,
+        }
+      : {}),
+    enabled: canSubscribeSession,
+  });
+  const sessionPhase =
+    sessionPhaseOverride ?? (canSubscribeSession ? subscribedSession.session_phase : "idle");
+  const legacyCapturePhase = contextStatus?.phase ?? subscribedStatus.phase;
+  const capturePhase = resolveCapturePhaseForGate({
+    ...(capturePhaseOverride !== undefined ? { override: capturePhaseOverride } : {}),
+    sessionSubscribed: canSubscribeSession,
+    sessionPhase,
+    sessionCapturePhase: subscribedSession.capture_phase,
+    legacyPhase: legacyCapturePhase,
+  });
+  const canSubscribeAudioEvents = canSubscribeInRuntime(hasInjectableListen);
+  return {
+    capturePhase,
+    sessionPhase,
+    listenFn,
+    invokeFn,
+    hasInjectableListen,
+    canSubscribeAudioEvents,
+  };
+}
+
+/**
+ * Mirrors capture audio controls from Tauri commands and control/meter events.
+ * Controls are disabled unless session is `active` and capture is `capturing` (req 3.1 / 3.2).
+ */
+export function useCaptureAudioControls(
+  options: UseCaptureAudioControlsOptions = {},
+): CaptureAudioControlsHookState {
+  const { capturePhase, sessionPhase, listenFn, invokeFn, canSubscribeAudioEvents } =
+    useControlGatePhases(options);
   const [state, setState] = useState<CaptureAudioControlsHookState>(
     INITIAL_CAPTURE_AUDIO_CONTROLS_HOOK_STATE,
   );
 
   useEffect(() => {
-    applyDisabled(phase, setState);
-  }, [phase]);
+    applyDisabled(sessionPhase, capturePhase, setState);
+  }, [sessionPhase, capturePhase]);
 
   useEffect(() => {
     let cancelled = false;
     let cleanupListeners: (() => void) | undefined;
 
     void syncInitialControls(invokeFn, setState);
+    if (!canSubscribeAudioEvents) {
+      return;
+    }
+
     void subscribeCaptureAudioControlsEvents(listenFn, setState, () => cancelled).then(
       (handles) => {
         if (handles === undefined) {
@@ -181,7 +251,7 @@ export function useCaptureAudioControls(
       cancelled = true;
       cleanupListeners?.();
     };
-  }, [invokeFn, listenFn]);
+  }, [canSubscribeAudioEvents, invokeFn, listenFn]);
 
   return state;
 }

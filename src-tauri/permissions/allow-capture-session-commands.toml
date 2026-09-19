@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-capture-session-commands"
+description = "Allows capture session state read and start commands."
+commands.allow = [
+  "get_capture_session_state",
+  "start_capture_session",
+]

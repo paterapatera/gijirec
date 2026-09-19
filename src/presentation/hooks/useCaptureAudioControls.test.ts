@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { asInjectableInvokeFn } from "../../infrastructure/tauri/injectableInvoke";
 import { setupTestDom } from "../../test-setup";
@@ -14,13 +14,50 @@ import {
   INGEST_LEVEL_EVENT,
   INITIAL_CAPTURE_AUDIO_CONTROLS_HOOK_STATE,
 } from "./capture-audio-controls-types";
-import { useCaptureAudioControls } from "./useCaptureAudioControls";
+import { CAPTURE_SESSION_STATE_CHANGED_EVENT } from "./capture-session-types";
+import {
+  resolveCaptureAudioControlsDisabled,
+  useCaptureAudioControls,
+} from "./useCaptureAudioControls";
+
+type TauriEventHandler = (event: { payload: unknown }) => void;
+
+mock.module("@tauri-apps/api/event", () => ({
+  listen: async (event: string, handler: TauriEventHandler) => {
+    const handlers = tauriEventListeners.get(event) ?? [];
+    handlers.push(handler);
+    tauriEventListeners.set(event, handlers);
+    return () => {
+      const list = tauriEventListeners.get(event) ?? [];
+      const index = list.indexOf(handler);
+      if (index >= 0) {
+        list.splice(index, 1);
+      }
+    };
+  },
+}));
+
+const tauriEventListeners = new Map<string, TauriEventHandler[]>();
+
+function installTauriRuntimeStub(): void {
+  Object.assign(window, {
+    __TAURI_INTERNALS__: {
+      transformCallback: (callback: () => void) => callback,
+    },
+  });
+}
+
+function removeTauriRuntimeStub(): void {
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+}
 
 beforeAll(() => {
   setupTestDom();
 });
 
 afterEach(() => {
+  tauriEventListeners.clear();
+  removeTauriRuntimeStub();
   cleanup();
 });
 
@@ -98,6 +135,12 @@ const stateWithLevel: CaptureAudioControlsState = {
 function defaultInvokeHandlers(controlsState: CaptureAudioControlsState = initialBackendState) {
   return {
     get_capture_phase: () => idlePhase,
+    get_capture_session_state: () => ({
+      session_phase: "idle",
+      transition_busy: false,
+      capture_phase: "idle",
+      timestamp_ms: 0,
+    }),
     get_capture_audio_controls: () => controlsState,
   };
 }
@@ -121,7 +164,12 @@ describe("useCaptureAudioControls", () => {
     const { invokeFn } = createMockInvoke(defaultInvokeHandlers(stateWithLevel));
 
     const { result } = renderHook(() =>
-      useCaptureAudioControls({ listenFn, invokeFn, capturePhase: "capturing" }),
+      useCaptureAudioControls({
+        listenFn,
+        invokeFn,
+        capturePhase: "capturing",
+        sessionPhase: "active",
+      }),
     );
 
     await waitFor(() => {
@@ -132,30 +180,101 @@ describe("useCaptureAudioControls", () => {
     expect(result.current.disabled).toBe(false);
   });
 
-  test("disabled is false only when capturePhase is capturing", async () => {
+  test("disabled unless session is active and capture is capturing", async () => {
     const { listenFn } = createMockListen();
     const { invokeFn } = createMockInvoke(defaultInvokeHandlers());
 
     const { result, rerender } = renderHook(
-      ({ phase }: { phase: "idle" | "capturing" }) =>
-        useCaptureAudioControls({ listenFn, invokeFn, capturePhase: phase }),
-      { initialProps: { phase: "idle" as const } },
+      ({
+        sessionPhase,
+        capturePhase,
+      }: {
+        sessionPhase: "idle" | "active";
+        capturePhase: "idle" | "capturing";
+      }) =>
+        useCaptureAudioControls({
+          listenFn,
+          invokeFn,
+          sessionPhase,
+          capturePhase,
+        }),
+      { initialProps: { sessionPhase: "idle" as const, capturePhase: "idle" as const } },
     );
 
     expect(result.current.disabled).toBe(true);
 
-    rerender({ phase: "capturing" });
+    rerender({ sessionPhase: "active", capturePhase: "idle" });
+    expect(result.current.disabled).toBe(true);
+
+    rerender({ sessionPhase: "idle", capturePhase: "capturing" });
+    expect(result.current.disabled).toBe(true);
+
+    rerender({ sessionPhase: "active", capturePhase: "capturing" });
 
     await waitFor(() => {
       expect(result.current.disabled).toBe(false);
     });
   });
 
-  test("derives phase from useCaptureStatus when capturePhase is omitted", async () => {
+  test("derives session phase without inject listenFn when Tauri runtime is present", async () => {
+    installTauriRuntimeStub();
+    const { invokeFn } = createMockInvoke({
+      ...defaultInvokeHandlers(),
+      get_capture_phase: () => capturingPhase,
+      get_capture_session_state: () => ({
+        session_phase: "active",
+        transition_busy: false,
+        capture_phase: "capturing",
+        timestamp_ms: 0,
+      }),
+    });
+
+    const { result } = renderHook(() =>
+      useCaptureAudioControls({ invokeFn, capturePhase: "capturing" }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.disabled).toBe(false);
+    });
+  });
+
+  test("enables controls when session state-changed reports capturing while legacy phase stays idle", async () => {
+    const { listenFn, emit } = createMockListen();
+    const { invokeFn } = createMockInvoke(defaultInvokeHandlers());
+
+    const { result } = renderHook(() => useCaptureAudioControls({ listenFn, invokeFn }));
+
+    await waitFor(() => {
+      expect(result.current.disabled).toBe(true);
+    });
+
+    act(() => {
+      emit(CAPTURE_SESSION_STATE_CHANGED_EVENT, {
+        state: {
+          session_phase: "active",
+          transition_busy: false,
+          capture_phase: "capturing",
+          timestamp_ms: 1,
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.disabled).toBe(false);
+    });
+  });
+
+  test("derives phases from hooks when overrides are omitted", async () => {
     const { listenFn } = createMockListen();
     const { invokeFn } = createMockInvoke({
       ...defaultInvokeHandlers(),
       get_capture_phase: () => capturingPhase,
+      get_capture_session_state: () => ({
+        session_phase: "active",
+        transition_busy: false,
+        capture_phase: "capturing",
+        timestamp_ms: 0,
+      }),
     });
 
     const { result } = renderHook(() => useCaptureAudioControls({ listenFn, invokeFn }));
@@ -170,7 +289,12 @@ describe("useCaptureAudioControls", () => {
     const { invokeFn } = createMockInvoke(defaultInvokeHandlers());
 
     const { result } = renderHook(() =>
-      useCaptureAudioControls({ listenFn, invokeFn, capturePhase: "capturing" }),
+      useCaptureAudioControls({
+        listenFn,
+        invokeFn,
+        capturePhase: "capturing",
+        sessionPhase: "active",
+      }),
     );
 
     await waitFor(() => {
@@ -200,7 +324,12 @@ describe("useCaptureAudioControls", () => {
     const { invokeFn } = createMockInvoke(defaultInvokeHandlers());
 
     const { result } = renderHook(() =>
-      useCaptureAudioControls({ listenFn, invokeFn, capturePhase: "capturing" }),
+      useCaptureAudioControls({
+        listenFn,
+        invokeFn,
+        capturePhase: "capturing",
+        sessionPhase: "active",
+      }),
     );
 
     await waitFor(() => {
@@ -226,7 +355,12 @@ describe("useCaptureAudioControls", () => {
     const { invokeFn } = createMockInvoke(defaultInvokeHandlers());
 
     const { unmount } = renderHook(() =>
-      useCaptureAudioControls({ listenFn, invokeFn, capturePhase: "capturing" }),
+      useCaptureAudioControls({
+        listenFn,
+        invokeFn,
+        capturePhase: "capturing",
+        sessionPhase: "active",
+      }),
     );
 
     await waitFor(() => {
@@ -240,5 +374,12 @@ describe("useCaptureAudioControls", () => {
       expect(unlistenEvents).toContain(CONTROLS_CHANGED_EVENT);
       expect(unlistenEvents).toContain(INGEST_LEVEL_EVENT);
     });
+  });
+
+  test("resolveCaptureAudioControlsDisabled matches session and capture gate", () => {
+    expect(resolveCaptureAudioControlsDisabled("idle", "idle")).toBe(true);
+    expect(resolveCaptureAudioControlsDisabled("idle", "capturing")).toBe(true);
+    expect(resolveCaptureAudioControlsDisabled("active", "idle")).toBe(true);
+    expect(resolveCaptureAudioControlsDisabled("active", "capturing")).toBe(false);
   });
 });

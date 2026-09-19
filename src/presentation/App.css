@@ -14,6 +14,47 @@
   margin-bottom: 1.5rem;
 }
 
+.capture-session-toggle-row {
+  margin-bottom: 0.75rem;
+}
+
+.capture-session-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 0.25rem;
+}
+
+.capture-session-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.capture-session-toggle:focus-visible {
+  outline: 2px solid #1565c0;
+  outline-offset: 2px;
+}
+
+.capture-session-toggle-icon {
+  display: block;
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.capture-session-toggle-icon--start {
+  border-radius: 50%;
+  background-color: #c62828;
+}
+
+.capture-session-toggle-icon--stop {
+  border-radius: 0.125rem;
+  background-color: #1a1a1a;
+}
+
 .status-panel {
   margin-bottom: 1rem;
 }

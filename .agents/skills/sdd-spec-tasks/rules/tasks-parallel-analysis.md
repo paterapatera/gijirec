@@ -33,7 +33,7 @@ Only mark a **major** as parallel-capable when **all** of the following are true
 - Keep `(P)` **outside** of checkbox brackets to avoid confusion with completion state.
 
 ## Grouping & Ordering Guidelines
-- Keep work that belongs to the same theme and **same boundary** under the same major (one implementer).
+- Keep work that belongs to the same theme and **same boundary** under the same major (one implementer). Consecutive skinny serial majors with the same boundary may also be packed into one implementer at implementation time.
 - List obvious prerequisites or caveats in the detail bullets (e.g., "Requires schema migration from 1.2").
 - When two majors look similar but are not parallel-safe, call out the blocking dependency explicitly.
 - Prefer the `(P)` marker on the major line. Skip marking container-only majors only when the major-level contract is already clear from a single executable child.

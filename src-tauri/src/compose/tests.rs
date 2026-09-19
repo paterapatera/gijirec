@@ -195,6 +195,7 @@ fn compose_wires_batch_observability_and_shared_rtrb_overflow_counter() {
     );
 }
 
+#[derive(Default)]
 struct ComposeBatchMockEngine {
     segments: Vec<gijirec_presentation::infrastructure::transcribe::WhisperSegment>,
 }
@@ -346,6 +347,32 @@ fn composed_stack_exposes_capture_audio_controls_service() {
     let state = composed.capture_audio_controls.get_state();
     assert!(state.controls.mic_ingest_enabled);
     assert!(composed.ingest_level_cache.lock().expect("lock").is_none());
+}
+
+#[test]
+fn composed_stack_exposes_capture_session_service() {
+    use gijirec_presentation::domain::capture_session::CaptureSessionPhase;
+
+    let composed = build_capture_stack();
+    let state = composed.capture_session.get_state();
+    assert_eq!(state.session_phase, CaptureSessionPhase::Idle);
+    assert_eq!(state.capture_phase.as_str(), "idle");
+}
+
+#[test]
+fn compose_wires_capture_session_stack() {
+    let production_source = compose_production_source();
+    for needle in [
+        "init_capture_session",
+        "ChainedCaptureSessionProcessingHook",
+        "LateBoundCaptureSessionEvents",
+        "CaptureSessionService::new",
+    ] {
+        assert!(
+            production_source.contains(needle),
+            "compose production code must wire capture session via {needle}"
+        );
+    }
 }
 
 #[test]

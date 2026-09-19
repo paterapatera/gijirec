@@ -2,8 +2,7 @@ import { type Ref, useCallback, useMemo, useRef } from "react";
 import type { SaveTranscriptSessionResult } from "../infrastructure/tauri/editorCommands";
 import { defaultInvoke } from "../infrastructure/tauri/injectableInvoke";
 import type { AiTranscriptEditorRef } from "./components/AiTranscriptEditor";
-import { AppStatusPanels } from "./components/AppStatusPanels";
-import { DeviceSelectorPanel } from "./components/DeviceSelectorPanel";
+import { AppCaptureSessionBar } from "./components/AppCaptureSessionBar";
 import type { HandwritingEditorRef } from "./components/HandwritingEditor";
 import { ModelVariantSelector } from "./components/ModelVariantSelector";
 import { TranscriptEditorView } from "./components/TranscriptEditorView";
@@ -96,18 +95,10 @@ function AppContent({
   return (
     <main className="app">
       <h1 className="app-title">gijirec Audio Capture & Transcribe</h1>
-      <AppStatusPanels
-        capturePhase={captureStatus.phase}
-        captureError={captureStatus.error}
-        transcribePhase={transcribeStatus.phase}
-        transcribeError={transcribeStatus.error}
-        modelProgress={transcribeStatus.modelProgress}
-        pcmBacklogSeconds={transcribeStatus.pcmBacklogSeconds}
-      />
-      <DeviceSelectorPanel
+      <AppCaptureSessionBar
+        captureStatus={captureStatus}
+        transcribeStatus={transcribeStatus}
         invokeFn={invokeFn}
-        capturePhase={captureStatus.phase}
-        captureError={captureStatus.error}
         {...(listenFn !== undefined ? { listenFn } : {})}
       />
       <ModelVariantSelector invokeFn={invokeFn} transcribePhase={transcribeStatus.phase} />

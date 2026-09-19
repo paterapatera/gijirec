@@ -91,7 +91,7 @@ After all parallel research completes, synthesize findings before generating tas
   - Each executable sub-task includes an observable completion bullet
   - Each executable sub-task includes `_Wave: N_` (flag and repair any missing Waves)
   - No implicit prerequisites remain hidden
-  - `_Depends:_`, `_Boundary:_`, `_Wave:_`, and `(P)` markers still match the dependency graph, architecture boundaries, and **major** dispatch rules
+  - `_Depends:_`, `_Boundary:_`, `_Wave:_`, and `(P)` markers still match the dependency graph, architecture boundaries, and **packed-batch** dispatch rules
 - If issues are task-plan-local, repair the draft and re-run the review gate before writing
 - Keep the review bounded to at most 2 repair passes
 - If review exposes a real requirements/design gap or contradiction, stop and send the user back to requirements/design instead of inventing filler tasks
@@ -134,7 +134,7 @@ Before writing `tasks.md`, run one lightweight independent sanity review of the 
 - **Task Integration**: Every task must connect to the system (no orphaned work)
 - **Boundary annotations**: Required for `(P)` **majors**, recommended for all (`_Boundary: ComponentName_`)
 - **Contracts annotations** (optional, recommended): `_Contracts: docs/contracts/<file>.md_` when the task touches that public surface
-- **Wave annotations**: Required on every executable sub-task (`_Wave: N_`) as phase order; `sdd-impl` dispatches by **major number**, not by Wave
+- **Wave annotations**: Required on every executable sub-task (`_Wave: N_`) as phase order; `sdd-impl` dispatches **packed batches** of consecutive majors, not by Wave
 - **Explicit dependencies**: Cross-boundary non-obvious dependencies declared with `_Depends: X.X_`
 - **Executable deliverable granularity**: Each task must produce a verifiable deliverable (file, endpoint, UI component, config). Infrastructure tasks (project scaffolding, manifest, host integration, build config) must be explicit — never assume they exist
 - **Observable done state**: Each executable sub-task must include at least one detail bullet that makes the completed state visible without adding new bookkeeping fields

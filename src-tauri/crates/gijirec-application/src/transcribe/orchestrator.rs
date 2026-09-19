@@ -3,7 +3,8 @@
 use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use gijirec_domain::transcribe::{TranscribeError, TranscribePhase};
 
@@ -24,6 +25,8 @@ pub trait TranscribeOrchestrator: Send {
         callback: Box<dyn FnMut(ModelDownloadProgress) + Send>,
     );
     fn start(&mut self) -> Result<(), TranscribeError>;
+    /// Joins the worker with a bounded deadline (e.g. app exit). Session stop uses [`stop`].
+    fn stop_with_join_timeout(&mut self, join_timeout: Duration) -> Result<(), TranscribeError>;
     fn stop(&mut self) -> Result<(), TranscribeError>;
     fn pause_capture(&mut self);
     fn phase(&self) -> TranscribePhase;
@@ -36,7 +39,7 @@ pub trait TranscribeOrchestrator: Send {
 /// Default orchestrator: gates `start` on `ready` + upstream capturing, joins worker on `stop`.
 pub struct DefaultTranscribeOrchestrator<W, C, S, D> {
     phase: TranscribePhase,
-    worker: W,
+    worker: Arc<Mutex<W>>,
     _context: PhantomData<C>,
     model_orchestrator: Arc<Mutex<ModelOrchestrator<S, D>>>,
     stop_timeout: Duration,
@@ -44,9 +47,26 @@ pub struct DefaultTranscribeOrchestrator<W, C, S, D> {
     on_model_progress: Box<dyn FnMut(ModelDownloadProgress) + Send>,
 }
 
+fn bounded_join_or_signal_stop<W: TranscribeWorkerPort>(
+    worker: Arc<Mutex<W>>,
+    join_timeout: Duration,
+) -> Result<(), TranscribeError> {
+    let deadline = Instant::now() + join_timeout;
+    while Instant::now() < deadline {
+        if let Ok(mut guard) = worker.try_lock() {
+            return guard.stop_and_join(join_timeout);
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    if let Ok(mut guard) = worker.try_lock() {
+        guard.signal_stop();
+    }
+    Ok(())
+}
+
 impl<W: TranscribeWorkerPort, C, S, D> DefaultTranscribeOrchestrator<W, C, S, D> {
     pub fn new(
-        worker: W,
+        worker: Arc<Mutex<W>>,
         _context: C,
         model_orchestrator: Arc<Mutex<ModelOrchestrator<S, D>>>,
         stop_timeout: Duration,
@@ -89,8 +109,24 @@ impl<W: TranscribeWorkerPort, C, S, D> DefaultTranscribeOrchestrator<W, C, S, D>
         Ok(())
     }
 
-    fn stop_worker(&mut self) {
-        let _ = self.worker.stop_and_join(self.stop_timeout);
+    fn stop_worker_with_timeout(&mut self, join_timeout: Duration) -> Result<(), TranscribeError> {
+        const APP_EXIT_JOIN_CEILING: Duration = Duration::from_secs(1);
+        let worker = Arc::clone(&self.worker);
+        if join_timeout <= APP_EXIT_JOIN_CEILING {
+            return bounded_join_or_signal_stop(worker, join_timeout);
+        }
+        let mut guard = worker.lock().map_err(|_| TranscribeError::Internal {
+            detail: "transcribe worker lock poisoned".to_string(),
+        })?;
+        guard.stop_and_join(join_timeout)
+    }
+
+    pub fn worker_shared(&self) -> Arc<Mutex<W>> {
+        Arc::clone(&self.worker)
+    }
+
+    fn stop_worker(&mut self) -> Result<(), TranscribeError> {
+        self.stop_worker_with_timeout(self.stop_timeout)
     }
 }
 
@@ -102,7 +138,13 @@ where
     fn ensure_model_loaded(&mut self, model_path: &Path) -> Result<(), TranscribeError> {
         // Defer whisper context creation to the worker thread (whisper.cpp is not thread-safe
         // across load/inference when the context is moved between threads).
-        let result = self.worker.prepare_model_path(model_path);
+        let result = self
+            .worker
+            .lock()
+            .map_err(|_| TranscribeError::Internal {
+                detail: "transcribe worker lock poisoned".to_string(),
+            })?
+            .prepare_model_path(model_path);
         self.apply_worker_prepare_result(result)
     }
 
@@ -122,12 +164,20 @@ where
         }
     }
 
+    /// Pauses transcribing without joining the worker (flush runs asynchronously via session stop).
+    fn pause_transcribing_on_upstream_stop(&mut self) {
+        self.upstream_capturing = false;
+        if self.phase == TranscribePhase::Transcribing {
+            self.phase = TranscribePhase::Ready;
+        }
+    }
+
     fn halt_transcribing_on_upstream_stop(&mut self) {
         self.upstream_capturing = false;
         if self.phase != TranscribePhase::Transcribing {
             return;
         }
-        self.stop_worker();
+        let _ = self.stop_worker();
         self.phase = TranscribePhase::Ready;
     }
 
@@ -219,8 +269,15 @@ where
 
         self.transition_to(TranscribePhase::Transcribing)?;
 
-        if let Err(err) = self.worker.spawn() {
-            self.stop_worker();
+        let spawn_result = self
+            .worker
+            .lock()
+            .map_err(|_| TranscribeError::Internal {
+                detail: "transcribe worker lock poisoned".to_string(),
+            })?
+            .spawn();
+        if let Err(err) = spawn_result {
+            let _ = self.stop_worker();
             self.phase = TranscribePhase::Error;
             return Err(err);
         }
@@ -228,12 +285,19 @@ where
         Ok(())
     }
 
-    fn stop(&mut self) -> Result<(), TranscribeError> {
+    fn stop_with_join_timeout(&mut self, join_timeout: Duration) -> Result<(), TranscribeError> {
         match self.phase {
-            TranscribePhase::Idle | TranscribePhase::Ready => return Ok(()),
+            TranscribePhase::Idle => return Ok(()),
+            TranscribePhase::Ready => {
+                // Session stop flush runs after `pause_capture` moved phase to `ready` while the
+                // worker is still ingesting; join and flush remaining PCM here.
+                self.stop_worker_with_timeout(join_timeout)?;
+                self.phase = TranscribePhase::Idle;
+                return Ok(());
+            }
             TranscribePhase::Stopping => return Ok(()),
             TranscribePhase::LoadingModel | TranscribePhase::Error => {
-                self.stop_worker();
+                self.stop_worker_with_timeout(join_timeout)?;
                 self.phase = TranscribePhase::Idle;
                 return Ok(());
             }
@@ -241,13 +305,17 @@ where
         }
 
         self.transition_to(TranscribePhase::Stopping)?;
-        self.stop_worker();
+        self.stop_worker_with_timeout(join_timeout)?;
         self.phase = TranscribePhase::Idle;
         Ok(())
     }
 
+    fn stop(&mut self) -> Result<(), TranscribeError> {
+        self.stop_with_join_timeout(self.stop_timeout)
+    }
+
     fn pause_capture(&mut self) {
-        self.halt_transcribing_on_upstream_stop();
+        self.pause_transcribing_on_upstream_stop();
     }
 
     fn on_upstream_capture_error(&mut self) {
@@ -260,7 +328,7 @@ where
 
     fn fail_inference(&mut self) {
         if self.phase == TranscribePhase::Transcribing {
-            self.stop_worker();
+            let _ = self.stop_worker();
         }
         self.upstream_capturing = false;
         self.phase = TranscribePhase::Error;
@@ -342,25 +410,20 @@ mod tests {
         }
     }
 
-    impl TranscribeWorkerPort for Arc<Mutex<MockWorker>> {
+    impl TranscribeWorkerPort for MockWorker {
         fn prepare_model_path(&mut self, path: &Path) -> Result<(), TranscribeError> {
-            let inner = self.lock().expect("lock");
-            inner.prepare_calls.fetch_add(1, Ordering::SeqCst);
-            *inner.last_prepared_path.lock().expect("lock") = Some(path.to_path_buf());
+            self.prepare_calls.fetch_add(1, Ordering::SeqCst);
+            *self.last_prepared_path.lock().expect("lock") = Some(path.to_path_buf());
             Ok(())
         }
 
         fn spawn(&mut self) -> Result<(), TranscribeError> {
-            let inner = self.lock().expect("lock");
-            inner.spawn_calls.fetch_add(1, Ordering::SeqCst);
-            inner.spawn_result.lock().expect("lock").clone()
+            self.spawn_calls.fetch_add(1, Ordering::SeqCst);
+            self.spawn_result.lock().expect("lock").clone()
         }
 
         fn stop_and_join(&mut self, _timeout: Duration) -> Result<(), TranscribeError> {
-            self.lock()
-                .expect("lock")
-                .stop_calls
-                .fetch_add(1, Ordering::SeqCst);
+            self.stop_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
     }
@@ -399,7 +462,7 @@ mod tests {
     }
 
     type TestOrchestrator = DefaultTranscribeOrchestrator<
-        Arc<Mutex<MockWorker>>,
+        MockWorker,
         Arc<Mutex<MockContext>>,
         Arc<QueueModelStore>,
         NoopModelDownloader,
@@ -541,6 +604,24 @@ mod tests {
         assert_eq!(MockWorker::stop_call_count(&worker), 1);
     }
 
+    fn transcribing_after_upstream_start() -> (TestOrchestrator, Arc<Mutex<MockWorker>>) {
+        let (mut orch, worker, _) = ready_orchestrator();
+        orch.set_upstream_capturing(true);
+        orch.start().expect("start");
+        (orch, worker)
+    }
+
+    #[test]
+    fn pause_capture_returns_ready_without_joining_worker() {
+        let (mut orch, worker) = transcribing_after_upstream_start();
+
+        orch.pause_capture();
+
+        assert_eq!(orch.phase(), TranscribePhase::Ready);
+        assert!(!orch.upstream_capturing());
+        assert_eq!(MockWorker::stop_call_count(&worker), 0);
+    }
+
     #[test]
     fn on_upstream_capture_error_stops_worker_and_returns_ready() {
         let (mut orch, worker, _) = ready_orchestrator();
@@ -552,6 +633,21 @@ mod tests {
         assert_eq!(orch.phase(), TranscribePhase::Ready);
         assert!(!orch.upstream_capturing());
         assert_eq!(MockWorker::stop_call_count(&worker), 1);
+    }
+
+    #[test]
+    fn pause_capture_allows_restart_without_worker_join() {
+        let (mut orch, worker, _) = ready_orchestrator();
+        orch.set_upstream_capturing(true);
+        orch.start().expect("start");
+        orch.pause_capture();
+
+        assert_eq!(orch.phase(), TranscribePhase::Ready);
+        assert_eq!(MockWorker::stop_call_count(&worker), 0);
+        orch.set_upstream_capturing(true);
+        orch.start().expect("second start after pause");
+        assert_eq!(orch.phase(), TranscribePhase::Transcribing);
+        assert_eq!(MockWorker::spawn_call_count(&worker), 2);
     }
 
     #[test]

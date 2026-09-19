@@ -36,7 +36,7 @@ pub use ingest_level_emitter::{
     TauriIngestLevelEventEmitter, aggregate_window_rms, rms_to_dbfs,
 };
 pub use lifecycle_hook::{
-    DEFAULT_TRANSCRIBE_STOP_TIMEOUT, TRANSCRIBE_STOP_INFERENCE_MARGIN, TranscribeLifecycleHook,
+    APP_EXIT_TRANSCRIBE_JOIN_TIMEOUT, DEFAULT_TRANSCRIBE_STOP_TIMEOUT, TranscribeLifecycleHook,
 };
 pub use observability::{
     TRANSCRIBE_LOG_TARGET, TranscribeObservability, log_model_variant_applied,
@@ -199,6 +199,10 @@ impl TranscribeWorkerPort for TranscribeWorkerPortAdapter {
 
     fn stop_and_join(&mut self, timeout: Duration) -> Result<(), TranscribeError> {
         self.inner.stop_and_join(timeout)
+    }
+
+    fn signal_stop(&mut self) {
+        self.inner.signal_stop();
     }
 }
 /* jscpd:ignore-end */

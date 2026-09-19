@@ -25,6 +25,7 @@ use gijirec_presentation::domain::transcribe::{
 };
 use gijirec_presentation::infrastructure::audio::device_enumerator::AudioDeviceEnumerator;
 use gijirec_presentation::infrastructure::transcribe::TranscribeWorker;
+use gijirec_presentation::tauri::lifecycle::CaptureProcessingHook;
 use gijirec_presentation::tauri::pcm_bus::PcmChunkBus;
 use gijirec_presentation::transcribe::lifecycle_hook::DEFAULT_TRANSCRIBE_STOP_TIMEOUT;
 use gijirec_presentation::transcribe::{
@@ -35,6 +36,7 @@ use gijirec_presentation::transcribe::{
 
 use crate::capture_ports::CaptureStreamHandles;
 use crate::capture_processing::{CapturePipelineState, CaptureProcessingGate};
+use crate::capture_session_observability::TracingCaptureSessionObservability;
 use crate::device_selection_observability::TracingDeviceSelectionObservability;
 
 use super::ComposedCapture;
@@ -42,9 +44,11 @@ use super::audio_controls::{
     CachingIngestLevelEventEmitter, CaptureAudioControlsHookDeps,
     CaptureAudioControlsProcessingHook,
 };
+use super::capture_session::{ChainedCaptureSessionProcessingHook, init_capture_session};
 use super::late_bound::{
     CaptureAudioControlsEventsProxy, DeviceSelectionEventsProxy,
-    LateBoundCaptureAudioControlsEvents, LateBoundDeviceSelectionEvents,
+    LateBoundCaptureAudioControlsEvents, LateBoundCaptureSessionEvents,
+    LateBoundDeviceSelectionEvents,
 };
 use super::model_stack::SharedModelOrchestrator;
 use super::port_adapters::{
@@ -604,9 +608,10 @@ where
         model_orchestrator: &model_orchestrator,
         stall_wiring: &stall_wiring,
     });
+    let transcribe_worker = Arc::new(Mutex::new(worker_adapter));
     let context_adapter = WhisperContextPortAdapter::new();
     let transcribe_orchestrator = Arc::new(Mutex::new(DefaultTranscribeOrchestrator::new(
-        worker_adapter,
+        Arc::clone(&transcribe_worker),
         context_adapter,
         Arc::clone(&model_orchestrator),
         DEFAULT_TRANSCRIBE_STOP_TIMEOUT,
@@ -616,6 +621,21 @@ where
         &stall_wiring,
         &foundation.orchestrator,
         &foundation.pipeline.pcm_bus,
+    );
+    let capture_session_events = Arc::new(LateBoundCaptureSessionEvents::new());
+    let session_processing = Arc::new(
+        ChainedCaptureSessionProcessingHook::from_capture_processing_hooks(vec![
+            Arc::clone(&foundation.pipeline) as Arc<dyn CaptureProcessingHook>,
+            Arc::clone(&transcribe_lifecycle) as Arc<dyn CaptureProcessingHook>,
+            Arc::clone(&audio_controls.hook) as Arc<dyn CaptureProcessingHook>,
+        ]),
+    );
+    let capture_session = init_capture_session(
+        Arc::clone(&foundation.orchestrator),
+        Arc::clone(&device_selection),
+        session_processing,
+        Arc::clone(&capture_session_events),
+        Arc::new(TracingCaptureSessionObservability),
     );
 
     ComposedCapture {
@@ -632,5 +652,7 @@ where
         transcribe_bus: block_bus,
         transcribe_orchestrator,
         model_orchestrator,
+        capture_session,
+        capture_session_events,
     }
 }

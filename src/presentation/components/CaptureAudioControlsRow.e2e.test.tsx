@@ -14,6 +14,7 @@ import type {
   IngestLevelSnapshot,
 } from "../hooks/capture-audio-controls-types";
 import { DEFAULT_INGEST_GAIN } from "../hooks/capture-audio-controls-types";
+import type { CaptureSessionPhase } from "../hooks/capture-session-types";
 import { CaptureAudioControlsRow } from "./CaptureAudioControlsRow";
 
 beforeAll(() => {
@@ -84,6 +85,7 @@ function createMockListen() {
 function createConnectedInvoke(
   backendState: CaptureAudioControlsState,
   phase: "idle" | "capturing",
+  sessionPhase: CaptureSessionPhase = "active",
 ) {
   const calls: { command: string; args?: unknown }[] = [];
   let state = { ...backendState, controls: { ...backendState.controls } };
@@ -93,6 +95,13 @@ function createConnectedInvoke(
     switch (command) {
       case "get_capture_phase":
         return { phase, timestamp_ms: 0 };
+      case "get_capture_session_state":
+        return {
+          session_phase: sessionPhase,
+          transition_busy: false,
+          capture_phase: phase,
+          timestamp_ms: 0,
+        };
       case "get_capture_audio_controls":
         return state;
       case "set_capture_audio_controls":
@@ -216,7 +225,12 @@ describe("CaptureAudioControlsRow E2E/UI", () => {
     );
 
     const view = render(
-      <CaptureAudioControlsRow invokeFn={invokeFn} listenFn={listenFn} capturePhase="capturing" />,
+      <CaptureAudioControlsRow
+        invokeFn={invokeFn}
+        listenFn={listenFn}
+        capturePhase="capturing"
+        sessionPhase="active"
+      />,
     );
 
     await waitFor(() => {
@@ -262,7 +276,12 @@ describe("CaptureAudioControlsRow E2E/UI", () => {
     );
 
     const { getByTestId } = render(
-      <CaptureAudioControlsRow invokeFn={invokeFn} listenFn={listenFn} capturePhase="capturing" />,
+      <CaptureAudioControlsRow
+        invokeFn={invokeFn}
+        listenFn={listenFn}
+        capturePhase="capturing"
+        sessionPhase="active"
+      />,
     );
 
     await waitFor(() => {

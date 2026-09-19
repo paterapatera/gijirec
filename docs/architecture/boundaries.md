@@ -158,6 +158,39 @@
 | ingest ゲイン | `PcmIngestConsumer` | presentation 内結線（`compose.rs`）。whisper worker は乗数を直接変更しない |
 | composition root 結線 | `compose.rs` / `lib.rs` | `CaptureAudioControlsService`・`CaptureProcessingGate`・`IngestLevelEmitter` の注入 |
 
+## capture-session-toggle ドメイン境界
+
+`docs/contracts/capture-session-toggle.md` および ADR-0015 に基づく。既存 audio-capture / whisper-transcribe ライフサイクルの上に、利用者明示の**開始専用**会議セッション境界を追加する（Path A 要求更新）。
+
+### Owns（この Spec が所有）
+
+| 領域 | コンポーネント / 成果物 |
+|------|-------------------------|
+| 利用者キャプチャセッション状態 | `CaptureSessionService`（application）、`CaptureSessionPhase`（domain、`idle`/`starting`/`active`） |
+| セッション Tauri IPC | `get_capture_session_state` / `start_capture_session`、`capture-session://state-changed` |
+| セッション開始 UI | `CaptureSessionStartControl`（React、`CaptureSessionToggle` からの縮小）、`useCaptureSession` |
+| 起動時待機初期化 | `run_capture_app_setup` の挙動変更（自動 `start_with_selection` 除去） |
+| セッション認識フェーズゲート | `capture-phase-gate.ts`、`useDisplayedCapturePhase`（音声制御・表示） |
+
+### Out of Boundary（境界外）
+
+| 領域 | 備考 |
+|------|------|
+| PCM 形状・ミキサー | audio-capture |
+| ingest トグル・ゲイン・メーター | capture-audio-controls（変更なし） |
+| バッチ推論アルゴリズム・worker 内部 | whisper-transcribe |
+| ユーザー向け停止 flush / 途中停止 | 要求スコープ外（shutdown 時の既存 lifecycle は product 維持） |
+| PCM 1 時間保持上限自動停止 | 既存 product 安全装置（`tech.md`） |
+| 保存コマンド形状 | transcript-editor-save（スナップショット意味論は既存） |
+
+### Allowed Dependencies（許可依存）
+
+| 種別 | 依存 |
+|------|------|
+| 上流 | `CaptureLifecycleState`、`CaptureOrchestrator`、`TranscribeLifecycleHook` / `TranscribeOrchestrator` |
+| 契約 | `capture-session-toggle.md`（modify）、`audio-capture-status.md`（reference + Changelog）、`whisper-transcribe-status.md`（reference）、`capture-audio-controls.md`（reference）、`transcript-editor-save.md`（reference） |
+| フロント | `useCaptureStatus`（capture phase）、`AppStatusPanels` |
+
 ## whisper-transcribe ドメイン境界
 
 `docs/contracts/whisper-transcribe-*.md` および ADR-0003 / ADR-0011 に基づく。手動性能記録は `docs/manual/whisper-transcribe/performance-results.md`。
