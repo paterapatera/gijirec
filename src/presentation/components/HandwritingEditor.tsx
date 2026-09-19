@@ -57,7 +57,10 @@ const HandwritingEditorInner = forwardRef<HandwritingEditorRef>(
     };
 
     return (
-      <div className="handwriting-editor-panel" style={{ backgroundColor: "var(--hawkes-blue)" }}>
+      <div
+        className="handwriting-editor-panel min-h-full w-full"
+        style={{ backgroundColor: "var(--hawkes-blue)" }}
+      >
         <Slate editor={editor} initialValue={initialValue}>
           <Editable
             data-testid="handwriting-editor"

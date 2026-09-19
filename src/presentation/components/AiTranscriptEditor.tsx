@@ -150,9 +150,12 @@ export const AiTranscriptEditor = forwardRef<AiTranscriptEditorRef, AiTranscript
     }, [appendBlock, editor]);
 
     return (
-      <div className="ai-transcript-editor-panel" style={{ backgroundColor: "var(--jagged-ice)" }}>
+      <div
+        className="ai-transcript-editor-panel flex h-full min-h-0 flex-col"
+        style={{ backgroundColor: "var(--jagged-ice)" }}
+      >
         <div
-          className="ai-transcript-editor-scroll"
+          className="ai-transcript-editor-scroll h-full min-h-0 flex-1 overflow-y-auto"
           data-testid="ai-transcript-editor"
           style={AI_TRANSCRIPT_SCROLL_STYLE}
         >

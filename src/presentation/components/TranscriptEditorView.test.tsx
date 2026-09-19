@@ -74,6 +74,127 @@ describe("TranscriptEditorView", () => {
     expect(getByTestId("transcript-editor-separator")).toBeTruthy();
   });
 
+  test("lays out handwriting left and AI transcript right in a horizontal body row", async () => {
+    const { listenFn } = createMockListen();
+    const { getByTestId } = render(
+      <TranscriptEditorView
+        onSave={noopSave}
+        isSaving={false}
+        {...defaultSettingsProps}
+        listenFn={listenFn}
+      />,
+    );
+
+    const body = getByTestId("transcript-editor-body");
+    const leftPane = getByTestId("transcript-editor-pane-handwriting");
+    const separator = getByTestId("transcript-editor-separator");
+    const rightPane = getByTestId("transcript-editor-pane-ai");
+
+    expect(body.className).toContain("flex-row");
+    expect(leftPane.contains(getByTestId("handwriting-editor"))).toBe(true);
+    expect(rightPane.contains(getByTestId("ai-transcript-editor"))).toBe(true);
+
+    const bodyChildren = Array.from(body.children);
+    expect(bodyChildren.indexOf(leftPane)).toBeLessThan(bodyChildren.indexOf(separator));
+    expect(bodyChildren.indexOf(separator)).toBeLessThan(bodyChildren.indexOf(rightPane));
+  });
+
+  test("uses vertical orientation for pane separator", async () => {
+    const { listenFn } = createMockListen();
+    const { getByTestId } = render(
+      <TranscriptEditorView
+        onSave={noopSave}
+        isSaving={false}
+        {...defaultSettingsProps}
+        listenFn={listenFn}
+      />,
+    );
+
+    const separator = getByTestId("transcript-editor-separator");
+    expect(separator.getAttribute("data-orientation")).toBe("vertical");
+  });
+
+  test("scrolls handwriting and AI panes independently", async () => {
+    const { listenFn, emit, listeners } = createMockListen();
+    const handwritingRef = createRef<HandwritingEditorRef>();
+    const aiRef = createRef<AiTranscriptEditorRef>();
+    const { getByTestId, container } = render(
+      <div style={{ height: 120, display: "flex", flexDirection: "column" }}>
+        <TranscriptEditorView
+          onSave={noopSave}
+          isSaving={false}
+          {...defaultSettingsProps}
+          listenFn={listenFn}
+          handwritingEditorRef={handwritingRef}
+          aiTranscriptEditorRef={aiRef}
+        />
+      </div>,
+    );
+
+    await waitFor(() => {
+      expect(listeners.has(BLOCK_APPENDED_EVENT)).toBe(true);
+    });
+
+    typeIntoHandwriting(handwritingRef.current, "行1\n行2\n行3\n行4\n行5\n行6\n行7\n行8");
+
+    for (let i = 0; i < 8; i += 1) {
+      act(() => {
+        emit(
+          BLOCK_APPENDED_EVENT,
+          makeBlockAppended({
+            block_id: `block-${i}`,
+            sequence: i + 1,
+            text: `転写ブロック ${i}\n`.repeat(6),
+          }),
+        );
+      });
+    }
+
+    await waitFor(() => {
+      expect(aiRef.current?.getBlocks().length).toBeGreaterThanOrEqual(8);
+    });
+
+    const leftPane = getByTestId("transcript-editor-pane-handwriting");
+    const aiScroll = getByTestId("ai-transcript-editor");
+
+    Object.defineProperty(leftPane, "clientHeight", { configurable: true, value: 40 });
+    Object.defineProperty(leftPane, "scrollHeight", { configurable: true, value: 200 });
+    Object.defineProperty(aiScroll, "clientHeight", { configurable: true, value: 40 });
+    Object.defineProperty(aiScroll, "scrollHeight", { configurable: true, value: 200 });
+
+    act(() => {
+      leftPane.scrollTop = 80;
+    });
+
+    expect(aiScroll.scrollTop).toBe(0);
+
+    act(() => {
+      aiScroll.scrollTop = 60;
+    });
+
+    expect(leftPane.scrollTop).toBe(80);
+    expect(getHandwritingEditorDomText(container)).toContain("行1");
+  });
+
+  test("handwriting pane allows content-sized panel background (no flex-col stretch)", async () => {
+    const { listenFn } = createMockListen();
+    const { getByTestId } = render(
+      <TranscriptEditorView
+        onSave={noopSave}
+        isSaving={false}
+        {...defaultSettingsProps}
+        listenFn={listenFn}
+      />,
+    );
+
+    const pane = getByTestId("transcript-editor-pane-handwriting");
+    const panel = getByTestId("handwriting-editor").closest(".handwriting-editor-panel");
+
+    expect(pane.className).toContain("overflow-auto");
+    expect(pane.className).not.toContain("flex-col");
+    expect(panel?.className).toContain("min-h-full");
+  });
+
   test("hosts two independent Slate editors simultaneously", async () => {
     const { listenFn } = createMockListen();
     const handwritingRef = createRef<HandwritingEditorRef>();

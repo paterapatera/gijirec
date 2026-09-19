@@ -30,6 +30,8 @@
 - `src/infrastructure/` — 外部アダプタ（domain のみ）。`infrastructure/tauri/editorCommands.ts` が保存／設定 invoke をラップ。`infrastructure/tauri/audioDeviceCommands.ts` がデバイス一覧・選択 invoke をラップ。`infrastructure/tauri/transcribeSettingsCommands.ts` が転写設定 invoke をラップ。`infrastructure/tauri/captureAudioControlsCommands.ts` が音声制御 invoke をラップ。`infrastructure/tauri/captureSessionCommands.ts` がセッション開始 invoke をラップ
 - `src/presentation/` — UI・composition root（`App.tsx`、hooks、`components/` の `AppCaptureSessionBar` / `CaptureSessionStartControl`・`AppStatusPanels`（フェーズ横並び `.phase-panels-row`）・二重エディタ・`DeviceSelectorPanel`（内包 `CaptureAudioControlsRow` — ゲイン数値 `ingest-gain-value` 含む）・`ModelVariantSelector` と chrome）
 
+**二重エディタレイアウト**: `TranscriptEditorView` はツールバー全幅の下に `transcript-editor-body`（`flex-row`）で左 `transcript-editor-pane-handwriting`（手書き・`overflow-auto`）と右 `transcript-editor-pane-ai`（`AiTranscriptPanel`）を配置。ペイン間は `Separator orientation="vertical"`（`transcript-editor-separator`）。IPC・保存・購読局所化は変更しない。
+
 **二重エディタ再描画分離**: `TranscriptEditorView` は block 購読を持たず、`AiTranscriptPanel` 内で `useTranscriptBlocks` を局所化する。`block-appended` 更新は AI 側のみ再描画し、手入力 `HandwritingEditor` へ波及しない。`HandwritingEditor` は `React.memo` + IME `composition` イベントガード。親からの ref は `useCallback` + `externalHandwritingRef` で安定化（`exactOptionalPropertyTypes` 対応のため `AiTranscriptPanel` への ref は条件付き spread）。
 
 **Presentation パターン**: `docs/contracts/` のイベント／型を `presentation/hooks/` にミラーし、Tauri `listen` / `invoke` で購読。マウント時は `get_capture_session_state` / `get_capture_phase` / `get_transcribe_status` / `get_transcribe_settings` / `get_editor_settings` / `get_device_selection` / `get_capture_audio_controls` で同期。テスト時は `listenFn` / `invokeFn` を注入。command ミラーは hooks ではなく `infrastructure/tauri/{editorCommands,audioDeviceCommands,transcribeSettingsCommands,captureAudioControlsCommands,captureSessionCommands}.ts`。セッションは `useCaptureSession` が `capture-session://state-changed` を購読し開始専用。音声制御は `useCaptureAudioControls`（内部で session phase）と `useDisplayedCapturePhase` / `capture-phase-gate` が **session `active` かつ `capturePhase === 'capturing'`** のときのみ有効（それ以外は既存 non-capturing 時と同様に disabled）。
@@ -151,5 +153,5 @@ feature 完了後、spec ディレクトリを削除する前に次を行う（�
 | Rust テスト | `bun run rust:test` | `cargo test --workspace` |
 
 ---
-_updated_at: 2026-09-19（Sync: capture-session-toggle 開始専用セッション・ゲート）_
+_updated_at: 2026-09-19（Sync: dual-editor-vertical-split 横並びペイン）_
 _Document patterns, not file trees. New files following patterns shouldn't require updates_

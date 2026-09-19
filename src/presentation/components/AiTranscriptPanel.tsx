@@ -14,5 +14,9 @@ export interface AiTranscriptPanelProps {
 export function AiTranscriptPanel({ listenFn, aiTranscriptEditorRef }: AiTranscriptPanelProps) {
   const session = useTranscriptBlocks({ listenFn });
 
-  return <AiTranscriptEditor ref={aiTranscriptEditorRef} blocks={session.blocks} />;
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col">
+      <AiTranscriptEditor ref={aiTranscriptEditorRef} blocks={session.blocks} />
+    </div>
+  );
 }

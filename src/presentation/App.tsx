@@ -93,26 +93,30 @@ function AppContent({
   });
 
   return (
-    <main className="app">
-      <h1 className="app-title">gijirec Audio Capture & Transcribe</h1>
-      <AppCaptureSessionBar
-        captureStatus={captureStatus}
-        transcribeStatus={transcribeStatus}
-        invokeFn={invokeFn}
-        {...(listenFn !== undefined ? { listenFn } : {})}
-      />
-      <ModelVariantSelector invokeFn={invokeFn} transcribePhase={transcribeStatus.phase} />
-      <TranscriptEditorView
-        onSave={onSave}
-        isSaving={isSaving}
-        settings={settingsHook.settings}
-        isLoading={settingsHook.isLoading}
-        pickSaveDirectory={settingsHook.pickSaveDirectory}
-        setExportJsonlEnabled={settingsHook.setExportJsonlEnabled}
-        {...(listenFn !== undefined ? { listenFn } : {})}
-        handwritingEditorRef={mergedHandwritingRef}
-        aiTranscriptEditorRef={mergedAiRef}
-      />
+    <main className="app flex h-full min-h-0 flex-col overflow-hidden">
+      <h1 className="app-title shrink-0">gijirec Audio Capture & Transcribe</h1>
+      <div className="shrink-0">
+        <AppCaptureSessionBar
+          captureStatus={captureStatus}
+          transcribeStatus={transcribeStatus}
+          invokeFn={invokeFn}
+          {...(listenFn !== undefined ? { listenFn } : {})}
+        />
+        <ModelVariantSelector invokeFn={invokeFn} transcribePhase={transcribeStatus.phase} />
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <TranscriptEditorView
+          onSave={onSave}
+          isSaving={isSaving}
+          settings={settingsHook.settings}
+          isLoading={settingsHook.isLoading}
+          pickSaveDirectory={settingsHook.pickSaveDirectory}
+          setExportJsonlEnabled={settingsHook.setExportJsonlEnabled}
+          {...(listenFn !== undefined ? { listenFn } : {})}
+          handwritingEditorRef={mergedHandwritingRef}
+          aiTranscriptEditorRef={mergedAiRef}
+        />
+      </div>
       <Toaster />
     </main>
   );

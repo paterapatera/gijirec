@@ -58,7 +58,7 @@ export function TranscriptEditorView({
 
   return (
     <div
-      className="transcript-editor-view flex h-full flex-col"
+      className="transcript-editor-view flex h-full min-h-0 flex-1 flex-col"
       data-testid="transcript-editor-view"
     >
       <EditorToolbar
@@ -69,12 +69,24 @@ export function TranscriptEditorView({
         pickSaveDirectory={pickSaveDirectory}
         setExportJsonlEnabled={setExportJsonlEnabled}
       />
-      <HandwritingEditor ref={mergedHandwritingRef} />
-      <Separator data-testid="transcript-editor-separator" />
-      <AiTranscriptPanel
-        listenFn={resolvedListenFn}
-        {...(aiTranscriptEditorRef !== undefined ? { aiTranscriptEditorRef } : {})}
-      />
+      <div className="flex flex-1 min-h-0 flex-row" data-testid="transcript-editor-body">
+        <div
+          className="min-h-0 min-w-0 flex-1 overflow-auto"
+          data-testid="transcript-editor-pane-handwriting"
+        >
+          <HandwritingEditor ref={mergedHandwritingRef} />
+        </div>
+        <Separator orientation="vertical" data-testid="transcript-editor-separator" />
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          data-testid="transcript-editor-pane-ai"
+        >
+          <AiTranscriptPanel
+            listenFn={resolvedListenFn}
+            {...(aiTranscriptEditorRef !== undefined ? { aiTranscriptEditorRef } : {})}
+          />
+        </div>
+      </div>
     </div>
   );
 }

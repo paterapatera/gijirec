@@ -59,9 +59,10 @@ gijirec は、Web 会議中にマイクとシステム音声を仮想オーデ�
 | capture-gain-value-display | 完了 | `CaptureAudioControlsRow` — ゲインスライダー横に `ingest-gain-value`（`toFixed(2)`、`tabular-nums`）。非 capturing 時は `—` |
 | pcm-retention-one-hour | 完了 | 連続セッション未処理 PCM を最大 1 時間保持。上限到達時はキャプチャ停止＋`PCM_RETENTION_LIMIT_EXCEEDED`（spec アーカイブ済み） |
 | capture-session-toggle | 完了 | 起動後 idle・再生で開始専用セッション（`CaptureSessionStartControl`）。途中停止 UI なし。音声制御は session active かつ capturing のみ（ADR-0015）。spec アーカイブ済み |
+| dual-editor-vertical-split | 完了 | `TranscriptEditorView` — 手書き左・AI 転写右の横並び（垂直 `Separator`）、各ペイン `overflow-auto` で独立スクロール。block 購読局所化は従来どおり |
 
-**現 UI の範囲**: 会議開始（`AppCaptureSessionBar` / `AppCaptureStatusHeader` 内 `CaptureSessionStartControl` — 待機時は再生のみ、進行中は停止ボタンなし）、キャプチャ／文字起こしフェーズ（`AppStatusPanels` — 横並び `.phase-panels-row`、flush 進行表示なし）、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、マイク／スピーカー選択パネル（`CaptureAudioControlsRow` — マイク ON/OFF・dBFS メーター・ゲインスライダー・数値表示 `ingest-gain-value`）、Whisper バリアント選択（`ModelVariantSelector` — Q5_0 / Q8_0 / FP16）、手書き＋AI 転写の二重エディタ（`AiTranscriptPanel` で block 購読を局所化）、保存ツールバー・結果トースト。起動時ウィンドウは 1000×800。session idle または capture 非 `capturing` 時は音声制御を disabled。
+**現 UI の範囲**: 会議開始（`AppCaptureSessionBar` / `AppCaptureStatusHeader` 内 `CaptureSessionStartControl` — 待機時は再生のみ、進行中は停止ボタンなし）、キャプチャ／文字起こしフェーズ（`AppStatusPanels` — 横並び `.phase-panels-row`、flush 進行表示なし）、モデル取得進捗、エラー表示（`message_ja` / `action_ja`）、マイク／スピーカー選択パネル（`CaptureAudioControlsRow` — マイク ON/OFF・dBFS メーター・ゲインスライダー・数値表示 `ingest-gain-value`）、Whisper バリアント選択（`ModelVariantSelector` — Q5_0 / Q8_0 / FP16）、手書き（左）＋ AI 転写（右）の二重エディタ（`transcript-editor-body` 横並び・ペイン別スクロール。`AiTranscriptPanel` で block 購読を局所化）、保存ツールバー・結果トースト。起動時ウィンドウは 1000×800。session idle または capture 非 `capturing` 時は音声制御を disabled。
 
 ---
-_updated_at: 2026-09-19（capture-session-toggle 完了・steering 同期）_
+_updated_at: 2026-09-19（dual-editor-vertical-split 完了・steering 同期）_
 _Focus on patterns and purpose, not exhaustive feature lists_
